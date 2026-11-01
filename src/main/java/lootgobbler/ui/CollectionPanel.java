@@ -227,17 +227,8 @@ public class CollectionPanel extends JPanel {
         sideSection.setTitle("History");
         backToRecent.setVisible(true);
 
-        Image icon = CollectionGrid.icon(item.id);
-        JLabel name = new JLabel(item.name, icon == null ? null : new ImageIcon(icon), SwingConstants.LEFT);
-        name.setIconTextGap(8);
-        name.setFont(name.getFont().deriveFont(18f));
-        name.setAlignmentX(LEFT_ALIGNMENT);
-        recent.add(name);
-        JLabel count = new JLabel(entry == null ? "Not found yet" : entry.count == 1 ? "Found 1 time" : "Found " + entry.count + " times");
-        count.setForeground(Palette.MUTED);
-        count.setAlignmentX(LEFT_ALIGNMENT);
-        recent.add(count);
-        recent.add(Box.createVerticalStrut(8));
+        recent.add(itemHeader(item, entry));
+        recent.add(Box.createVerticalStrut(12));
 
         if (entry == null) return;
         List<CollectionStore.Find> finds = new ArrayList<>(entry.history());
@@ -246,6 +237,116 @@ public class CollectionPanel extends JPanel {
             recent.add(findRow(item.id, f));
             recent.add(Box.createVerticalStrut(6));
         }
+    }
+
+    private static final Color UT_COLOR = new Color(0x8049A8), ST_COLOR = new Color(0xE07B2A), TIER_COLOR = new Color(0xB07D0A);
+
+    /**
+     * The top of the history: the item big, its kind (UT / ST / tier, slot, shiny), how often you found it and
+     * since when, the dungeon it drops in (when the game data says) and where you found it yourself.
+     */
+    private static JComponent itemHeader(ItemDb.Item item, CollectionStore.Entry entry) {
+        JLabel icon = new JLabel(CharactersView.sprite(item.id, 72));
+        icon.setVerticalAlignment(SwingConstants.TOP);
+
+        JPanel text = new JPanel();
+        text.setLayout(new BoxLayout(text, BoxLayout.Y_AXIS));
+        text.setOpaque(false);
+        JLabel name = new JLabel("<html>" + escapeHtml(item.name) + "</html>");
+        name.setFont(name.getFont().deriveFont(22f));
+        text.add(leftAligned(name));
+        text.add(Box.createVerticalStrut(4));
+
+        JPanel kind = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        kind.setOpaque(false);
+        String tier = item.isUT() ? "UT" : item.isST() ? "ST" : item.tier.isEmpty() ? "" : "T" + item.tier;
+        if (!tier.isEmpty()) kind.add(badge(tier, item.isUT() ? UT_COLOR : item.isST() ? ST_COLOR : TIER_COLOR));
+        if (item.isShiny()) kind.add(badge("SHINY", new Color(0x3FA7C4)));
+        kind.add(new JLabel(item.slotName()));
+        kind.setBorder(new EmptyBorder(0, -6, 0, 0));   // FlowLayout puts its gap before the first tag too
+        text.add(leftAligned(kind));
+        text.add(Box.createVerticalStrut(6));
+
+        String found = entry == null ? "Not found yet"
+                : (entry.count == 1 ? "Found 1 time" : "Found " + entry.count + " times")
+                + (entry.first == null ? "" : ", first on " + longDate(entry.first));
+        JLabel count = new JLabel(found);
+        count.setFont(count.getFont().deriveFont(20f));   // smaller, the pixel font draws a 6 that looks like an 8
+        count.setForeground(entry == null ? Palette.MUTED : new Color(0xF5C542));
+        text.add(leftAligned(count));
+
+        String origin = item.origin();
+        if (origin != null) text.add(leftAligned(fact("Drops in", origin)));
+        String places = foundIn(entry);
+        if (!places.isEmpty()) text.add(leftAligned(fact("You found it in", places)));
+        if (origin == null && places.isEmpty()) {
+            JLabel unknown = new JLabel("Drop location not known yet");
+            unknown.setForeground(Palette.MUTED);
+            text.add(leftAligned(unknown));
+        }
+
+        JPanel header = new JPanel(new BorderLayout(12, 0));
+        header.setOpaque(false);
+        header.setBorder(new EmptyBorder(4, 0, 10, 0));
+        header.add(icon, BorderLayout.WEST);
+        header.add(text, BorderLayout.CENTER);
+        JPanel box = new JPanel(new BorderLayout());
+        box.setOpaque(false);
+        box.add(header, BorderLayout.CENTER);
+        JSeparator line = new JSeparator();
+        box.add(line, BorderLayout.SOUTH);
+        box.setAlignmentX(LEFT_ALIGNMENT);
+        box.setMaximumSize(new Dimension(Integer.MAX_VALUE, box.getPreferredSize().height));
+        return box;
+    }
+
+    /**
+     * The dungeons your drops of this item came from, most first: "Lost Halls ×3, The Shatters".
+     */
+    private static String foundIn(CollectionStore.Entry entry) {
+        if (entry == null) return "";
+        Map<String, Integer> places = new LinkedHashMap<>();
+        for (CollectionStore.Find f : entry.history()) {
+            if (CollectionStore.DROP.equals(f.source) && !f.where.isBlank()) places.merge(f.where, 1, Integer::sum);
+        }
+        return places.entrySet().stream().sorted(Map.Entry.<String, Integer>comparingByValue().reversed())
+                .map(e -> e.getKey() + (e.getValue() > 1 ? " ×" + e.getValue() : ""))
+                .collect(java.util.stream.Collectors.joining(", "));
+    }
+
+    private static JLabel fact(String caption, String value) {
+        JLabel l = new JLabel("<html><font color='#938B79'>" + caption + ":</font> " + escapeHtml(value) + "</html>");
+        return l;
+    }
+
+    /**
+     * A small colored tag like "UT".
+     */
+    private static JLabel badge(String text, Color bg) {
+        JLabel l = new JLabel(text);
+        l.setOpaque(true);
+        l.setBackground(bg);
+        l.setForeground(Color.WHITE);
+        l.setBorder(new EmptyBorder(1, 6, 1, 6));
+        return l;
+    }
+
+    private static String longDate(String isoTime) {
+        try {
+            return java.time.LocalDate.parse(isoTime.substring(0, 10))
+                    .format(java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy", java.util.Locale.ENGLISH));
+        } catch (Exception e) {
+            return isoTime;
+        }
+    }
+
+    private static String escapeHtml(String s) {
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
+    private static <T extends JComponent> T leftAligned(T c) {
+        c.setAlignmentX(LEFT_ALIGNMENT);
+        return c;
     }
 
     private static JPanel findRow(int itemId, CollectionStore.Find f) {

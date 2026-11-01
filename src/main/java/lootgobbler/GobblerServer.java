@@ -115,6 +115,7 @@ public final class GobblerServer {
         public int exalts;        // exaltations over all classes
         public int characters;    // living characters
         public int maxed;         // living characters with all 8 stats maxed
+        public int points;        // quest points this month
     }
 
     public static final class Leaderboard {
@@ -164,13 +165,13 @@ public final class GobblerServer {
         public long fame;
     }
 
-    /** A guild member in the loot caravan: bags opened per color in the range, their items, most played character. */
+    /** A guild member in the loot caravan: items found in the range (counted per bag color), the items, most played character. */
     public static final class CaravanMember {
         public long id;
         public String ign = "";
         public int guildRank;
-        public Map<String, Integer> bags = Map.of();
-        public int total;
+        public Map<String, Integer> byBag = Map.of();   // bag color -> items found
+        public int total;                               // all items found
         public List<CaravanItem> items = List.of();   // newest first, at most 120
         public String lastDrop;                        // the player's local time, null if none
         public CaravanCharacter character;             // null if unknown
@@ -179,7 +180,84 @@ public final class GobblerServer {
     public static final class Caravan {
         public String guild = "";
         public String range = "";
-        public List<CaravanMember> members = List.of();   // most bags first
+        public List<CaravanMember> members = List.of();   // most items first
+    }
+
+    /** Who cleared a quest map stage, and when (epoch ms). */
+    public static final class QuestMapClear {
+        public long userId;
+        public String ign = "";
+        public long at;
+    }
+
+    /**
+     * A guild quest map: dungeons cleared in order by any member. style is "parchment", "hex", "overworld", "oryx" or
+     * "constellation"; variant its color variation 0-3.
+     */
+    public static final class QuestMap {
+        public long id;
+        public String name = "";
+        public String style = "";
+        public int variant;
+        public List<String> dungeons = List.of();
+        public List<QuestMapClear> clears = List.of();   // one per cleared stage, in order
+        public long startsAt, endsAt;
+        public Long completedAt;
+    }
+
+    public static final class QuestMaps {
+        public String guild = "";
+        public long now;
+        public QuestMap current;
+        public List<QuestMap> past = List.of();   // newest first
+    }
+
+    /** What a quest asks for. count is required; dungeon (part of the name), minEnchants and bag narrow it down. */
+    public static final class QuestParams {
+        public long count;
+        public String dungeon;
+        public int minEnchants;
+        public String bag;
+    }
+
+    public static final class QuestContribution {
+        public String ign = "";
+        public long amount;
+    }
+
+    /** A quest of this week with its progress. type: drops, new_items, dungeon_clears, boss_damage or fame. */
+    public static final class Quest {
+        public long id;
+        public String title = "";
+        public String type = "";
+        public QuestParams params = new QuestParams();
+        public int points;
+        public long progress;
+        public long target;
+        public Long completedAt;
+        public List<QuestContribution> contributors = List.of();   // guild quests, most first
+    }
+
+    public static final class Quests {
+        public long weekStart, weekEnd;   // Monday 00:00 UTC to the next Monday
+        public List<Quest> personal = List.of();
+        public String guild;              // null while your guild is unknown
+        public List<Quest> guildQuests = List.of();
+        public String period = "";        // "2026-11": points count per month
+        public int points;                // your points this period
+    }
+
+    /** A quest in the pool. status: pending (suggested), approved or denied; scope: personal or guild. */
+    public static final class QuestTemplate {
+        public long id;
+        public String title = "";
+        public String type = "";
+        public QuestParams params = new QuestParams();
+        public String scope = "";
+        public int points;
+        public String status = "";
+        public String proposedBy = "";    // empty = built-in suggestion
+        public long createdAt;
     }
 
     /** An error answer from the server (code is its stable "error" field). */
@@ -465,8 +543,47 @@ public final class GobblerServer {
         return call("GET", "/guild/caravan?range=" + range, null, Caravan.class);
     }
 
+    /** Your guild's current quest map (the server rolls a new one when the last has ended) and up to limit past ones. */
+    public CompletableFuture<QuestMaps> questMaps(int limit) {
+        return call("GET", "/guild/questmaps?limit=" + limit, null, QuestMaps.class);
+    }
+
     public CompletableFuture<MemberProfile> memberProfile(long userId) {
         return call("GET", "/guild/members/" + userId, null, MemberProfile.class);
+    }
+
+    /** Your quests of this week (personal and guild) and your points this month. */
+    public CompletableFuture<Quests> quests() {
+        return call("GET", "/quests", null, Quests.class);
+    }
+
+    /** Suggests a quest; it waits for an admin to accept or deny it. title "" = generated by the server. */
+    public CompletableFuture<QuestTemplate> suggestQuest(String title, String type, QuestParams params, String scope) {
+        JsonObject body = new JsonObject();
+        body.addProperty("title", title.trim());
+        body.addProperty("type", type);
+        body.add("params", GSON.toJsonTree(params));
+        body.addProperty("scope", scope);
+        return call("POST", "/quests/suggestions", body, QuestTemplate.class);
+    }
+
+    /** Admins: the quest pool; status "" = all. */
+    public CompletableFuture<List<QuestTemplate>> questPool(String status) {
+        return call("GET", "/admin/quests" + (status.isEmpty() ? "" : "?status=" + status), null, QuestPool.class)
+                .thenApply(r -> r.quests);
+    }
+
+    /** Admins: accepts a quest as "personal" or "guild" quest; points 0 = keep the suggested points. */
+    public CompletableFuture<Void> approveQuest(long id, String scope, int points) {
+        JsonObject body = new JsonObject();
+        body.addProperty("scope", scope);
+        body.addProperty("points", points);
+        return call("POST", "/admin/quests/" + id + "/approve", body, Void.class);
+    }
+
+    /** Admins: denies a suggestion, or takes an accepted quest out of the pool. */
+    public CompletableFuture<Void> denyQuest(long id) {
+        return call("POST", "/admin/quests/" + id + "/deny", null, Void.class);
     }
 
     /** The cause behind CompletableFuture wrappers. */
@@ -506,6 +623,10 @@ public final class GobblerServer {
 
     private static final class DataResponse {
         Map<String, DataItem> items = Map.of();
+    }
+
+    private static final class QuestPool {
+        List<QuestTemplate> quests = List.of();
     }
 
     private static final class PutResponse {

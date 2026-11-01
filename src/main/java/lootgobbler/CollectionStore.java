@@ -27,6 +27,7 @@ public final class CollectionStore implements Syncable {
      */
     public static final class Find {
         public String time;
+        public long at;   // exact time (epoch ms), so the server can tell which week a find belongs to; 0 in older finds
         public String source = DROP;
         public int enchants = -1;   // -1 = unknown
         public String where = "";
@@ -36,6 +37,7 @@ public final class CollectionStore implements Syncable {
         public static Find of(String source, int enchants, String where, String bag) {
             Find f = new Find();
             f.time = now();
+            f.at = System.currentTimeMillis();
             f.source = source;
             f.enchants = enchants;
             f.where = where == null ? "" : where;

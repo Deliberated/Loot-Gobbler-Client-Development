@@ -77,7 +77,10 @@ public class TomatoGUI {
                     "Discord webhooks are under construction - nothing is posted for now.");
         }
         tabbedPane.addTab("Social", new lootgobbler.ui.SubTabs()
-                .page("Chat", chatPanel).page("Daily Quests", questPanel).page("Discord", discord).done());
+                .page("Chat", chatPanel)
+                .page("Daily Quests", lootgobbler.ui.UnderConstruction.wrap(questPanel,
+                        "Daily quests are under construction - they will come from the Loot Gobbler server."))
+                .page("Discord", discord).done());
         tabbedPane.addTab("Inventory", new CollectionPanel());
         tabbedPane.addTab("Characters", characters);
 

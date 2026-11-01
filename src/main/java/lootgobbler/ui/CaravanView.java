@@ -23,14 +23,14 @@ import java.util.List;
 
 /**
  * Guild > Loot Caravan: a night road where every guild member drives a wagon piled with the items they found in
- * the chosen range, sitting up front as their most played character. The member with the most bags leads, right
- * behind the pack ox; members with fewer than five bags walk behind the caravan with a backpack. Clicking a member
- * shows their bags and best finds below the picture.
+ * the chosen range, sitting up front as their most played character. The member who found the most items leads, right
+ * behind the pack ox; members with fewer than five items walk behind the caravan with a backpack. Clicking a member
+ * shows their items per bag color and best finds below the picture.
  */
 public class CaravanView extends JPanel {
     private static final NumberFormat NUM = NumberFormat.getIntegerInstance();
     private static final String[] RANGES = {"week", "month", "all"}, RANGE_LABELS = {"This week", "This month", "All time"};
-    private static final int WALK_BELOW = 5;   // fewer bags than this: on foot
+    private static final int WALK_BELOW = 5;   // fewer items than this: on foot
     /** Bag colors, rarest first: the order of the bag counts, and the pile order from the top down. */
     private static final List<String> BAG_ORDER = List.of("White", "Orange", "Red", "Gold", "Teal", "Blue", "Purple",
             "Egg Basket", "Pink", "Brown", "Other");
@@ -126,11 +126,11 @@ public class CaravanView extends JPanel {
     private void show(Caravan c) {
         caravan = c;
         section.setTitle("Loot Caravan - " + c.guild);
-        int bags = c.members.stream().mapToInt(m -> m.total).sum();
+        int found = c.members.stream().mapToInt(m -> m.total).sum();
         long wagons = c.members.stream().filter(m -> m.total >= WALK_BELOW).count();
         status.setText(c.members.size() + " members  ·  " + wagons + (wagons == 1 ? " wagon" : " wagons") + "  ·  "
-                + NUM.format(bags) + " bags " + RANGE_LABELS[Arrays.asList(RANGES).indexOf(range)].toLowerCase(Locale.ROOT)
-                + "  ·  fewer than " + WALK_BELOW + " bags: on foot  ·  click a member for details");
+                + NUM.format(found) + " items " + RANGE_LABELS[Arrays.asList(RANGES).indexOf(range)].toLowerCase(Locale.ROOT)
+                + "  ·  fewer than " + WALK_BELOW + " items: on foot  ·  click a member for details");
         if (c.members.stream().noneMatch(m -> m.id == picked)) picked = c.members.isEmpty() ? -1 : c.members.get(0).id;
         scene.setMembers(c.members);
         showDetail();
@@ -160,7 +160,7 @@ public class CaravanView extends JPanel {
         int place = caravan.members.indexOf(m) + 1;
         String rangeText = RANGE_LABELS[Arrays.asList(RANGES).indexOf(range)].toUpperCase(Locale.ROOT);
         JLabel where = new JLabel((m.total >= WALK_BELOW ? "WAGON #" + place : "ON FOOT  ·  " + m.total
-                + (m.total == 1 ? " BAG" : " BAGS")) + "  ·  " + rangeText);
+                + (m.total == 1 ? " ITEM" : " ITEMS")) + "  ·  " + rangeText);
         where.putClientProperty("FlatLaf.styleClass", "small");
         where.setForeground(Palette.MUTED);
         p.add(left(where));
@@ -176,15 +176,15 @@ public class CaravanView extends JPanel {
         JPanel counts = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
         counts.setOpaque(false);
         for (String bag : BAG_ORDER) {
-            Integer n = m.bags.get(bag);
+            Integer n = m.byBag.get(bag);
             if (n == null || n == 0) continue;
             JLabel l = new JLabel(NUM.format(n), ProfileView.bagIcon(bag, 28), SwingConstants.LEFT);
             l.setFont(new Font(Themes.HEAD_FONT, Font.PLAIN, 30));
-            l.setToolTipText(n + " " + bag.toLowerCase(Locale.ROOT) + (n == 1 ? " bag" : " bags"));
+            l.setToolTipText(n + (n == 1 ? " item from " : " items from ") + bag.toLowerCase(Locale.ROOT) + " bags");
             l.setBorder(new EmptyBorder(0, 0, 0, 18));
             counts.add(l);
         }
-        if (counts.getComponentCount() == 0) counts.add(muted("No bags yet."));
+        if (counts.getComponentCount() == 0) counts.add(muted("No items yet."));
         p.add(left(counts));
         return card(p);
     }
@@ -279,7 +279,7 @@ public class CaravanView extends JPanel {
     // ---- the picture -----------------------------------------------------------------------------------------
 
     /**
-     * The painted road: sky, hills, the ox, one wagon per member with enough bags, then the members on foot.
+     * The painted road: sky, hills, the ox, one wagon per member with enough items, then the members on foot.
      * Animates (wheels, bobbing loot, walking) while it is on screen.
      */
     private class Scene extends JComponent implements Scrollable {
@@ -351,7 +351,7 @@ public class CaravanView extends JPanel {
             CaravanMember m = at(e.getPoint());
             if (m == null) return null;
             String cls = m.character == null ? "" : " (" + m.character.className + ")";
-            return m.ign + cls + ": " + m.total + (m.total == 1 ? " bag" : " bags");
+            return m.ign + cls + ": " + m.total + (m.total == 1 ? " item" : " items");
         }
 
         @Override

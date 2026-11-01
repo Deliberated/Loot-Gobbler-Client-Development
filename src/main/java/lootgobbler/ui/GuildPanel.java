@@ -37,11 +37,13 @@ import java.util.concurrent.CompletableFuture;
 public class GuildPanel extends SubTabs {
     private static final NumberFormat NUM = NumberFormat.getIntegerInstance();
     private static final DateTimeFormatter DROP_TIME = DateTimeFormatter.ofPattern("d MMM, HH:mm", Locale.ENGLISH);
-    private static final String CARAVAN = "Loot Caravan", LEADERBOARD = "Leaderboard", DROPS = "Recent Drops", MEMBER = "Member";
+    private static final String QUESTS = "Quests", CARAVAN = "Loot Caravan", LEADERBOARD = "Leaderboard", DROPS = "Recent Drops", MEMBER = "Member";
     private static final int DROP_LIMIT = 100;
 
     private final GobblerServer server = GobblerServer.get();
     private final CaravanView caravan = new CaravanView();
+    private final QuestMapView questMap = new QuestMapView();
+    private final QuestsView quests = new QuestsView();
     private final Section leaderboardSection;
     private final JPanel leaderboardBody = column();
     private final JPanel dropsBody = column();
@@ -54,7 +56,9 @@ public class GuildPanel extends SubTabs {
         leaderboardSection = new Section("Leaderboard", Palette.GOLD, wrap(FitWidthPanel.scroll(leaderboardBody, 24)))
                 .actions(button("Refresh", this::refresh));
         memberSection = new Section("Member", Palette.BLUE, wrap(FitWidthPanel.scroll(memberBody, 24)));
+        page(QUESTS, quests);
         page(CARAVAN, caravan);
+        page("Quest Map", questMap);
         page(LEADERBOARD, leaderboardSection);
         page(DROPS, new Section("Recent Drops", Palette.PURPLE, wrap(FitWidthPanel.scroll(dropsBody, 24)))
                 .actions(button("Refresh", this::refresh)));
@@ -74,6 +78,8 @@ public class GuildPanel extends SubTabs {
 
     private void refresh() {
         caravan.load();
+        questMap.load();
+        quests.load();
         if (loading) return;
         if (server.user() == null || server.state() != GobblerServer.State.ONLINE) {
             leaderboardSection.setTitle("Leaderboard");
@@ -119,7 +125,7 @@ public class GuildPanel extends SubTabs {
     private void showLeaderboard(Leaderboard board) {
         leaderboardSection.setTitle("Leaderboard - " + board.guild + " (" + board.members.size() + ")");
         leaderboardBody.removeAll();
-        String[] columns = {"#", "Player", "Rank", "Items", "Finds", "Fame", "Exalts", "Chars", "Maxed", "Last active"};
+        String[] columns = {"#", "Player", "Rank", "Points", "Items", "Finds", "Fame", "Exalts", "Chars", "Maxed", "Last active"};
         DefaultTableModel model = new DefaultTableModel(columns, 0) {
             @Override
             public boolean isCellEditable(int r, int c) {
@@ -134,7 +140,7 @@ public class GuildPanel extends SubTabs {
         List<Member> members = board.members;
         for (int i = 0; i < members.size(); i++) {
             Member m = members.get(i);
-            model.addRow(new Object[]{(long) i + 1, m.ign, (long) m.guildRank, (long) m.items, (long) m.finds, m.fame,
+            model.addRow(new Object[]{(long) i + 1, m.ign, (long) m.guildRank, (long) m.points, (long) m.items, (long) m.finds, m.fame,
                     (long) m.exalts, (long) m.characters, (long) m.maxed, m.lastActive});
         }
         JTable table = new JTable(model);
@@ -161,7 +167,7 @@ public class GuildPanel extends SubTabs {
         holder.add(table, BorderLayout.CENTER);
         leaderboardBody.add(left(holder));
         leaderboardBody.add(Box.createVerticalStrut(8));
-        leaderboardBody.add(muted("Items: different UT/ST items. Finds: all copies. Fame, Chars and Maxed count "
+        leaderboardBody.add(muted("Points: quest points this month. Items: different UT/ST items. Finds: all copies. Fame, Chars and Maxed count "
                 + "living characters. Exalts over all classes."));
         leaderboardBody.revalidate();
         leaderboardBody.repaint();
@@ -183,11 +189,11 @@ public class GuildPanel extends SubTabs {
             int col = table.convertColumnIndexToModel(column);
             Object shown = value;
             if (col == 2 && value instanceof Long rank) shown = PlayerProfile.rankName(rank.intValue());
-            if (col == 9 && value instanceof Long t) shown = t == 0 ? "-" : CharactersView.ago(t);
-            if (value instanceof Long n && col >= 3 && col <= 8) shown = NUM.format(n);
+            if (col == 10 && value instanceof Long t) shown = t == 0 ? "-" : CharactersView.ago(t);
+            if (value instanceof Long n && col >= 3 && col <= 9) shown = NUM.format(n);
             super.getTableCellRendererComponent(table, shown, selected, false, row, column);
             setBorder(new EmptyBorder(0, 8, 0, 8));
-            setHorizontalAlignment(col == 1 || col == 2 || col == 9 ? LEFT : RIGHT);
+            setHorizontalAlignment(col == 1 || col == 2 || col == 10 ? LEFT : RIGHT);
             if (!selected) {
                 Color alt = UIManager.getColor("Table.alternateRowColor");
                 setBackground(row % 2 == 1 && alt != null ? alt : table.getBackground());

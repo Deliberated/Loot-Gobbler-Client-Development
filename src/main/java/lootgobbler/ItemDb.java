@@ -28,6 +28,7 @@ public final class ItemDb {
         public final List<Stat> onEquip = new ArrayList<>();
         public Set<String> labels = Set.of();
         public int collectionIcon = Integer.MAX_VALUE;
+        boolean named;   // has a display name (unnamed items are unused test or event leftovers)
 
         Item(int id) {
             this.id = id;
@@ -49,10 +50,12 @@ public final class ItemDb {
          * Counts toward the collection (and gets posted to Discord): equipable gear (weapon, ability, armor, ring)
          * from the game's UT and ST collection tabs, plus the top tiers (T14 weapons and armor, T7 and T8 abilities,
          * T7 rings). Consumables and craftables in the UT/ST tabs (shards, orbs, potions...) are left out.
+         * Newer items (the Druid's sigils, event weapons, some shinies) lack the tab label, so a named UT or ST
+         * item counts too.
          */
         public boolean isCollectible() {
-            return ((labels.contains("TAB_UT") || labels.contains("TAB_ST")) && slotType != 0 && slotType != 10)
-                    || isTopTier();
+            boolean utSt = labels.contains("TAB_UT") || labels.contains("TAB_ST") || (named && (isUT() || isST()));
+            return (utSt && slotType != 0 && slotType != 10) || isTopTier();
         }
 
         public boolean isTopTier() {
@@ -70,6 +73,21 @@ public final class ItemDb {
         public String slotName() {
             return SLOT_NAMES.getOrDefault(slotType, "Item");
         }
+
+        /**
+         * The dungeon the item drops in, from its origin label (ORG_...); null if it has none or the code is not
+         * known. Only about a quarter of the items carry one.
+         */
+        public String origin() {
+            for (String l : labels) {
+                if (!l.startsWith("ORG_")) continue;
+                String code = l.substring(4);
+                if (code.endsWith("_S")) code = code.substring(0, code.length() - 2);   // shiny variants
+                String name = ORIGINS.get(code);
+                if (name != null) return name;
+            }
+            return null;
+        }
     }
 
     private static final Map<Integer, String> SLOT_NAMES = Map.ofEntries(
@@ -80,7 +98,29 @@ public final class ItemDb {
             Map.entry(17, "Staff"), Map.entry(18, "Poison"), Map.entry(19, "Skull"), Map.entry(20, "Trap"),
             Map.entry(21, "Orb"), Map.entry(22, "Prism"), Map.entry(23, "Scepter"), Map.entry(24, "Katana"),
             Map.entry(25, "Shuriken"), Map.entry(27, "Wakizashi"), Map.entry(28, "Lute"), Map.entry(29, "Mace"),
-            Map.entry(30, "Sheath"));
+            Map.entry(30, "Sheath"), Map.entry(31, "Sigil"));
+
+    /** Origin label codes (ORG_<code>) and their dungeons; codes whose dungeon is unsure are left out. */
+    private static final Map<String, String> ORIGINS = Map.ofEntries(
+            Map.entry("OSANC", "Oryx's Sanctuary"), Map.entry("MOONLIGHT", "Moonlight Village"),
+            Map.entry("SHTT", "The Shatters"), Map.entry("NEST", "The Nest"),
+            Map.entry("SPECTRAL", "Spectral Penitentiary"), Map.entry("LOD", "Lair of Draconis"),
+            Map.entry("PARASITE", "Parasite Chambers"), Map.entry("3D", "The Third Dimension"),
+            Map.entry("MANOR", "Manor of the Immortals"), Map.entry("KOGBOLD", "Advanced Kogbold Steamworks"),
+            Map.entry("FUNGAL", "Fungal Cavern"), Map.entry("CEM", "Haunted Cemetery"),
+            Map.entry("VOID", "The Void"), Map.entry("UDL", "Undead Lair"), Map.entry("TOMB", "Tomb of the Ancients"),
+            Map.entry("SEWER", "Toxic Sewers"), Map.entry("OTRENCH", "Ocean Trench"), Map.entry("MWOODS", "Magic Woods"),
+            Map.entry("LIBRARY", "Cursed Library"), Map.entry("LH", "Lost Halls"), Map.entry("LAB", "Mad Lab"),
+            Map.entry("DAVY", "Davy Jones' Locker"), Map.entry("CULT", "Cultist Hideout"),
+            Map.entry("THICKET", "Secluded Thicket"), Map.entry("SPRITE", "Sprite World"),
+            Map.entry("SHAITAN", "Lair of Shaitan"), Map.entry("MTEMPLE", "Mountain Temple"),
+            Map.entry("ICECAVE", "Ice Cave"), Map.entry("HIVE", "The Hive"),
+            Map.entry("CLAND", "Candyland Hunting Grounds"), Map.entry("ABYSS", "Abyss of Demons"),
+            Map.entry("SPIDER", "Spider Den"), Map.entry("RUINS", "Ancient Ruins"),
+            Map.entry("PUPPET", "Puppet Master's Theatre"), Map.entry("ENCORE", "Puppet Master's Encore"),
+            Map.entry("JUNGLE", "Forbidden Jungle"), Map.entry("CASTLE", "Oryx's Castle"),
+            Map.entry("DDOCKS", "Deadwater Docks"), Map.entry("FMAZE", "Forest Maze"), Map.entry("PCAVE", "Pirate Cave"),
+            Map.entry("CDEPTHS", "The Crawling Depths"));
 
     private static volatile ItemDb instance;
 
@@ -169,7 +209,10 @@ public final class ItemDb {
                             }
                         }
                         case "Class" -> clazz = r.getElementText().trim();
-                        case "DisplayId" -> cur.name = r.getElementText().trim();
+                        case "DisplayId" -> {
+                            cur.name = r.getElementText().trim();
+                            cur.named = !cur.name.isEmpty();
+                        }
                         case "SlotType" -> cur.slotType = parseInt(r.getElementText(), 0);
                         case "Tier" -> cur.tier = r.getElementText().trim();
                         case "Description" -> cur.description = r.getElementText().trim();
