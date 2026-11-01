@@ -175,10 +175,43 @@ public final class Updater {
         return new Release(tag, page, null, 0, null);   // release without the zip: only the page can be offered
     }
 
+    public record Notes(String version, String published, String body, String pageUrl) {
+    }
+
+    /**
+     * The release notes of every published version after "from" up to and including "to", newest first.
+     */
+    public static List<Notes> releaseNotes(String from, String to) throws IOException, InterruptedException {
+        String list = API.replaceFirst("/latest$", "") + "?per_page=50";
+        HttpRequest req = HttpRequest.newBuilder(URI.create(list)).timeout(Duration.ofSeconds(20))
+                .header("Accept", "application/vnd.github+json")
+                .header("User-Agent", "LootGobbler/" + Version.VERSION).build();
+        HttpResponse<String> res = HTTP.send(req, HttpResponse.BodyHandlers.ofString());
+        if (res.statusCode() != 200) throw new IOException("GitHub answered " + res.statusCode());
+        List<Notes> notes = new java.util.ArrayList<>();
+        for (JsonElement el : JsonParser.parseString(res.body()).getAsJsonArray()) {
+            JsonObject r = el.getAsJsonObject();
+            if (r.has("draft") && r.get("draft").getAsBoolean()) continue;
+            String tag = r.get("tag_name").getAsString();
+            if (compare(tag, from) <= 0 || compare(tag, to) > 0) continue;
+            notes.add(new Notes(tag, text(r, "published_at"), text(r, "body"), text(r, "html_url")));
+        }
+        notes.sort((a, b) -> compare(b.version(), a.version()));
+        return notes;
+    }
+
+    private static String text(JsonObject o, String key) {
+        return o.has(key) && !o.get(key).isJsonNull() ? o.get(key).getAsString() : "";
+    }
+
+    public static String releasesPage() {
+        return RELEASES_PAGE.replaceFirst("/latest$", "");
+    }
+
     /**
      * Compares versions like "v0.4.0" and "0.10.1" number by number.
      */
-    static int compare(String a, String b) {
+    public static int compare(String a, String b) {
         String[] x = a.replaceFirst("^[vV]", "").split("[.\\-+]"), y = b.replaceFirst("^[vV]", "").split("[.\\-+]");
         for (int i = 0; i < Math.max(x.length, y.length); i++) {
             int c = Integer.compare(number(x, i), number(y, i));
@@ -221,6 +254,13 @@ public final class Updater {
                 if (!Files.isRegularFile(newDir.resolve("LootGobbler.exe")) || !Files.isDirectory(newDir.resolve("app"))) {
                     throw new IOException("the download does not contain Loot Gobbler");
                 }
+                // a release built before the version was raised would install the old version again, and the app
+                // would offer the same update after every restart
+                String inside = packagedVersion(newDir.resolve("app").resolve("LootGobbler.cfg"));
+                if (inside != null && compare(inside, r.version()) != 0) {
+                    throw new IOException("release " + r.version() + " contains version " + inside
+                            + " - it has to be rebuilt with the right version");
+                }
                 Path script = updateDir.resolve("update.ps1");
                 try (InputStream in = Updater.class.getResourceAsStream("/lootgobbler/update.ps1")) {
                     if (in == null) throw new IOException("update.ps1 is missing from the app");
@@ -242,6 +282,20 @@ public final class Updater {
                 latest = r;
             }
         });
+    }
+
+    /**
+     * The version a jpackage app image was built as (its LootGobbler.cfg), or null if it cannot be read.
+     */
+    private static String packagedVersion(Path cfg) {
+        try {
+            for (String line : Files.readAllLines(cfg)) {
+                int i = line.indexOf("jpackage.app-version=");
+                if (i >= 0) return line.substring(i + "jpackage.app-version=".length()).trim();
+            }
+        } catch (IOException ignored) {
+        }
+        return null;
     }
 
     private static void download(Release r, Path target) throws Exception {

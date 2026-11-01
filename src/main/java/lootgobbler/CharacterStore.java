@@ -91,6 +91,7 @@ public final class CharacterStore {
     private long lastLive, lastSave;
     private volatile IntSupplier fetcher;    // requests the char list; returns characters received, 0 = rejected
     private volatile String fetchedToken;    // login the char list was last fetched for
+    private volatile String listToken;       // login a char list actually came in for (null = none yet)
     private volatile long lastFetch;
     private volatile boolean fetching;
     private boolean savedListRead;           // char-list.xml from the last login was read for slot enchantments
@@ -120,6 +121,7 @@ public final class CharacterStore {
      */
     public void importList(List<RealmCharacter> list) {
         if (list == null) return;
+        if (!list.isEmpty() && fetchedToken != null) listToken = fetchedToken;   // this login has its list
         writeTagsOnce(list);
         synchronized (this) {
             for (RealmCharacter r : list) {
@@ -169,6 +171,15 @@ public final class CharacterStore {
     }
 
     /**
+     * You entered the nexus: fetch the char list (as the Refresh button does) unless one already came in for this
+     * login. A refused fetch is tried again on the next nexus visit.
+     */
+    public void enteredNexus() {
+        if (fetcher == null || fetchedToken == null || fetchedToken.equals(listToken)) return;
+        fetchAll(null);
+    }
+
+    /**
      * The game sent your login token (on every map change). The first time per login, fetch the whole char list.
      */
     public void tokenReady(String token, IntSupplier fetcher) {
@@ -207,10 +218,12 @@ public final class CharacterStore {
         }
         fetching = true;
         lastFetch = now;
+        String token = fetchedToken;
         Thread t = new Thread(() -> {
             int n = 0;
             try {
                 n = f.getAsInt();
+                if (n > 0) listToken = token;
             } catch (Exception e) {
                 System.err.println("Char list request failed: " + e);
             } finally {

@@ -99,6 +99,7 @@ public class TomatoData {
         clear();
         ParsePanelGUI.clear();
         petYardCheck(map.displayName);
+        if ("{s.nexus}".equals(map.displayName)) lootgobbler.CharacterStore.get().enteredNexus();   // auto Refresh
         this.map = map;
         rng = new RNG(map.seed);
     }

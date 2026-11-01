@@ -120,6 +120,7 @@ public class TomatoGUI {
 
         frame.setVisible(true);
         lootgobbler.StartupSound.playSaved();
+        lootgobbler.ui.WhatsNewDialog.showAfterUpdate(frame);   // after an update; reads its settings before the welcome
         SwingUtilities.invokeLater(() -> lootgobbler.ui.WelcomeDialog.showOnFirstStart(frame));   // once the window is up
         lootgobbler.Updater.start();   // first check a few seconds after start, then every hour
     }
