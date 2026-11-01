@@ -127,10 +127,9 @@ public class CaravanView extends JPanel {
         caravan = c;
         section.setTitle("Loot Caravan - " + c.guild);
         int found = c.members.stream().mapToInt(m -> m.total).sum();
-        long wagons = c.members.stream().filter(m -> m.total >= WALK_BELOW).count();
-        status.setText(c.members.size() + " members  ·  " + wagons + (wagons == 1 ? " wagon" : " wagons") + "  ·  "
-                + NUM.format(found) + " items " + RANGE_LABELS[Arrays.asList(RANGES).indexOf(range)].toLowerCase(Locale.ROOT)
-                + "  ·  fewer than " + WALK_BELOW + " items: on foot  ·  click a member for details");
+        GobblerServer.User me = server.user();
+        int mine = me == null ? 0 : c.members.stream().filter(m -> m.id == me.id).mapToInt(m -> m.total).sum();
+        status.setText(NUM.format(found) + " items  ·  you: " + NUM.format(mine) + "  ·  click a member for details");
         if (c.members.stream().noneMatch(m -> m.id == picked)) picked = c.members.isEmpty() ? -1 : c.members.get(0).id;
         scene.setMembers(c.members);
         showDetail();
@@ -190,7 +189,7 @@ public class CaravanView extends JPanel {
     }
 
     /**
-     * The rarest items of the range, newest first within a bag color.
+     * The items of the range that give the most pet feed power; newest first among equals.
      */
     private JComponent bestFinds(CaravanMember m) {
         JPanel p = column();
@@ -200,7 +199,7 @@ public class CaravanView extends JPanel {
         p.add(left(head));
         p.add(Box.createVerticalStrut(4));
         List<CaravanItem> best = new ArrayList<>(m.items);
-        best.sort(Comparator.comparingInt(CaravanView::rarity));   // stable: keeps newest first per color
+        best.sort(Comparator.comparingInt((CaravanItem it) -> -feedPower(it.itemId)));   // stable: keeps newest first
         if (best.isEmpty()) p.add(left(muted("Nothing found in this range.")));
         for (CaravanItem it : best.subList(0, Math.min(4, best.size()))) {
             JLabel name = new JLabel(itemName(it.itemId), CharactersView.sprite(it.itemId, 36), SwingConstants.LEFT);
@@ -224,6 +223,14 @@ public class CaravanView extends JPanel {
 
     private static Color bagColor(String bag) {
         return BAG_COLORS.getOrDefault(bag, new Color(0x9A815A));
+    }
+
+    /**
+     * How much the item feeds a pet; 0 if unknown.
+     */
+    private static int feedPower(int id) {
+        ItemDb.Item info = ItemDb.get().item(id);
+        return info == null ? 0 : Math.max(0, info.feedPower);
     }
 
     private static String itemName(int id) {

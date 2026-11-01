@@ -242,8 +242,8 @@ public class CollectionPanel extends JPanel {
     private static final Color UT_COLOR = new Color(0x8049A8), ST_COLOR = new Color(0xE07B2A), TIER_COLOR = new Color(0xB07D0A);
 
     /**
-     * The top of the history: the item big, its kind (UT / ST / tier, slot, shiny), how often you found it and
-     * since when, the dungeon it drops in (when the game data says) and where you found it yourself.
+     * The top of the history: the item big, its kind (UT / ST / tier, slot, shiny), how often you found it,
+     * the dungeon it drops in (when the game data says) and where you found it yourself.
      */
     private static JComponent itemHeader(ItemDb.Item item, CollectionStore.Entry entry) {
         JLabel icon = new JLabel(CharactersView.sprite(item.id, 72));
@@ -267,9 +267,7 @@ public class CollectionPanel extends JPanel {
         text.add(leftAligned(kind));
         text.add(Box.createVerticalStrut(6));
 
-        String found = entry == null ? "Not found yet"
-                : (entry.count == 1 ? "Found 1 time" : "Found " + entry.count + " times")
-                + (entry.first == null ? "" : ", first on " + longDate(entry.first));
+        String found = entry == null ? "Not found yet" : entry.count == 1 ? "Found 1 time" : "Found " + entry.count + " times";
         JLabel count = new JLabel(found);
         count.setFont(count.getFont().deriveFont(20f));   // smaller, the pixel font draws a 6 that looks like an 8
         count.setForeground(entry == null ? Palette.MUTED : new Color(0xF5C542));
@@ -331,14 +329,6 @@ public class CollectionPanel extends JPanel {
         return l;
     }
 
-    private static String longDate(String isoTime) {
-        try {
-            return java.time.LocalDate.parse(isoTime.substring(0, 10))
-                    .format(java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy", java.util.Locale.ENGLISH));
-        } catch (Exception e) {
-            return isoTime;
-        }
-    }
 
     private static String escapeHtml(String s) {
         return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");

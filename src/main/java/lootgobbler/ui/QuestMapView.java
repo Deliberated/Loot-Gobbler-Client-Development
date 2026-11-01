@@ -425,11 +425,19 @@ public class QuestMapView extends JPanel {
             medal(g, pts[n], p.frame);
         }
 
+        /**
+         * Dash offset that moves the dashes forward along a line as the animation runs. Java needs it 0 or more,
+         * so it counts down within one dash pattern of the given length instead of going negative.
+         */
+        private float march(int pattern, int speed) {
+            return pattern - 1 - Math.floorMod(phase * speed, pattern);
+        }
+
         private void road(Graphics2D g, Shape s, int i) {
             boolean walked = i < cleared, next = current(i + 1) || (active && i == cleared);
             g.setColor(walked ? p.walked : p.road);
             g.setStroke(walked ? new BasicStroke(7, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
-                    : new BasicStroke(6, BasicStroke.CAP_BUTT, BasicStroke.JOIN_ROUND, 1, new float[]{12, 12}, next ? -phase * 2 : 0));
+                    : new BasicStroke(6, BasicStroke.CAP_BUTT, BasicStroke.JOIN_ROUND, 1, new float[]{12, 12}, next ? march(24, 2) : 0));
             g.draw(s);
         }
 
@@ -765,7 +773,7 @@ public class QuestMapView extends JPanel {
                     g.drawLine(a.x, a.y, b.x, b.y);
                 } else if (active && i == cleared - 1) {
                     g.setColor(p.road);
-                    g.setStroke(new BasicStroke(2, BasicStroke.CAP_BUTT, BasicStroke.JOIN_ROUND, 1, new float[]{6, 6}, -phase));
+                    g.setStroke(new BasicStroke(2, BasicStroke.CAP_BUTT, BasicStroke.JOIN_ROUND, 1, new float[]{6, 6}, march(12, 1)));
                     g.drawLine(a.x, a.y, b.x, b.y);
                 }
             }
@@ -833,7 +841,7 @@ public class QuestMapView extends JPanel {
                 } else {
                     boolean next = active && i == cleared;
                     g.setColor(p.road);
-                    g.setStroke(new BasicStroke(3, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 1, new float[]{10, 8}, next ? -phase * 2 : 0));
+                    g.setStroke(new BasicStroke(3, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 1, new float[]{10, 8}, next ? march(18, 2) : 0));
                     g.drawPolyline(new int[]{a.x, b.x, b.x}, new int[]{a.y, a.y, b.y}, 3);
                 }
             }
@@ -887,7 +895,7 @@ public class QuestMapView extends JPanel {
         // -- hero's overworld: a top-down tile map, cave entrances, and fog over the land not yet explored
 
         private void paintAdventure(Graphics2D g, int w, int h) {
-            int t = 30, cols = w / t + 1, rows = h / t + 1;
+            int t = 30, cols = Math.max(n + 7, w / t + 1), rows = Math.max(6, h / t + 1);   // room for every stage
             Random r = new Random(m.id);
             int[] sc = new int[n + 1], sr = new int[n + 1];
             for (int i = 0; i <= n; i++) {
