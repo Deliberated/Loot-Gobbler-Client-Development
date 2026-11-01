@@ -1,6 +1,7 @@
 package lootgobbler;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonElement;
 import com.google.gson.reflect.TypeToken;
 
 import java.io.Reader;
@@ -21,7 +22,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * Each class has 8 progress values in Tomato's order: dex, spd, vit, wis, def, att, mana, life. A stat gains an
  * exaltation at 5, 15, 30, 50 and 75 progress, so 5 per stat and 40 per class at most.
  */
-public final class ExaltStore {
+public final class ExaltStore implements Syncable {
     public static final int DEX = 0, SPD = 1, VIT = 2, WIS = 3, DEF = 4, ATT = 5, MANA = 6, LIFE = 7;
     public static final int[] THRESHOLDS = {5, 15, 30, 50, 75};
     public static final int MAX_PER_STAT = THRESHOLDS.length, MAX_PER_CLASS = 8 * MAX_PER_STAT;
@@ -76,6 +77,58 @@ public final class ExaltStore {
 
     public void onChange(Runnable listener) {
         listeners.add(listener);
+    }
+
+    @Override
+    public String syncKind() {
+        return "exalts";
+    }
+
+    @Override
+    public String syncLabel() {
+        return "Exaltations";
+    }
+
+    @Override
+    public synchronized int syncCount() {
+        return progress.size();
+    }
+
+    @Override
+    public synchronized JsonElement exportSync() {
+        return GSON.toJsonTree(progress);
+    }
+
+    /**
+     * Exaltation progress only grows, so the higher value of each stat wins.
+     */
+    @Override
+    public boolean mergeSync(JsonElement remote) {
+        Map<Integer, int[]> theirs = GSON.fromJson(remote, new TypeToken<TreeMap<Integer, int[]>>() {
+        }.getType());
+        if (theirs == null) return false;
+        boolean changed = false;
+        synchronized (this) {
+            for (Map.Entry<Integer, int[]> t : theirs.entrySet()) {
+                int[] other = t.getValue();
+                if (other == null || other.length < 8) continue;
+                int[] mine = progress.get(t.getKey());
+                if (mine == null) {
+                    progress.put(t.getKey(), other.clone());
+                    changed = true;
+                    continue;
+                }
+                for (int i = 0; i < Math.min(mine.length, other.length); i++) {
+                    if (other[i] > mine[i]) {
+                        mine[i] = other[i];
+                        changed = true;
+                    }
+                }
+            }
+            if (changed) save();
+        }
+        if (changed) for (Runnable l : listeners) l.run();
+        return changed;
     }
 
     /**

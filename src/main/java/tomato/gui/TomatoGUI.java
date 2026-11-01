@@ -123,6 +123,7 @@ public class TomatoGUI {
         lootgobbler.StartupSound.playSaved();
         SwingUtilities.invokeLater(() -> lootgobbler.ui.WelcomeDialog.showOnFirstStart(frame));   // once the window is up
         lootgobbler.Updater.start();   // first check a few seconds after start, then every hour
+        lootgobbler.ServerSync.get().start();          // syncs player data whenever logged in to a server
         lootgobbler.GobblerServer.get().reconnect();   // to the saved Loot Gobbler server, if any
     }
 

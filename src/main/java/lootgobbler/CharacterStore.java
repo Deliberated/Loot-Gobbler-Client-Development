@@ -1,6 +1,7 @@
 package lootgobbler;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonElement;
 import com.google.gson.reflect.TypeToken;
 import packets.data.StatData;
 import packets.data.enums.StatType;
@@ -26,7 +27,7 @@ import java.util.function.IntSupplier;
  * level, fame, stats maxed, flags, when it was last played and its fame over time. Saved to characters.json.
  * importList() and live() run on the packet/network threads.
  */
-public final class CharacterStore {
+public final class CharacterStore implements Syncable {
     public static final class Sample {
         public long t;
         public long fame;
@@ -44,6 +45,7 @@ public final class CharacterStore {
         public long fame;
         public int statsMaxed;
         public boolean seasonal, crucible, ritual, favorite;
+        public long favoriteAt;        // when favorite last changed (epoch ms), so syncing keeps the latest choice
         public boolean backpack, extender;
         public boolean alive = true;
         public String diedBy;          // "game" (Dead tag in the char list) or "user" (gravestone clicked); null while alive
@@ -152,7 +154,10 @@ public final class CharacterStore {
                     c.equipment = equip;
                 }
                 Boolean fav = favorite(r.rawTags);
-                if (fav != null) c.favorite = fav;   // only when the game actually sends the flag
+                if (fav != null && fav != c.favorite) {   // only when the game actually sends the flag
+                    c.favorite = fav;
+                    c.favoriteAt = System.currentTimeMillis();
+                }
                 String dead = r.rawTags.get("Dead");
                 if ("true".equalsIgnoreCase(dead)) {
                     c.alive = false;
@@ -561,7 +566,10 @@ public final class CharacterStore {
                 case SEASONAL -> c.seasonal = !c.seasonal;
                 case CRUCIBLE -> c.crucible = !c.crucible;
                 case RITUAL -> c.ritual = !c.ritual;
-                case FAVORITE -> c.favorite = !c.favorite;
+                case FAVORITE -> {
+                    c.favorite = !c.favorite;
+                    c.favoriteAt = System.currentTimeMillis();
+                }
                 case DEAD -> {
                     c.alive = !c.alive;
                     c.diedBy = c.alive ? null : "user";
@@ -654,6 +662,142 @@ public final class CharacterStore {
         } catch (Exception e) {
             System.err.println("Could not save char-list.xml: " + e.getMessage());
         }
+    }
+
+    @Override
+    public String syncKind() {
+        return "characters";
+    }
+
+    @Override
+    public String syncLabel() {
+        return "Characters";
+    }
+
+    @Override
+    public synchronized int syncCount() {
+        return chars.size();
+    }
+
+    @Override
+    public synchronized JsonElement exportSync() {
+        return GSON.toJsonTree(chars);
+    }
+
+    /**
+     * Characters only one side knows are added. For characters both know, the more recently played version wins,
+     * but whatever it does not know yet (a fresh install that played before its first sync: equipment
+     * enchantments, pet, slots, ...) is taken from the other one. The fame samples of both are combined, so the
+     * fame history survives a reinstall.
+     */
+    @Override
+    public boolean mergeSync(JsonElement remote) {
+        Map<Integer, Char> theirs = GSON.fromJson(remote, new TypeToken<LinkedHashMap<Integer, Char>>() {
+        }.getType());
+        if (theirs == null) return false;
+        boolean changed = false;
+        synchronized (this) {
+            for (Map.Entry<Integer, Char> t : theirs.entrySet()) {
+                Char other = t.getValue();
+                if (other.samples == null) other.samples = new ArrayList<>();
+                Char mine = chars.get(t.getKey());
+                if (mine == null) {
+                    chars.put(t.getKey(), other);
+                    changed = true;
+                    continue;
+                }
+                List<Sample> samples = mergeSamples(mine.samples, other.samples);
+                Char winner = other.lastPlayed > mine.lastPlayed ? other : mine;
+                Char loser = winner == mine ? other : mine;
+                if (fillUnknown(winner, loser) && winner == mine) changed = true;
+                if (winner != mine || mine.samples == null || samples.size() != mine.samples.size()) changed = true;
+                winner.samples = samples;
+                chars.put(t.getKey(), winner);
+            }
+            if (changed) save();
+        }
+        if (changed) fire();
+        return changed;
+    }
+
+    /**
+     * Fills what n does not know (null / 0 / empty) from o.
+     *
+     * @return True if n changed.
+     */
+    private static boolean fillUnknown(Char n, Char o) {
+        boolean c = false;
+        if (n.equipment == null && o.equipment != null) {
+            n.equipment = o.equipment;
+            n.enchants = o.enchants;
+            n.enchantIds = o.enchantIds;
+            c = true;
+        } else if (n.equipment != null && Arrays.equals(n.equipment, o.equipment)) {   // same gear: same enchantments
+            if (n.enchants == null && o.enchants != null) {
+                n.enchants = o.enchants;
+                c = true;
+            }
+            if (n.enchantIds == null && o.enchantIds != null) {
+                n.enchantIds = o.enchantIds;
+                c = true;
+            }
+        }
+        if (n.slots == null && o.slots != null) {
+            n.slots = o.slots;
+            n.slotEnchantIds = o.slotEnchantIds;
+            c = true;
+        }
+        if (n.petSkin == 0 && o.petSkin != 0) {
+            n.petSkin = o.petSkin;
+            n.petName = o.petName;
+            c = true;
+        }
+        if (n.skin == 0 && o.skin != 0) {
+            n.skin = o.skin;
+            c = true;
+        }
+        if ((n.className == null || n.className.isEmpty()) && o.className != null && !o.className.isEmpty()) {
+            n.className = o.className;
+            c = true;
+        }
+        if (n.level == 0 && o.level > 0) {
+            n.level = o.level;
+            c = true;
+        }
+        if (n.fame == 0 && o.fame > 0) {
+            n.fame = o.fame;
+            c = true;
+        }
+        if (n.statsMaxed == 0 && o.statsMaxed > 0) {
+            n.statsMaxed = o.statsMaxed;
+            c = true;
+        }
+        if (!n.backpack && o.backpack) {   // a backpack or extender cannot be lost
+            n.backpack = true;
+            c = true;
+        }
+        if (!n.extender && o.extender) {
+            n.extender = true;
+            c = true;
+        }
+        // The favorite flag goes by when it was set, not by when the character was played. Data from before
+        // favoriteAt existed has 0 on both sides: then a set flag is kept.
+        boolean takeTheirs = o.favoriteAt > n.favoriteAt || (o.favoriteAt == 0 && n.favoriteAt == 0 && o.favorite);
+        if (takeTheirs && (n.favorite != o.favorite || n.favoriteAt != o.favoriteAt)) {
+            n.favorite = o.favorite;
+            n.favoriteAt = o.favoriteAt;
+            c = true;
+        }
+        return c;
+    }
+
+    private static List<Sample> mergeSamples(List<Sample> a, List<Sample> b) {
+        TreeMap<Long, Sample> byTime = new TreeMap<>();
+        if (a != null) for (Sample s : a) byTime.put(s.t, s);
+        if (b != null) for (Sample s : b) byTime.putIfAbsent(s.t, s);
+        List<Sample> merged = new ArrayList<>(byTime.values());
+        return merged.size() > MAX_SAMPLES ? new ArrayList<>(merged.subList(merged.size() - MAX_SAMPLES, merged.size()))
+                : merged;
     }
 
     private void fire() {

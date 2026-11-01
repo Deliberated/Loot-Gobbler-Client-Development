@@ -1,6 +1,7 @@
 package lootgobbler;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import tomato.version.Version;
@@ -95,15 +96,25 @@ public final class GobblerServer {
         public Status status;
     }
 
-    /** An error answer from the server (code is its stable "error" field), or "unreachable" if there was none. */
+    /** One of the player's documents on the server (see Syncable). */
+    public static final class DataItem {
+        public long revision;
+        public long updatedAt;
+        public JsonElement data;
+    }
+
+    /** An error answer from the server (code is its stable "error" field). */
     public static final class ServerException extends RuntimeException {
         public final int status;
         public final String code;
+        /** On a revision conflict: the document the server has. */
+        public final DataItem current;
 
-        ServerException(int status, String code, String message) {
+        ServerException(int status, String code, String message, DataItem current) {
             super(message);
             this.status = status;
             this.code = code;
+            this.current = current;
         }
     }
 
@@ -339,11 +350,36 @@ public final class GobblerServer {
         return call("DELETE", "/admin/moderator-tokens/" + id, null, Void.class);
     }
 
-    /** The message to show for a failed call. */
-    public static String message(Throwable t) {
+    /** All of the player's documents on the server, by kind. */
+    public CompletableFuture<Map<String, DataItem>> data() {
+        return call("GET", "/me/data", null, DataResponse.class).thenApply(r -> r.items);
+    }
+
+    /**
+     * Uploads a document. baseRevision is the revision it was based on (0 for a new one); if the server has a
+     * different one, the call fails with a ServerException whose code is "revision_conflict" and whose
+     * {@link ServerException#current} holds the server's version.
+     *
+     * @return Future holding the new revision.
+     */
+    public CompletableFuture<Long> putData(String kind, long baseRevision, JsonElement data) {
+        JsonObject body = new JsonObject();
+        body.addProperty("baseRevision", baseRevision);
+        body.add("data", data);
+        return call("PUT", "/me/data/" + kind, body, PutResponse.class).thenApply(r -> r.revision);
+    }
+
+    /** The cause behind CompletableFuture wrappers. */
+    public static Throwable unwrap(Throwable t) {
         while ((t instanceof CompletionException || t instanceof java.util.concurrent.ExecutionException) && t.getCause() != null) {
             t = t.getCause();
         }
+        return t;
+    }
+
+    /** The message to show for a failed call. */
+    public static String message(Throwable t) {
+        t = unwrap(t);
         if (t instanceof ServerException) return t.getMessage();
         if (t instanceof java.net.ConnectException || t instanceof java.net.http.HttpConnectTimeoutException) {
             return "Server not reachable";
@@ -368,6 +404,14 @@ public final class GobblerServer {
         List<OpenToken> tokens = List.of();
     }
 
+    private static final class DataResponse {
+        Map<String, DataItem> items = Map.of();
+    }
+
+    private static final class PutResponse {
+        long revision;
+    }
+
     private static final class Ping {
         String yourIp;
         User user;
@@ -383,7 +427,7 @@ public final class GobblerServer {
         try {
             req = HttpRequest.newBuilder(URI.create(url + "/api/v1" + path)).timeout(Duration.ofSeconds(20));
         } catch (IllegalArgumentException e) {
-            return CompletableFuture.failedFuture(new ServerException(0, "bad_address", "That is not a valid address"));
+            return CompletableFuture.failedFuture(new ServerException(0, "bad_address", "That is not a valid address", null));
         }
         req.method(method, body == null ? HttpRequest.BodyPublishers.noBody()
                 : HttpRequest.BodyPublishers.ofString(GSON.toJson(body)));
@@ -406,10 +450,11 @@ public final class GobblerServer {
             String code = o.has("error") ? o.get("error").getAsString() : "http_" + res.statusCode();
             String message = o.has("message") ? o.get("message").getAsString() : "HTTP " + res.statusCode();
             if (o.has("retryAfter")) message += " (" + minutes(o.get("retryAfter").getAsLong()) + ")";
-            return new ServerException(res.statusCode(), code, message);
+            DataItem current = o.has("current") ? GSON.fromJson(o.get("current"), DataItem.class) : null;
+            return new ServerException(res.statusCode(), code, message, current);
         } catch (Exception notJson) {
             // e.g. nginx proxy manager's own error page when the server container is down
-            return new ServerException(res.statusCode(), "http_" + res.statusCode(), "HTTP " + res.statusCode());
+            return new ServerException(res.statusCode(), "http_" + res.statusCode(), "HTTP " + res.statusCode(), null);
         }
     }
 

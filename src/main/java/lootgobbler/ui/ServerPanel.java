@@ -6,6 +6,7 @@ import lootgobbler.GobblerServer.IssuedToken;
 import lootgobbler.GobblerServer.OpenToken;
 import lootgobbler.GobblerServer.State;
 import lootgobbler.GobblerServer.User;
+import lootgobbler.ServerSync;
 import lootgobbler.Themes;
 
 import javax.swing.*;
@@ -26,6 +27,7 @@ import java.util.concurrent.CompletableFuture;
  */
 public class ServerPanel extends JPanel {
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("d MMM yyyy, HH:mm", Locale.ENGLISH);
+    private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss", Locale.ENGLISH);
     private static final String[] VALIDITY = {"1 hour", "24 hours", "3 days", "7 days"};
     private static final int[] VALIDITY_HOURS = {1, 24, 72, 168};
 
@@ -33,8 +35,10 @@ public class ServerPanel extends JPanel {
 
     private final JPanel connectionBody = body();
     private final JPanel accountBody = body();
+    private final JPanel syncBody = body();
     private final JPanel moderationBody = body();
     private final JPanel tokensBody = body();
+    private final Section sync;
     private final Section moderation;
     private final Section tokens;
     private final JLabel connectionFeedback = feedback();
@@ -65,6 +69,8 @@ public class ServerPanel extends JPanel {
         password.addActionListener(e -> login());
         tokenValidity.setSelectedIndex(1);
 
+        sync = new Section("Sync", Palette.GREEN, syncBody)
+                .actions(button("Sync now", null, () -> ServerSync.get().syncNow()));
         moderation = new Section("Moderation", Palette.PURPLE, moderationBody)
                 .actions(button("Refresh", null, this::refreshModeration));
         tokens = new Section("Moderator Tokens", Palette.PURPLE, tokensBody);
@@ -75,6 +81,8 @@ public class ServerPanel extends JPanel {
         sections.add(new Section("Connection", Palette.BLUE, connectionBody));
         sections.add(Box.createVerticalStrut(8));
         sections.add(new Section("Account", Palette.GOLD, accountBody));
+        sections.add(Box.createVerticalStrut(8));
+        sections.add(sync);
         sections.add(Box.createVerticalStrut(8));
         sections.add(moderation);
         sections.add(Box.createVerticalStrut(8));
@@ -88,6 +96,7 @@ public class ServerPanel extends JPanel {
         add(scroll);
 
         server.onChange(() -> SwingUtilities.invokeLater(this::rebuild));
+        ServerSync.get().onChange(() -> SwingUtilities.invokeLater(this::rebuild));
         rebuild();
     }
 
@@ -103,11 +112,13 @@ public class ServerPanel extends JPanel {
             lastIssued = null;
             if (mod) refreshModeration();
         }
+        sync.setVisible(u != null);
         moderation.setVisible(mod);
         tokens.setVisible(mod && u.atLeastAdmin());
 
         buildConnection();
         buildAccount();
+        buildSync();
         buildModeration();
         buildTokens();
         revalidate();
@@ -318,6 +329,58 @@ public class ServerPanel extends JPanel {
             redeemToken.setText("");
             accountFeedback.setText("You are now " + u.roleName().toLowerCase(Locale.ROOT) + ".");
         }));
+    }
+
+    // --- sync ---
+
+    private void buildSync() {
+        syncBody.removeAll();
+        ServerSync s = ServerSync.get();
+        switch (s.phase()) {
+            case OFF -> syncBody.add(statusLine(Palette.MUTED, "Starts once you are logged in."));
+            case SYNCING -> syncBody.add(statusLine(Palette.MUTED, "Syncing..."));
+            case UP_TO_DATE -> syncBody.add(statusLine(Palette.GREEN, "Up to date"
+                    + (s.lastSync() > 0 ? " - last sync " + TIME.format(Instant.ofEpochMilli(s.lastSync())
+                    .atZone(ZoneId.systemDefault())) : "")));
+            case WAITING -> syncBody.add(statusLine(Palette.GOLD, "New changes are uploaded within a minute"));
+            case OFFLINE -> {
+                syncBody.add(statusLine(Palette.RED, "Server not reachable: " + s.message()));
+                syncBody.add(statusLine(Palette.MUTED, "Your changes are kept on this PC and uploaded when it is back."));
+            }
+            case OTHER_ACCOUNT -> {
+                syncBody.add(statusLine(Palette.GOLD, "The data on this PC was synced as " + s.message() + "."));
+                syncBody.add(statusLine(Palette.MUTED, "Syncing is paused so two players' data are not mixed. "
+                        + "If it is yours, merge it into this account."));
+                JPanel buttons = row();
+                buttons.add(button("Use for this account", "primary", () -> {
+                    if (confirm("Merge the data on this PC into " + server.user().ign + "'s account?", "Use data")) {
+                        s.adoptForThisAccount();
+                    }
+                }));
+                syncBody.add(buttons);
+            }
+        }
+        for (ServerSync.Kind k : s.kinds()) {
+            syncBody.add(info(k.store.syncLabel(), k.store.syncCount() + " - " + transfers(k)));
+        }
+    }
+
+    /**
+     * Which way this kind's data last went, oldest first, e.g. "server -> client 18:42:01, client -> server 18:43:10".
+     */
+    private static String transfers(ServerSync.Kind k) {
+        String down = k.lastDown() > 0 ? "server -> client " + time(k.lastDown()) : null;
+        String up = k.lastUp() > 0 ? "client -> server " + time(k.lastUp()) : null;
+        String rev = k.revision() > 0 ? "revision " + k.revision() : "not on the server yet";
+        if (down != null && up != null) {
+            return rev + " - " + (k.lastDown() <= k.lastUp() ? down + ", " + up : up + ", " + down);
+        }
+        if (down != null || up != null) return rev + " - " + (down != null ? down : up);
+        return k.syncedAt() > 0 ? rev + " - already the same on both sides (" + time(k.syncedAt()) + ")" : rev;
+    }
+
+    private static String time(long millis) {
+        return TIME.format(Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()));
     }
 
     // --- moderation ---
