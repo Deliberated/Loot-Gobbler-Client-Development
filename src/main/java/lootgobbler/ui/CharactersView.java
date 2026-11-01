@@ -352,8 +352,8 @@ public class CharactersView extends JPanel {
         // right side: banners on top; pet, stats, gravestone and star below
         JPanel banners = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
         banners.setOpaque(false);
-        banners.add(new Banner("Seasonal", SEASONAL_BG, c.seasonal, () -> toggle(c, CharacterStore.Flag.SEASONAL)));
-        banners.add(new Banner("Crucible", CRUCIBLE_BG, c.crucible, () -> toggle(c, CharacterStore.Flag.CRUCIBLE)));
+        banners.add(new Banner("Seasonal", SEASONAL_BG, c.seasonal));
+        banners.add(new Banner("Crucible", CRUCIBLE_BG, c.crucible));
 
         OutlinedText stats = new OutlinedText(c.statsMaxed + "/8", c.statsMaxed == 8 ? STATS_MAXED : STATS_OPEN, 34f);
         stats.setToolTipText(c.statsMaxed + " of 8 stats maxed");
@@ -794,18 +794,14 @@ public class CharactersView extends JPanel {
         private final Color bg;
         private final boolean active;
 
-        Banner(String text, Color bg, boolean active, Runnable onClick) {
+        /**
+         * Shows a flag from the game data; it can not be changed by hand.
+         */
+        Banner(String text, Color bg, boolean active) {
             this.text = text.toUpperCase(Locale.ROOT);
             this.bg = bg;
             this.active = active;
-            setToolTipText(text + (active ? " (click to clear)" : " (click to set)"));
-            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-            addMouseListener(new MouseAdapter() {
-                @Override
-                public void mouseClicked(MouseEvent e) {
-                    onClick.run();
-                }
-            });
+            setToolTipText(active ? text + " character" : "Not " + text.toLowerCase(Locale.ROOT));
         }
 
         private static final Font FONT = new Font(Themes.HEAD_FONT, Font.PLAIN, 24);

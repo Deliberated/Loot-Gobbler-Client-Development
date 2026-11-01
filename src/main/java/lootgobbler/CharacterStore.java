@@ -561,7 +561,7 @@ public final class CharacterStore {
         return false;
     }
 
-    public enum Flag {SEASONAL, CRUCIBLE, RITUAL, FAVORITE, DEAD}
+    public enum Flag {FAVORITE, DEAD}
 
     /**
      * Manual toggle from the UI. Game data overwrites it again whenever that information is available.
@@ -571,9 +571,6 @@ public final class CharacterStore {
             Char c = chars.get(charId);
             if (c == null) return;
             switch (flag) {
-                case SEASONAL -> c.seasonal = !c.seasonal;
-                case CRUCIBLE -> c.crucible = !c.crucible;
-                case RITUAL -> c.ritual = !c.ritual;
                 case FAVORITE -> c.favorite = !c.favorite;
                 case DEAD -> {
                     c.alive = !c.alive;
