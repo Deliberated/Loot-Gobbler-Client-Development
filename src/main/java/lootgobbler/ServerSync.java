@@ -15,7 +15,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Keeps the local data (collection, characters, exalts, pets, DPS history) in sync with the Loot Gobbler server,
+ * Keeps the local data (collection, characters, exalts, pets, DPS history, profile) in sync with the Loot Gobbler server,
  * which is the main store.
  * <ul>
  * <li>After logging in: download everything, merge it into the local data, upload the merged result.</li>
@@ -71,7 +71,8 @@ public final class ServerSync {
 
     private final GobblerServer server = GobblerServer.get();
     private final List<Kind> kinds = List.of(new Kind(CollectionStore.get()), new Kind(CharacterStore.get()),
-            new Kind(ExaltStore.get()), new Kind(PetStore.get()), new Kind(DpsHistory.get()));
+            new Kind(ExaltStore.get()), new Kind(PetStore.get()), new Kind(DpsHistory.get()),
+            new Kind(PlayerProfile.get()));
     private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
     private final ScheduledExecutorService exec = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "server-sync");

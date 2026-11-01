@@ -115,8 +115,9 @@ public class TomatoGUI {
         }
         // Built after the menu so the sound/filter flags are already loaded from settings.
         tabbedPane.addTab("Settings", new SettingsPanel());
+        tabbedPane.addTab("Guild", new lootgobbler.ui.GuildPanel());
         tabbedPane.addTab("Server", new lootgobbler.ui.ServerPanel());
-        tabbedPane.restoreOrder("Profile", "Inventory", "Characters", "DPS Logger", "Social", "Server", "Settings");
+        tabbedPane.restoreOrder("Profile", "Inventory", "Characters", "DPS Logger", "Social", "Guild", "Server", "Settings");
         makeFrame();
 
         frame.setVisible(true);

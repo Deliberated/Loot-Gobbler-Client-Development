@@ -103,6 +103,51 @@ public final class GobblerServer {
         public JsonElement data;
     }
 
+    /** A guild member and their leaderboard numbers. */
+    public static final class Member {
+        public long id;
+        public String ign = "";
+        public int guildRank;
+        public long lastActive;   // last upload of any data, epoch ms (0 = never)
+        public int items;         // different UT/ST items collected
+        public int finds;         // all copies found
+        public long fame;         // current fame of all living characters
+        public int exalts;        // exaltations over all classes
+        public int characters;    // living characters
+        public int maxed;         // living characters with all 8 stats maxed
+    }
+
+    public static final class Leaderboard {
+        public String guild = "";
+        public List<Member> members = List.of();
+    }
+
+    /** One drop in the guild feed. time is the dropping player's local time ("2026-11-01T16:08:28"). */
+    public static final class GuildDrop {
+        public long userId;
+        public String ign = "";
+        public int itemId;
+        public String time = "";
+        public int enchants = -1;
+        public String where = "";
+        public String bag = "";
+        public List<Integer> enchantIds;
+    }
+
+    public static final class GuildDrops {
+        public String guild = "";
+        public List<GuildDrop> drops = List.of();
+    }
+
+    /** A guild member's profile: characters (without fame history), exaltations and collection counts. */
+    public static final class MemberProfile {
+        public String guild = "";
+        public Member member;
+        public Map<String, CharacterStore.Char> characters = Map.of();
+        public Map<String, int[]> exalts = Map.of();
+        public Map<String, Integer> collection = Map.of();   // item id -> copies found
+    }
+
     /** An error answer from the server (code is its stable "error" field). */
     public static final class ServerException extends RuntimeException {
         public final int status;
@@ -367,6 +412,22 @@ public final class GobblerServer {
         body.addProperty("baseRevision", baseRevision);
         body.add("data", data);
         return call("PUT", "/me/data/" + kind, body, PutResponse.class).thenApply(r -> r.revision);
+    }
+
+    /**
+     * Your guild's leaderboard. Fails with code "no_guild" until your client has seen your guild in the game.
+     */
+    public CompletableFuture<Leaderboard> leaderboard() {
+        return call("GET", "/guild/leaderboard", null, Leaderboard.class);
+    }
+
+    /** Your guild's most recent drops, newest first (at most 200). */
+    public CompletableFuture<GuildDrops> guildDrops(int limit) {
+        return call("GET", "/guild/drops?limit=" + limit, null, GuildDrops.class);
+    }
+
+    public CompletableFuture<MemberProfile> memberProfile(long userId) {
+        return call("GET", "/guild/members/" + userId, null, MemberProfile.class);
     }
 
     /** The cause behind CompletableFuture wrappers. */

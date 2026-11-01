@@ -17,6 +17,7 @@ Added in this fork:
 - **Profile → Dungeon Stats**: favourite dungeons and your peak boss DPS per dungeon (last run vs. best).
 - **Social → Chat**: one striped log (time, channel, name: text) with a Channels sidebar (Clear Chat, per-channel toggles).
 - **Settings tab**: Sound & Pings, Loot Filter and Theme in one place (these replace the old Edit → Sound / Theme / Filter Loot menus).
+- **Guild tab** (needs a Loot Gobbler server): your in-game guild's leaderboard (items, finds, fame, exaltations, characters, maxed; sortable), the guild's recent UT/ST drops, and member profiles (characters with gear, exaltations and collection). Click a player to open their profile.
 - **Server tab**: connect to a [Loot Gobbler server](https://github.com/Deliberated/Loot-Gobbler-Server): log in or register, and test the connection. Once you're logged in, your collection, characters, exaltations, pets and DPS history are synced with the server, so several PCs share one set of data. Changes are uploaded within a minute, or later if the server can't be reached. Moderators and admins approve new accounts there, and admins create moderator tokens.
 - **Status bar**: sniffer state and a Start/Stop Sniffer button.
 - **Window** reopens at the size, position and maximized state it had when closed. The tab row scrolls sideways instead of wrapping, and tabs can be reordered by dragging (the order is remembered).

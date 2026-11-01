@@ -244,6 +244,8 @@ public final class CharacterStore implements Syncable {
             playerName = name;
             PropertiesManager.setProperties(KEY_PLAYER_NAME, name);   // still shown after a restart, before login
         }
+        StatData rank = p.stat.get(StatType.GUILD_RANK_STAT);
+        PlayerProfile.get().update(name, p.getStatGuild(), rank == null ? null : rank.statValue);
         try {
             boolean sampled;
             synchronized (this) {
