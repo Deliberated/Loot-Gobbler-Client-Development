@@ -21,7 +21,7 @@ Added in this fork:
 - **ST Sets** (Collection → ST Sets): every 4-piece ST set with its skin, which pieces you own, filters by status and class, and progress per class.
 - **Vault diagnostics**: entering the vault writes `vault-debug.txt` (which packets arrived, and any that could not be decoded) and, if the vault packet decodes, `vault-contents.txt`.
 - **Item history**: click an item in the Collection grid or log to see every time you found it (drop, vault or inventory), where, and with how many enchantments.
-- **Themes**: Gobbler Gold (default), Goblin Green, Treasure Hoard, Burlap Sack, Gem Vault and Amethyst Moss (colors taken from the Loot Gobbler artwork; previews in `theme-pocs/`), all with pixel fonts (Jersey 10 for headings, Jersey 15 for text), built on FlatLaf. Each palette is `src/main/resources/lootgobbler/themes/<Name>Laf.properties`, and the shared styling is `common.properties`.
+- **Themes**: Gobbler Gold, Goblin Green, Treasure Hoard (default), Burlap Sack, Gem Vault and Amethyst Moss (colors taken from the Loot Gobbler artwork; previews in `theme-pocs/`), all with pixel fonts (Jersey 10 for headings, Jersey 15 for text), built on FlatLaf. Each palette is `src/main/resources/lootgobbler/themes/<Name>Laf.properties`, and the shared styling is `common.properties`.
 
 It never sends, blocks or modifies game packets.
 
@@ -37,7 +37,8 @@ It never sends, blocks or modifies game packets.
 .\gradlew.bat run          # build and start
 .\gradlew.bat shadowJar    # single jar -> build\libs\LootGobbler-<version>.jar
 java -jar build\libs\LootGobbler-0.4.0.jar   # run it from the project root
-.\gradlew.bat packageExe   # build\dist\LootGobbler\LootGobbler.exe (Java bundled) + LootGobbler-<version>-win.zip
+.\gradlew.bat packageExe        # build\dist\LootGobbler\LootGobbler.exe (Java bundled) + LootGobbler-portable.zip
+.\gradlew.bat packageInstaller  # build\dist\LootGobbler.exe setup (needs WiX Toolset 3.x on PATH)
 ```
 
 The exe keeps all its data (settings, collection, characters, extracted assets) in its own folder, so the whole

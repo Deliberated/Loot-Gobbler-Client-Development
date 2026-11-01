@@ -33,8 +33,8 @@ import util.PropertiesManager;
  */
 public class TomatoGUI {
 
-    private static final int windowWidth = 886;
-    private static final int windowHeight = 593;
+    private static final int windowWidth = 1799;
+    private static final int windowHeight = 1062;
     private static int fontSize = 16;
     private static int fontStyle = 0;
     private static String fontName = lootgobbler.Themes.PIXEL_FONT;
@@ -113,11 +113,14 @@ public class TomatoGUI {
         }
         // Built after the menu so the sound/filter flags are already loaded from settings.
         tabbedPane.addTab("Settings", new SettingsPanel());
-        tabbedPane.restoreOrder();
+        tabbedPane.restoreOrder("Collection", "Characters", "DPS Logger", "Chat", "Discord", "Statistics",
+                "Daily Quests", "My Info", "Settings", "Characters Old");
         makeFrame();
 
         frame.setVisible(true);
         lootgobbler.StartupSound.playSaved();
+        SwingUtilities.invokeLater(() -> lootgobbler.ui.WelcomeDialog.showOnFirstStart(frame));   // once the window is up
+        lootgobbler.Updater.start();   // first check a few seconds after start, then every hour
     }
 
     /**

@@ -79,7 +79,7 @@ public class TomatoMenuBar implements ActionListener {
         chat.add(clearChat);
         setChatCheckbox();
 
-        soundSlider = new JSlider(0, 100, 100);
+        soundSlider = new JSlider(0, 100, Sound.DEFAULT_VOLUME);
         soundSlider.addChangeListener(this::sliderChange);
         chatPing = new JCheckBoxMenuItem("Ping PM Chat");
         chatPing.addActionListener(this);
@@ -470,7 +470,9 @@ public class TomatoMenuBar implements ActionListener {
             orangeBagSound.setSelected(orange.equals("true"));
             Sound.playOrangeBagSound = orange.equals("true");
         } else {
-            Sound.playOrangeBagSound = false;
+            orangeBagSound.setSelected(true);
+            Sound.playOrangeBagSound = true;
+            PropertiesManager.setProperties("orangeBagSound", "true");
         }
 
         String red = PropertiesManager.getProperty("redBagSound");
@@ -592,11 +594,11 @@ public class TomatoMenuBar implements ActionListener {
         LootGUI.filterGoldBag = filterGoldBag.isSelected();
 
         String eggBag = PropertiesManager.getProperty("filterEggBag");
-        filterEggBag.setSelected(eggBag == null || eggBag.equals("true"));
+        filterEggBag.setSelected("true".equals(eggBag));
         LootGUI.filterEggBag = filterEggBag.isSelected();
 
         String blueBag = PropertiesManager.getProperty("filterBlueBag");
-        filterBlueBag.setSelected(blueBag == null || blueBag.equals("true"));
+        filterBlueBag.setSelected("true".equals(blueBag));
         LootGUI.filterBlueBag = filterBlueBag.isSelected();
 
         String tealBag = PropertiesManager.getProperty("filterTealBag");
@@ -604,15 +606,15 @@ public class TomatoMenuBar implements ActionListener {
         LootGUI.filterTealBag = filterTealBag.isSelected();
 
         String purpleBag = PropertiesManager.getProperty("filterPurpleBag");
-        filterPurpleBag.setSelected(purpleBag == null || purpleBag.equals("true"));
+        filterPurpleBag.setSelected("true".equals(purpleBag));
         LootGUI.filterPurpleBag = filterPurpleBag.isSelected();
 
         String pinkBag = PropertiesManager.getProperty("filterPinkBag");
-        filterPinkBag.setSelected(pinkBag == null || pinkBag.equals("true"));
+        filterPinkBag.setSelected("true".equals(pinkBag));
         LootGUI.filterPinkBag = filterPinkBag.isSelected();
 
         String brownBag = PropertiesManager.getProperty("filterBrownBag");
-        filterBrownBag.setSelected(brownBag == null || brownBag.equals("true"));
+        filterBrownBag.setSelected("true".equals(brownBag));
         LootGUI.filterBrownBag = filterBrownBag.isSelected();
     }
 

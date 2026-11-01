@@ -37,13 +37,13 @@ public class LootGUI extends JPanel {
     // glow palette (green/blue/purple/gold) so the two never read as the same
     // signal.
     private static final Color PING_COLOR = new Color(255, 64, 64);
-    public static boolean filterWhiteBag = false;
-    public static boolean filterOrangeBag = false;
-    public static boolean filterRedBag = false;
-    public static boolean filterGoldBag = false;
+    public static boolean filterWhiteBag = true;
+    public static boolean filterOrangeBag = true;
+    public static boolean filterRedBag = true;
+    public static boolean filterGoldBag = true;
     public static boolean filterEggBag = false;
     public static boolean filterBlueBag = false;
-    public static boolean filterTealBag = false;
+    public static boolean filterTealBag = true;
     public static boolean filterPurpleBag = false;
     public static boolean filterPinkBag = false;
     public static boolean filterBrownBag = false;

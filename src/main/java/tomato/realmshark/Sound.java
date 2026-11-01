@@ -9,7 +9,8 @@ import java.nio.file.Paths;
 
 public class Sound {
 
-    private static float volume = 0;
+    public static final int DEFAULT_VOLUME = 77;
+    private static float volume = 20.0f * (float) Math.log10(DEFAULT_VOLUME / 100.0);
 
     private Clip soundClip;
 
@@ -32,7 +33,7 @@ public class Sound {
     public static boolean playPartySound = false;
     public static boolean playGuildSound = false;
     public static boolean playWhiteBagSound = true;
-    public static boolean playOrangeBagSound = false;
+    public static boolean playOrangeBagSound = true;
     public static boolean playRedBagSound = false;
     public static boolean playGoldBagSound = false;
     public static boolean playEggBagSound = false;

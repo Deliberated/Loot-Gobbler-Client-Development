@@ -69,12 +69,14 @@ public class TabBar extends JPanel {
     }
 
     /**
-     * Applies the saved tab order and opens the leftmost tab. Call after all tabs are added.
+     * Applies the saved tab order (or defaultOrder if none is saved yet) and opens the leftmost tab. Call after all
+     * tabs are added.
      */
-    public void restoreOrder() {
+    public void restoreOrder(String... defaultOrder) {
         String saved = PropertiesManager.getProperty(KEY_ORDER);
-        if (saved != null && !saved.isBlank()) {
-            List<String> names = Arrays.asList(saved.split("\\|"));
+        List<String> names = saved != null && !saved.isBlank() ? Arrays.asList(saved.split("\\|"))
+                : Arrays.asList(defaultOrder);
+        if (!names.isEmpty()) {
             order.sort((a, b) -> Integer.compare(rank(names, a.title), rank(names, b.title)));
             snapAll();
         }

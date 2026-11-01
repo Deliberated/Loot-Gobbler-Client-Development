@@ -52,14 +52,14 @@ public class Themes {
      * Maps saved values (including those of older versions) to a current theme key.
      */
     public static String normalize(String key) {
-        if (key == null) return GOBBLER_GOLD;
+        if (key == null) return TREASURE_HOARD;   // default for new users
         return switch (key) {
             case GOBBLER_GOLD, GOBLIN_GREEN, TREASURE_HOARD, BURLAP_SACK, GEM_VAULT, AMETHYST_MOSS -> key;
             case "goblinBurlap", "leatherSatchel", "mossPouch" -> BURLAP_SACK;   // removed themes: closest replacement
             case "dark", "darcula", "contrastDark", "solarizedDark" -> GOBLIN_GREEN;
             case "ember" -> TREASURE_HOARD;
             case "midnight", "purp" -> GEM_VAULT;
-            default -> GOBBLER_GOLD;
+            default -> TREASURE_HOARD;
         };
     }
 

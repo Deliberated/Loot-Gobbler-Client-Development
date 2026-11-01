@@ -48,7 +48,7 @@ public class SettingsPanel extends JPanel {
     private JPanel soundBody() {
         JPanel body = body();
 
-        JSlider volume = new JSlider(0, 100, intProperty("soundVolume", 100));
+        JSlider volume = new JSlider(0, 100, intProperty("soundVolume", Sound.DEFAULT_VOLUME));
         volume.setOpaque(false);
         volume.addChangeListener(e -> {
             if (volume.getValueIsAdjusting()) return;
@@ -67,7 +67,7 @@ public class SettingsPanel extends JPanel {
         grid.add(toggle("Party ping", "chatPingParty", false, v -> Sound.playPartySound = v, Sound.party));
         grid.add(toggle("Guild ping", "chatPingGuild", false, v -> Sound.playGuildSound = v, Sound.guild));
         grid.add(toggle("White bag", "whiteBagSound", true, v -> Sound.playWhiteBagSound = v, Sound.whitebag));
-        grid.add(toggle("Orange bag", "orangeBagSound", false, v -> Sound.playOrangeBagSound = v, Sound.orangebag));
+        grid.add(toggle("Orange bag", "orangeBagSound", true, v -> Sound.playOrangeBagSound = v, Sound.orangebag));
         grid.add(toggle("Red bag", "redBagSound", false, v -> Sound.playRedBagSound = v, Sound.redbag));
         grid.add(toggle("Gold bag", "goldBagSound", false, v -> Sound.playGoldBagSound = v, Sound.goldbag));
         grid.add(toggle("Egg bag", "eggBagSound", false, v -> Sound.playEggBagSound = v, Sound.eggbag));
@@ -124,16 +124,16 @@ public class SettingsPanel extends JPanel {
         body.add(hint);
 
         JPanel grid = grid();
-        grid.add(filter("White bags", LootBags.WHITE, "filterWhiteBag", v -> LootGUI.filterWhiteBag = v));
-        grid.add(filter("Orange bags", LootBags.ORANGE, "filterOrangeBag", v -> LootGUI.filterOrangeBag = v));
-        grid.add(filter("Red bags", LootBags.RED, "filterRedBag", v -> LootGUI.filterRedBag = v));
-        grid.add(filter("Gold bags", LootBags.GOLD, "filterGoldBag", v -> LootGUI.filterGoldBag = v));
-        grid.add(filter("Egg bags", LootBags.EGG, "filterEggBag", v -> LootGUI.filterEggBag = v));
-        grid.add(filter("Blue bags", LootBags.BLUE, "filterBlueBag", v -> LootGUI.filterBlueBag = v));
-        grid.add(filter("Teal bags", LootBags.TEAL, "filterTealBag", v -> LootGUI.filterTealBag = v));
-        grid.add(filter("Purple bags", LootBags.PURPLE, "filterPurpleBag", v -> LootGUI.filterPurpleBag = v));
-        grid.add(filter("Pink bags", LootBags.PINK, "filterPinkBag", v -> LootGUI.filterPinkBag = v));
-        grid.add(filter("Brown bags", LootBags.BROWN, "filterBrownBag", v -> LootGUI.filterBrownBag = v));
+        grid.add(filter("White bags", LootBags.WHITE, "filterWhiteBag", true, v -> LootGUI.filterWhiteBag = v));
+        grid.add(filter("Orange bags", LootBags.ORANGE, "filterOrangeBag", true, v -> LootGUI.filterOrangeBag = v));
+        grid.add(filter("Red bags", LootBags.RED, "filterRedBag", true, v -> LootGUI.filterRedBag = v));
+        grid.add(filter("Gold bags", LootBags.GOLD, "filterGoldBag", true, v -> LootGUI.filterGoldBag = v));
+        grid.add(filter("Egg bags", LootBags.EGG, "filterEggBag", false, v -> LootGUI.filterEggBag = v));
+        grid.add(filter("Blue bags", LootBags.BLUE, "filterBlueBag", false, v -> LootGUI.filterBlueBag = v));
+        grid.add(filter("Teal bags", LootBags.TEAL, "filterTealBag", true, v -> LootGUI.filterTealBag = v));
+        grid.add(filter("Purple bags", LootBags.PURPLE, "filterPurpleBag", false, v -> LootGUI.filterPurpleBag = v));
+        grid.add(filter("Pink bags", LootBags.PINK, "filterPinkBag", false, v -> LootGUI.filterPinkBag = v));
+        grid.add(filter("Brown bags", LootBags.BROWN, "filterBrownBag", false, v -> LootGUI.filterBrownBag = v));
         body.add(grid);
         return body;
     }
@@ -165,8 +165,8 @@ public class SettingsPanel extends JPanel {
     /**
      * Check box followed by the bag's sprite and name; clicking the sprite or name toggles it too.
      */
-    private JComponent filter(String text, LootBags bag, String key, Consumer<Boolean> apply) {
-        JCheckBox box = checkBox("", boolProperty(key, true));
+    private JComponent filter(String text, LootBags bag, String key, boolean byDefault, Consumer<Boolean> apply) {
+        JCheckBox box = checkBox("", boolProperty(key, byDefault));
         box.addActionListener(e -> {
             PropertiesManager.setProperties(key, Boolean.toString(box.isSelected()));
             apply.accept(box.isSelected());

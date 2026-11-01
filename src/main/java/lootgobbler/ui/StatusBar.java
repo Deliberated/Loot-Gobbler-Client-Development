@@ -1,5 +1,8 @@
 package lootgobbler.ui;
 
+import com.formdev.flatlaf.util.UIScale;
+import lootgobbler.Updater;
+
 import javax.swing.*;
 import java.awt.*;
 
@@ -7,8 +10,11 @@ import java.awt.*;
  * Bottom bar: sniffer state (colored dot + text) on the left, Update and Start/Stop Sniffer buttons on the right.
  */
 public class StatusBar extends JPanel {
+    private static final int GLOW = 7;   // px of glow around UPDATE AVAILABLE
+
     private final JLabel state = new JLabel();
     private final JButton sniffer = new JButton();
+    private final UpdateButton update = new UpdateButton();
 
     public StatusBar(Runnable toggleSniffer) {
         super(new BorderLayout());
@@ -18,14 +24,12 @@ public class StatusBar extends JPanel {
         sniffer.putClientProperty("FlatLaf.styleClass", "statusButton");
         sniffer.setFocusable(false);
         sniffer.addActionListener(e -> toggleSniffer.run());
-        JButton update = new JButton("UPDATE");
-        update.putClientProperty("FlatLaf.styleClass", "statusButton");
-        update.setFocusable(false);
-        update.setToolTipText("Check for a new Loot Gobbler version");
-        update.addActionListener(e -> lootgobbler.Updater.check(this));
+        update.addActionListener(e -> Updater.clicked(SwingUtilities.getWindowAncestor(this)));
+        Updater.onChange(() -> SwingUtilities.invokeLater(update::refresh));
 
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
         buttons.setOpaque(false);
+        buttons.setBorder(BorderFactory.createEmptyBorder(3, GLOW, 3, 0));   // room for the glow
         buttons.add(update);
         buttons.add(Box.createHorizontalStrut(6));
         buttons.add(sniffer);
@@ -40,5 +44,142 @@ public class StatusBar extends JPanel {
             state.setText(running ? "SNIFFING" : "SNIFFER OFF");
             sniffer.setText(running ? "STOP SNIFFER" : "START SNIFFER");
         });
+    }
+
+    /**
+     * The pulsing glow behind UPDATE AVAILABLE, painted by the bar so it can reach past the button's edges.
+     */
+    @Override
+    protected void paintComponent(Graphics g) {
+        super.paintComponent(g);
+        if (!update.glowing()) return;
+        Rectangle b = SwingUtilities.convertRectangle(update.getParent(), update.getBounds(), this);
+        Graphics2D g2 = (Graphics2D) g.create();
+        Color glow = Section.color("LootGobbler.goldHover", Palette.GOLD);
+        int size = UIScale.scale(GLOW);
+        for (int i = size; i >= 1; i--) {   // rings from the outside in, strongest next to the button
+            double falloff = 1 - (i - 1) / (double) size;
+            float a = (float) (update.pulse() * 0.45 * falloff * falloff);
+            g2.setColor(new Color(glow.getRed(), glow.getGreen(), glow.getBlue(), Math.round(255 * a)));
+            g2.fillRect(b.x - i, b.y - i, b.width + 2 * i, b.height + 2 * i);
+        }
+        g2.dispose();
+    }
+
+    /**
+     * Update button. Fixed width that fits UPDATE AVAILABLE. Brighter and glowing when an update is available, a
+     * progress bar while downloading.
+     */
+    private class UpdateButton extends JButton {
+        private static final String WIDEST = "UPDATE AVAILABLE";
+        private final Timer animation = new Timer(40, e -> StatusBar.this.repaint());
+        private final Timer revert = new Timer(3000, e -> show(Updater.State.IDLE));
+        private Updater.State shown = Updater.State.IDLE;
+        private long glowStart;
+
+        UpdateButton() {
+            super("CHECK UPDATES");
+            putClientProperty("FlatLaf.styleClass", "statusButton");
+            setFocusable(false);
+            setContentAreaFilled(false);
+            setBorderPainted(false);
+            setRolloverEnabled(true);
+            revert.setRepeats(false);
+            show(Updater.State.IDLE);
+        }
+
+        void refresh() {
+            show(Updater.state());
+        }
+
+        private void show(Updater.State s) {
+            revert.stop();
+            if (s == Updater.State.FAILED) revert.start();   // brief notice, then "check updates"
+            shown = s;
+            setText(switch (s) {
+                case CHECKING -> "CHECKING...";
+                case UP_TO_DATE -> "UP TO DATE";
+                case AVAILABLE -> WIDEST;
+                case DOWNLOADING -> "DOWNLOADING " + (int) (Updater.progress() * 100) + "%";
+                case RESTARTING -> "RESTARTING...";
+                case FAILED -> "UPDATE FAILED";
+                default -> "CHECK UPDATES";   // not checked yet, or GitHub could not be reached
+            });
+            String message = Updater.message();
+            setToolTipText(message.isBlank() ? "Check for a new Loot Gobbler version" : message);
+            if (s == Updater.State.AVAILABLE) {
+                if (!animation.isRunning()) {
+                    glowStart = System.currentTimeMillis();
+                    animation.start();
+                }
+            } else {
+                animation.stop();
+            }
+            StatusBar.this.repaint();
+        }
+
+        boolean glowing() {
+            return shown == Updater.State.AVAILABLE;
+        }
+
+        /**
+         * Glow strength, 0.35 to 1, one slow pulse every 1.6 s.
+         */
+        double pulse() {
+            double t = (System.currentTimeMillis() - glowStart) / 1600.0;
+            return 0.35 + 0.65 * (0.5 - 0.5 * Math.cos(2 * Math.PI * t));
+        }
+
+        @Override
+        public Dimension getPreferredSize() {
+            Dimension d = super.getPreferredSize();
+            FontMetrics fm = getFontMetrics(getFont());
+            return new Dimension(Math.max(d.width, fm.stringWidth(WIDEST) + UIScale.scale(28)), d.height);
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            int w = getWidth(), h = getHeight();
+            Color gold = Section.color("LootGobbler.gold", Palette.GOLD);
+            Color hover = Section.color("LootGobbler.goldHover", gold);
+            Color dark = Section.color("LootGobbler.goldDark", Palette.GOLD_DARK);
+            Color onGold = Section.color("LootGobbler.onAccent", Color.BLACK);
+            boolean busy = shown == Updater.State.CHECKING || shown == Updater.State.RESTARTING;
+            boolean pressed = getModel().isArmed() && getModel().isPressed();
+
+            Color bg;
+            if (shown == Updater.State.DOWNLOADING) bg = Section.color("LootGobbler.header", Color.DARK_GRAY);
+            else if (busy || pressed) bg = dark;
+            else if (shown == Updater.State.AVAILABLE || getModel().isRollover()) bg = hover;
+            else bg = gold;
+            g2.setColor(bg);
+            g2.fillRect(0, 0, w, h);
+
+            FontMetrics fm = g2.getFontMetrics(getFont());
+            g2.setFont(getFont());
+            String text = getText();
+            int tx = (w - fm.stringWidth(text)) / 2, ty = (h - fm.getHeight()) / 2 + fm.getAscent();
+            if (shown == Updater.State.DOWNLOADING) {
+                // gold fill for the progress; the text is light on the dark part and dark on the gold part
+                int fill = (int) Math.round(w * Updater.progress());
+                g2.setColor(Section.color("LootGobbler.ink", Color.WHITE));
+                g2.drawString(text, tx, ty);
+                g2.setColor(gold);
+                g2.fillRect(0, 0, fill, h);
+                Graphics2D clip = (Graphics2D) g2.create();
+                clip.clipRect(0, 0, fill, h);
+                clip.setColor(onGold);
+                clip.drawString(text, tx, ty);
+                clip.dispose();
+            } else {
+                g2.setColor(onGold);
+                g2.drawString(text, tx, ty);
+            }
+            g2.setColor(Color.BLACK);
+            g2.drawRect(0, 0, w - 1, h - 1);
+            g2.dispose();
+        }
     }
 }

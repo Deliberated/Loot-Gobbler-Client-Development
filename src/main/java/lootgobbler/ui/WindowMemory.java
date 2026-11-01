@@ -25,7 +25,9 @@ public final class WindowMemory {
         if (saved != null && onScreen(saved)) {
             frame.setBounds(saved);
         } else {
-            frame.setSize(defaultWidth, defaultHeight);
+            // the default is shrunk to the screen's free area (minus the taskbar) on smaller screens
+            Rectangle free = GraphicsEnvironment.getLocalGraphicsEnvironment().getMaximumWindowBounds();
+            frame.setSize(Math.min(defaultWidth, free.width), Math.min(defaultHeight, free.height));
             frame.setLocationRelativeTo(null);
         }
         if ("true".equals(PropertiesManager.getProperty(KEY_MAXIMIZED))) {

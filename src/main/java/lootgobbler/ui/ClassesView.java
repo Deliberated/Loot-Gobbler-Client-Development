@@ -159,7 +159,9 @@ public class ClassesView extends JPanel {
             setBorder(new EmptyBorder(6, 6, 6, 10));
             Color classColor = Palette.CLASS_COLORS.getOrDefault(info.cls.toString(), Palette.STONE);
 
-            JLabel sprite = new JLabel(portrait(sprite(info.cls.getId(), PORTRAIT - 8)));
+            int skin = done ? exaltedSkin(info.cls.toString()) : -1;   // fully exalted: the class's Exalted skin
+            Icon look = skin > 0 ? sprite(skin, PORTRAIT - 8) : null;
+            JLabel sprite = new JLabel(portrait(look != null ? look : sprite(info.cls.getId(), PORTRAIT - 8)));
             sprite.setPreferredSize(new Dimension(PORTRAIT, PORTRAIT));
             add(sprite, BorderLayout.WEST);
 
@@ -261,6 +263,25 @@ public class ClassesView extends JPanel {
 
     private static Icon potion(int stat, int size) {
         return sprite(STAT_POTION[stat], size);
+    }
+
+    private static Map<String, Integer> exaltedSkins;
+
+    /**
+     * Object id of the "Exalted <Class>" skin from the game data, or -1. The ids are looked up once by name, since
+     * newer classes don't follow the numbering of the older ones.
+     */
+    private static synchronized int exaltedSkin(String className) {
+        if (exaltedSkins == null) {
+            exaltedSkins = new HashMap<>();
+            for (int id = 0; id <= 0xFFFF; id++) {
+                String name = assets.IdToAsset.getObjectIdName(id);
+                if (name != null && name.startsWith("Exalted ") && "Skin".equals(assets.IdToAsset.getClazz(id))) {
+                    exaltedSkins.put(name.substring("Exalted ".length()), id);
+                }
+            }
+        }
+        return exaltedSkins.getOrDefault(className, -1);
     }
 
     private static Icon sprite(int id, int size) {

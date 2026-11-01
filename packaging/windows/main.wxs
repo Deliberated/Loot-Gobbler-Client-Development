@@ -1,0 +1,211 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  jpackage's default main.wxs (JDK 21) with Loot Gobbler additions, picked up through jpackage's resource-dir option.
+  Everything added is marked "Loot Gobbler:":
+  - installs into %APPDATA%\LootGobbler (Roaming) instead of jpackage's %LOCALAPPDATA% default,
+    and an update reuses the folder chosen at the first install, so the data files next to the exe carry over
+  - an info page after the welcome page: where the files go and what is saved there
+  - a "Start Loot Gobbler now" checkbox on the last page
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
+     xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
+
+  <?ifdef JpIsSystemWide ?>
+    <?define JpInstallScope="perMachine"?>
+  <?else?>
+    <?define JpInstallScope="perUser"?>
+  <?endif?>
+
+  <?define JpProductLanguage=1033 ?>
+  <?define JpInstallerVersion=200 ?>
+  <?define JpCompressedMsi=yes ?>
+
+  <?include $(var.JpConfigDir)/overrides.wxi ?>
+
+  <?ifdef JpAllowUpgrades ?>
+    <?define JpUpgradeVersionOnlyDetectUpgrade="no"?>
+  <?else?>
+    <?define JpUpgradeVersionOnlyDetectUpgrade="yes"?>
+  <?endif?>
+  <?ifdef JpAllowDowngrades ?>
+    <?define JpUpgradeVersionOnlyDetectDowngrade="no"?>
+  <?else?>
+    <?define JpUpgradeVersionOnlyDetectDowngrade="yes"?>
+  <?endif?>
+
+  <Product
+    Id="$(var.JpProductCode)"
+    Name="$(var.JpAppName)"
+    Language="$(var.JpProductLanguage)"
+    Version="$(var.JpAppVersion)"
+    Manufacturer="$(var.JpAppVendor)"
+    UpgradeCode="$(var.JpProductUpgradeCode)">
+
+    <Package
+      Description="$(var.JpAppDescription)"
+      Manufacturer="$(var.JpAppVendor)"
+      InstallerVersion="$(var.JpInstallerVersion)"
+      Compressed="$(var.JpCompressedMsi)"
+      InstallScope="$(var.JpInstallScope)" Platform="x64"
+    />
+
+    <Media Id="1" Cabinet="Data.cab" EmbedCab="yes" />
+
+    <Upgrade Id="$(var.JpProductUpgradeCode)">
+      <UpgradeVersion
+        OnlyDetect="$(var.JpUpgradeVersionOnlyDetectUpgrade)"
+        Property="JP_UPGRADABLE_FOUND"
+        Maximum="$(var.JpAppVersion)"
+        MigrateFeatures="yes"
+        IncludeMaximum="$(var.JpUpgradeVersionOnlyDetectUpgrade)" />
+      <UpgradeVersion
+        OnlyDetect="$(var.JpUpgradeVersionOnlyDetectDowngrade)"
+        Property="JP_DOWNGRADABLE_FOUND"
+        Minimum="$(var.JpAppVersion)"
+        MigrateFeatures="yes"
+        IncludeMinimum="$(var.JpUpgradeVersionOnlyDetectDowngrade)" />
+    </Upgrade>
+
+    <?ifndef JpAllowUpgrades ?>
+    <CustomAction Id="JpDisallowUpgrade" Error="!(loc.DisallowUpgradeErrorMessage)" />
+    <?endif?>
+    <?ifndef JpAllowDowngrades ?>
+    <CustomAction Id="JpDisallowDowngrade" Error="!(loc.DowngradeErrorMessage)" />
+    <?endif?>
+
+    <Binary Id="JpCaDll" SourceFile="wixhelper.dll"/>
+
+    <CustomAction Id="JpFindRelatedProducts" BinaryKey="JpCaDll" DllEntry="FindRelatedProductsEx" />
+
+    <!-- Standard required root -->
+    <Directory Id="TARGETDIR" Name="SourceDir"/>
+
+    <!-- Loot Gobbler: remember the install folder, so the next version installs into the same one -->
+    <Property Id="LG_PREV_DIR">
+      <RegistrySearch Id="LgPrevDirSearch" Root="HKCU" Key="Software\Pluribus Guild\LootGobbler" Name="InstallDir" Type="raw" />
+    </Property>
+    <DirectoryRef Id="INSTALLDIR">
+      <Component Id="LgRememberInstallDir" Guid="{e4a1c946-a9e7-4096-b929-d8d415d5ebf6}" Win64="yes">
+        <RegistryValue Root="HKCU" Key="Software\Pluribus Guild\LootGobbler" Name="InstallDir" Type="string" Value="[INSTALLDIR]" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <!-- Loot Gobbler: default folder. The UI sequence sets it before the dialogs; the execute sequence only
+         sets it for a silent install, so it doesn't overwrite a folder picked in the dialog. -->
+    <SetDirectory Id="INSTALLDIR" Action="LgDirPrevUi" Sequence="ui" Value="[LG_PREV_DIR]">NOT Installed AND LG_PREV_DIR</SetDirectory>
+    <SetDirectory Id="INSTALLDIR" Action="LgDirDefaultUi" Sequence="ui" Value="[AppDataFolder]LootGobbler">NOT Installed AND NOT LG_PREV_DIR</SetDirectory>
+    <SetProperty Id="LGUIDONE" Value="1" Sequence="ui" After="CostFinalize" Action="LgUiDone" />
+    <SetDirectory Id="INSTALLDIR" Action="LgDirPrevExec" Sequence="execute" Value="[LG_PREV_DIR]">NOT Installed AND NOT LGUIDONE AND LG_PREV_DIR</SetDirectory>
+    <SetDirectory Id="INSTALLDIR" Action="LgDirDefaultExec" Sequence="execute" Value="[AppDataFolder]LootGobbler">NOT Installed AND NOT LGUIDONE AND NOT LG_PREV_DIR</SetDirectory>
+
+    <!-- Loot Gobbler: "Start Loot Gobbler now" on the last page, ticked by default -->
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Start Loot Gobbler now" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <Property Id="WixShellExecTarget" Value="[INSTALLDIR]LootGobbler.exe" />
+    <CustomAction Id="LgLaunchApp" BinaryKey="WixCA" DllEntry="WixShellExec" Impersonate="yes" />
+
+    <Feature Id="DefaultFeature" Title="!(loc.MainFeatureTitle)" Level="1">
+      <ComponentGroupRef Id="Shortcuts"/>
+      <ComponentGroupRef Id="Files"/>
+      <ComponentGroupRef Id="FileAssociations"/>
+      <ComponentRef Id="LgRememberInstallDir"/>
+    </Feature>
+
+    <CustomAction Id="JpSetARPINSTALLLOCATION" Property="ARPINSTALLLOCATION" Value="[INSTALLDIR]" />
+    <CustomAction Id="JpSetARPCOMMENTS" Property="ARPCOMMENTS" Value="$(var.JpAppDescription)" />
+    <CustomAction Id="JpSetARPCONTACT" Property="ARPCONTACT" Value="$(var.JpAppVendor)" />
+    <CustomAction Id="JpSetARPSIZE" Property="ARPSIZE" Value="$(var.JpAppSizeKb)" />
+
+    <?ifdef JpHelpURL ?>
+      <CustomAction Id="JpSetARPHELPLINK" Property="ARPHELPLINK" Value="$(var.JpHelpURL)" />
+    <?endif?>
+
+    <?ifdef JpAboutURL ?>
+      <CustomAction Id="JpSetARPURLINFOABOUT" Property="ARPURLINFOABOUT" Value="$(var.JpAboutURL)" />
+    <?endif?>
+
+    <?ifdef JpUpdateURL ?>
+      <CustomAction Id="JpSetARPURLUPDATEINFO" Property="ARPURLUPDATEINFO" Value="$(var.JpUpdateURL)" />
+    <?endif?>
+
+    <?ifdef JpIcon ?>
+    <Property Id="ARPPRODUCTICON" Value="JpARPPRODUCTICON"/>
+    <Icon Id="JpARPPRODUCTICON" SourceFile="$(var.JpIcon)"/>
+    <?endif?>
+
+    <UIRef Id="JpUI"/>
+
+    <!-- Loot Gobbler: info page between WelcomeDlg and InstallDirDlg, and the launch on Finish.
+         Order 7 wins over the Order 6 links jpackage generates in ui.wxf. -->
+    <UI>
+      <Dialog Id="LgInfoDlg" Width="370" Height="270" Title="!(loc.InstallDirDlg_Title)">
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)">
+          <Publish Event="NewDialog" Value="InstallDirDlg">1</Publish>
+        </Control>
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)">
+          <Publish Event="NewDialog" Value="WelcomeDlg">1</Publish>
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+          <Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
+        </Control>
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.InstallDirDlgBannerBitmap)" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="250" Height="15" Transparent="yes" NoPrefix="yes"
+                 Text="{\WixUI_Font_Title}Where Loot Gobbler keeps its files" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes"
+                 Text="Everything stays together in one folder." />
+        <Control Id="Intro" Type="Text" X="20" Y="54" Width="330" Height="10" NoPrefix="yes"
+                 Text="Loot Gobbler will be installed into this folder (you can pick another one on the next page):" />
+        <Control Id="Folder" Type="Text" X="30" Y="68" Width="320" Height="20" NoPrefix="yes"
+                 Text="[INSTALLDIR]" />
+        <Control Id="Holds" Type="Text" X="20" Y="92" Width="330" Height="20" NoPrefix="yes"
+                 Text="That folder holds the program with its own Java runtime (about 160 MB), and everything Loot Gobbler saves while you play:" />
+        <Control Id="Item1" Type="Text" X="30" Y="116" Width="320" Height="10" NoPrefix="yes"
+                 Text="• Your settings and Discord webhooks (realmShark.properties)" />
+        <Control Id="Item2" Type="Text" X="30" Y="128" Width="320" Height="10" NoPrefix="yes"
+                 Text="• Your collection, characters, exaltations and DPS history" />
+        <Control Id="Item3" Type="Text" X="30" Y="140" Width="320" Height="10" NoPrefix="yes"
+                 Text="• Item and sprite data read from your RotMG install" />
+        <Control Id="Keep" Type="Text" X="20" Y="160" Width="330" Height="30" NoPrefix="yes"
+                 Text="Loot Gobbler saves nothing outside this folder. Uninstalling removes the program but keeps your saved data, and updates install into the same folder, so your data carries over." />
+        <Control Id="Writable" Type="Text" X="20" Y="196" Width="330" Height="20" NoPrefix="yes"
+                 Text="If you change the folder, pick one you can write to without admin rights (not Program Files)." />
+      </Dialog>
+
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="LgInfoDlg" Order="7">NOT Installed</Publish>
+      <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="LgInfoDlg" Order="7">NOT Installed</Publish>
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LgLaunchApp" Order="998">WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed</Publish>
+    </UI>
+
+    <InstallExecuteSequence>
+      <Custom Action="JpSetARPINSTALLLOCATION" After="CostFinalize">Not Installed</Custom>
+      <Custom Action="JpSetARPCOMMENTS" After="CostFinalize">Not Installed</Custom>
+      <Custom Action="JpSetARPCONTACT" After="CostFinalize">Not Installed</Custom>
+      <Custom Action="JpSetARPSIZE" After="CostFinalize">Not Installed</Custom>
+      <?ifdef JpHelpURL ?>
+        <Custom Action="JpSetARPHELPLINK" After="CostFinalize">Not Installed</Custom>
+      <?endif?>
+      <?ifdef JpAboutURL ?>
+        <Custom Action="JpSetARPURLINFOABOUT" After="CostFinalize">Not Installed</Custom>
+      <?endif?>
+      <?ifdef JpUpdateURL ?>
+        <Custom Action="JpSetARPURLUPDATEINFO" After="CostFinalize">Not Installed</Custom>
+      <?endif?>
+
+      <?ifndef JpAllowUpgrades ?>
+      <Custom Action="JpDisallowUpgrade" After="JpFindRelatedProducts">JP_UPGRADABLE_FOUND</Custom>
+      <?endif?>
+      <?ifndef JpAllowDowngrades ?>
+      <Custom Action="JpDisallowDowngrade" After="JpFindRelatedProducts">JP_DOWNGRADABLE_FOUND</Custom>
+      <?endif?>
+      <RemoveExistingProducts Before="CostInitialize"/>
+      <Custom Action="JpFindRelatedProducts" After="FindRelatedProducts"/>
+    </InstallExecuteSequence>
+
+    <InstallUISequence>
+      <Custom Action="JpFindRelatedProducts" After="FindRelatedProducts"/>
+    </InstallUISequence>
+
+  </Product>
+</Wix>
