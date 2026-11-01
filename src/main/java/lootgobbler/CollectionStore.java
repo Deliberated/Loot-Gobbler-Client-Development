@@ -2,6 +2,7 @@ package lootgobbler;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonElement;
 import com.google.gson.reflect.TypeToken;
 
 import java.io.Reader;
@@ -18,7 +19,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * Lifetime collection: for each item id, when it was first and last obtained, how often, and a history of
  * every find (drop, vault, inventory) with its enchantment count. Saved to collection.json after every change.
  */
-public final class CollectionStore {
+public final class CollectionStore implements Syncable {
     public static final String DROP = "drop", VAULT = "vault", INVENTORY = "inventory";
 
     /**
@@ -234,6 +235,196 @@ public final class CollectionStore {
 
     public void onChange(Runnable listener) {
         listeners.add(listener);
+    }
+
+    @Override
+    public String syncKind() {
+        return "collection";
+    }
+
+    @Override
+    public String syncLabel() {
+        return "Collection";
+    }
+
+    @Override
+    public synchronized int syncCount() {
+        return entries.size();
+    }
+
+    @Override
+    public synchronized JsonElement exportSync() {
+        return GSON.toJsonTree(entries);
+    }
+
+    @Override
+    public boolean mergeSync(JsonElement remote) {
+        Map<Integer, Entry> theirs = GSON.fromJson(remote, new TypeToken<LinkedHashMap<Integer, Entry>>() {
+        }.getType());
+        if (theirs == null) return false;
+        boolean changed = false;
+        synchronized (this) {
+            for (Map.Entry<Integer, Entry> t : theirs.entrySet()) {
+                Entry mine = entries.get(t.getKey());
+                if (mine == null) {
+                    entries.put(t.getKey(), t.getValue());
+                    changed = true;
+                } else if (mergeEntry(mine, t.getValue())) {
+                    changed = true;
+                }
+            }
+            if (changed) save();
+        }
+        if (changed) fire();
+        return changed;
+    }
+
+    /**
+     * Two PCs' records of one item, counted the way a single PC counts:
+     * <ul>
+     * <li>Drops are events: a drop only the other side saw is one more copy.</li>
+     * <li>Vault and inventory finds are sightings of copies you hold. Two PCs looking at the vault see the same
+     * copies, so sightings are paired up across the PCs. A fresh install that opens the vault before its first sync
+     * sees your vault again, with today's date.</li>
+     * <li>Sightings show at least that many copies. Drops before the last sighting may be among them; drops after
+     * it are new copies on top.</li>
+     * </ul>
+     * Whatever a side's count has beyond what its history explains (finds from before history was kept, or cut off
+     * the history) is kept as well.
+     *
+     * @return True if mine changed.
+     */
+    private static boolean mergeEntry(Entry mine, Entry theirs) {
+        List<Find> myDrops = new ArrayList<>(), myHeld = new ArrayList<>();
+        List<Find> theirDrops = new ArrayList<>(), theirHeld = new ArrayList<>();
+        for (Find f : mine.history()) (DROP.equals(f.source) ? myDrops : myHeld).add(f);
+        for (Find f : theirs.history()) (DROP.equals(f.source) ? theirDrops : theirHeld).add(f);
+
+        // match drops by time and place, pair sightings by enchantments
+        Map<String, List<Find>> myDropsByKey = new HashMap<>();
+        for (Find f : myDrops) myDropsByKey.computeIfAbsent(dropKey(f), k -> new ArrayList<>()).add(f);
+        List<Find> theirDropsOnly = new ArrayList<>();
+        List<Find[]> sameDrops = new ArrayList<>();
+        for (Find f : theirDrops) {
+            List<Find> same = myDropsByKey.get(dropKey(f));
+            if (same == null || same.isEmpty()) theirDropsOnly.add(f);
+            else sameDrops.add(new Find[]{same.remove(0), f});
+        }
+        List<Find> unpaired = new ArrayList<>(myHeld);
+        List<Find> theirHeldOnly = new ArrayList<>();
+        List<Find[]> sameCopies = new ArrayList<>();
+        for (Find f : theirHeld) {
+            Find pair = pairHeld(unpaired, f);
+            if (pair == null) {
+                theirHeldOnly.add(f);
+            } else {
+                unpaired.remove(pair);
+                sameCopies.add(new Find[]{pair, f});
+            }
+        }
+
+        List<Find> allDrops = new ArrayList<>(myDrops);
+        allDrops.addAll(theirDropsOnly);
+        List<Find> allHeld = new ArrayList<>(myHeld);
+        allHeld.addAll(theirHeldOnly);
+        String lastSighting = latest(latest(null, myHeld), theirHeld);   // before the pairs get their first time
+        int mergedExplained = explained(allDrops, allHeld.size(), lastSighting);
+        int unexplained = Math.max(0, Math.max(mine.count - explained(myDrops, myHeld.size(), latest(null, myHeld)),
+                theirs.count - explained(theirDrops, theirHeld.size(), latest(null, theirHeld))));
+        int count = Math.max(Math.max(mine.count, theirs.count), mergedExplained + unexplained);
+
+        boolean changed = false;
+        for (Find[] p : sameDrops) changed |= fillEnchants(p[0], p[1]);
+        for (Find[] p : sameCopies) {
+            Find m = p[0], f = p[1];
+            if (f.time != null && (m.time == null || f.time.compareTo(m.time) < 0)) {   // keep the first sighting
+                m.time = f.time;
+                m.where = f.where;
+                m.bag = f.bag;
+                changed = true;
+            }
+            changed |= fillEnchants(m, f);
+        }
+        List<Find> added = new ArrayList<>(theirDropsOnly);
+        added.addAll(theirHeldOnly);
+        String first = earlier(mine.first, theirs.first);
+        String last = later(mine.last, theirs.last);
+        changed |= !added.isEmpty() || count != mine.count
+                || !Objects.equals(first, mine.first) || !Objects.equals(last, mine.last);
+        if (changed) {
+            List<Find> history = new ArrayList<>(mine.history());
+            history.addAll(added);
+            history.sort(Comparator.comparing(f -> f.time == null ? "" : f.time));
+            while (history.size() > MAX_HISTORY) history.remove(0);
+            mine.history = history.isEmpty() && mine.history == null ? null : history;
+        }
+        mine.count = count;
+        mine.first = first;
+        mine.last = last;
+        return changed;
+    }
+
+    /**
+     * Copies a history accounts for: at least the sighted copies plus the drops after the last sighting, and at
+     * least the number of drops.
+     */
+    private static int explained(List<Find> drops, int sightings, String lastSighting) {
+        int dropsAfter = 0;
+        for (Find d : drops) {
+            if (lastSighting == null || (d.time != null && d.time.compareTo(lastSighting) > 0)) dropsAfter++;
+        }
+        return Math.max(drops.size(), sightings + dropsAfter);
+    }
+
+    private static String latest(String current, List<Find> finds) {
+        for (Find f : finds) {
+            if (f.time != null && (current == null || f.time.compareTo(current) > 0)) current = f.time;
+        }
+        return current;
+    }
+
+    /**
+     * Gives m the enchantments f knows, if m lacks them.
+     */
+    private static boolean fillEnchants(Find m, Find f) {
+        if (m.enchantIds != null || f.enchantIds == null) return false;
+        m.enchantIds = f.enchantIds;
+        m.enchants = f.enchants;
+        return true;
+    }
+
+    /**
+     * Identifies a drop across PCs. Enchantments are left out: they can be filled in later on one side only.
+     */
+    private static String dropKey(Find f) {
+        return f.time + "|" + f.where + "|" + f.bag;
+    }
+
+    /**
+     * The sighting in mine that is the same copy as f: same enchantments first, then one whose enchantments are
+     * unknown on either side (same place first).
+     */
+    private static Find pairHeld(List<Find> mine, Find f) {
+        if (f.enchantIds != null) {
+            for (Find m : mine) if (f.enchantIds.equals(m.enchantIds)) return m;
+        }
+        for (Find m : mine) {
+            if ((m.enchantIds == null || f.enchantIds == null) && Objects.equals(m.source, f.source)) return m;
+        }
+        for (Find m : mine) if (m.enchantIds == null || f.enchantIds == null) return m;
+        return null;
+    }
+
+    private static String earlier(String a, String b) {
+        if (a == null) return b;
+        if (b == null) return a;
+        return a.compareTo(b) <= 0 ? a : b;
+    }
+
+    private static String later(String a, String b) {
+        if (a == null) return b;
+        if (b == null) return a;
+        return a.compareTo(b) >= 0 ? a : b;
     }
 
     private static void addHistory(Entry e, Find f) {

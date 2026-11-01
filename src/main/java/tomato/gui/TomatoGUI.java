@@ -115,7 +115,9 @@ public class TomatoGUI {
         }
         // Built after the menu so the sound/filter flags are already loaded from settings.
         tabbedPane.addTab("Settings", new SettingsPanel());
-        tabbedPane.restoreOrder("Profile", "Inventory", "Characters", "DPS Logger", "Social", "Settings");
+        tabbedPane.addTab("Guild", new lootgobbler.ui.GuildPanel());
+        tabbedPane.addTab("Server", new lootgobbler.ui.ServerPanel());
+        tabbedPane.restoreOrder("Profile", "Inventory", "Characters", "DPS Logger", "Social", "Guild", "Server", "Settings");
         makeFrame();
 
         frame.setVisible(true);
@@ -123,6 +125,8 @@ public class TomatoGUI {
         lootgobbler.ui.WhatsNewDialog.showAfterUpdate(frame);   // after an update; reads its settings before the welcome
         SwingUtilities.invokeLater(() -> lootgobbler.ui.WelcomeDialog.showOnFirstStart(frame));   // once the window is up
         lootgobbler.Updater.start();   // first check a few seconds after start, then every hour
+        lootgobbler.ServerSync.get().start();          // syncs player data whenever logged in to a server
+        lootgobbler.GobblerServer.get().reconnect();   // to the saved Loot Gobbler server, if any
     }
 
     /**

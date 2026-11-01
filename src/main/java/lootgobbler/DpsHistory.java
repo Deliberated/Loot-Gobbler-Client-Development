@@ -1,6 +1,7 @@
 package lootgobbler;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonElement;
 import com.google.gson.reflect.TypeToken;
 import packets.incoming.MapInfoPacket;
 import packets.incoming.NotificationPacket;
@@ -24,7 +25,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * in memory; this stores a small summary of each logged run plus a once-per-second snapshot of the live run.
  * record() and liveTick() are called on the packet thread, where Tomato's fight data is safe to read.
  */
-public final class DpsHistory {
+public final class DpsHistory implements Syncable {
     public static final class PlayerRow {
         public String name = "";
         public int classType;
@@ -218,6 +219,54 @@ public final class DpsHistory {
 
     public void onChange(Runnable listener) {
         listeners.add(listener);
+    }
+
+    @Override
+    public String syncKind() {
+        return "dps_history";
+    }
+
+    @Override
+    public String syncLabel() {
+        return "DPS history";
+    }
+
+    @Override
+    public synchronized int syncCount() {
+        return runs.size();
+    }
+
+    @Override
+    public synchronized JsonElement exportSync() {
+        return GSON.toJsonTree(runs);
+    }
+
+    /**
+     * Runs only the other side has are added (a run is identified by its start time and dungeon).
+     */
+    @Override
+    public boolean mergeSync(JsonElement remote) {
+        List<Run> theirs = GSON.fromJson(remote, new TypeToken<ArrayList<Run>>() {
+        }.getType());
+        if (theirs == null) return false;
+        boolean changed = false;
+        synchronized (this) {
+            Set<String> known = new HashSet<>();
+            for (Run r : runs) known.add(r.start + "|" + r.dungeon);
+            for (Run r : theirs) {
+                if (known.add(r.start + "|" + r.dungeon)) {
+                    runs.add(r);
+                    changed = true;
+                }
+            }
+            if (changed) {
+                runs.sort(Comparator.comparingLong((Run r) -> r.start).reversed());   // newest first
+                while (runs.size() > MAX_RUNS) runs.remove(runs.size() - 1);
+                save();
+            }
+        }
+        if (changed) fire();
+        return changed;
     }
 
     private void fire() {

@@ -1,6 +1,7 @@
 package lootgobbler;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonElement;
 import com.google.gson.reflect.TypeToken;
 import packets.data.ObjectData;
 import packets.data.StatData;
@@ -23,7 +24,7 @@ import java.util.regex.Pattern;
  * with its abilities and saddlebag; regular and seasonal characters each see their own saddlebag. Pets seen in the
  * Pet Yard add their stats (no saddlebag is sent there).
  */
-public final class PetStore {
+public final class PetStore implements Syncable {
     public static final class Ability {
         public int type;
         public int power;     // ability level
@@ -203,6 +204,72 @@ public final class PetStore {
 
     public void onChange(Runnable listener) {
         listeners.add(listener);
+    }
+
+    @Override
+    public String syncKind() {
+        return "pets";
+    }
+
+    @Override
+    public String syncLabel() {
+        return "Pets";
+    }
+
+    @Override
+    public synchronized int syncCount() {
+        return pets.size();
+    }
+
+    @Override
+    public synchronized JsonElement exportSync() {
+        return GSON.toJsonTree(pets);
+    }
+
+    /**
+     * Pets only one side knows are added. For pets both know, the one seen more recently wins, but saddlebags and
+     * abilities it has not seen yet are taken from the other one.
+     */
+    @Override
+    public boolean mergeSync(JsonElement remote) {
+        Map<Integer, Pet> theirs = GSON.fromJson(remote, new TypeToken<LinkedHashMap<Integer, Pet>>() {
+        }.getType());
+        if (theirs == null) return false;
+        boolean changed = false;
+        synchronized (this) {
+            for (Map.Entry<Integer, Pet> t : theirs.entrySet()) {
+                Pet other = t.getValue();
+                Pet mine = pets.get(t.getKey());
+                if (mine == null) {
+                    pets.put(t.getKey(), other);
+                    changed = true;
+                    continue;
+                }
+                Pet winner = other.lastSeen > mine.lastSeen ? other : mine;
+                Pet loser = winner == mine ? other : mine;
+                boolean filled = false;
+                if (winner.saddlebag == null && loser.saddlebag != null) {
+                    winner.saddlebag = loser.saddlebag;
+                    filled = true;
+                }
+                if (winner.seasonalSaddlebag == null && loser.seasonalSaddlebag != null) {
+                    winner.seasonalSaddlebag = loser.seasonalSaddlebag;
+                    filled = true;
+                }
+                if ((winner.abilities == null || winner.abilities.isEmpty()) && loser.abilities != null
+                        && !loser.abilities.isEmpty()) {
+                    winner.abilities = loser.abilities;
+                    filled = true;
+                }
+                if (winner != mine || filled) {
+                    pets.put(t.getKey(), winner);
+                    changed = true;
+                }
+            }
+            if (changed) save();
+        }
+        if (changed) fire();
+        return changed;
     }
 
     private void fire() {
