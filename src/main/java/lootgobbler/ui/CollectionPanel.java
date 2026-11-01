@@ -260,6 +260,13 @@ public class CollectionPanel extends JPanel {
         text.add(what);
         int count = f.enchantIds != null ? f.enchantIds.size() : Math.max(0, f.enchants);
         if (f.enchantIds != null && f.enchantIds.stream().anyMatch(id -> id >= 0)) text.add(enchantIcons(f.enchantIds));
+        if (f.enchantIds == null && f.enchants < 0) {   // not known yet, which is not the same as "no slots"
+            JLabel unknown = new JLabel("enchantments unknown");
+            unknown.putClientProperty("FlatLaf.styleClass", "small");
+            unknown.setForeground(Palette.MUTED);
+            unknown.setToolTipText("Filled in once the game sends this item's enchantments (character list at login, or Refresh in Characters)");
+            text.add(unknown);
+        }
 
         // item icon with in-game style enchantment diamonds
         JLabel icon = new JLabel(EnchantBadge.icon(CollectionGrid.icon(itemId), 32, count));

@@ -93,6 +93,7 @@ public final class CharacterStore {
     private volatile String fetchedToken;    // login the char list was last fetched for
     private volatile long lastFetch;
     private volatile boolean fetching;
+    private boolean savedListRead;           // char-list.xml from the last login was read for slot enchantments
 
     public static CharacterStore get() {
         return INSTANCE;
@@ -379,7 +380,10 @@ public final class CharacterStore {
                 }
                 c.slots = slots;
                 c.slotEnchantIds = ids;
-                if (c.equipment != null && slots.length >= 4) setEnchants(c, Arrays.copyOf(ids, 4));
+                // an older saved list must not overwrite what you wear now
+                if (c.equipment != null && slots.length >= 4 && Arrays.equals(c.equipment, Arrays.copyOf(slots, 4))) {
+                    setEnchants(c, Arrays.copyOf(ids, 4));
+                }
             }
             save();
         }
@@ -391,6 +395,15 @@ public final class CharacterStore {
      * last character list; null if unknown or that slot held a different item then.
      */
     public synchronized int[] slotEnchants(int charId, int slot, int itemId) {
+        if (!savedListRead) {   // until the game sends a new char list, use the one saved at the last login
+            savedListRead = true;
+            Path saved = Path.of("char-list.xml");
+            try {
+                if (Files.exists(saved)) importItemData(Files.readString(saved));
+            } catch (Exception e) {
+                System.err.println("Could not read " + saved + ": " + e.getMessage());
+            }
+        }
         Char c = chars.get(charId);
         if (c == null || c.slots == null || c.slotEnchantIds == null || slot < 0 || slot >= c.slots.length) return null;
         return c.slots[slot] == itemId && slot < c.slotEnchantIds.length ? c.slotEnchantIds[slot] : null;

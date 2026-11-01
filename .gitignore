@@ -23,6 +23,7 @@ dungeon.stats
 vault-contents.txt
 vault-debug.txt
 guildhall-debug.txt
+inventory-debug.txt
 vault-packet.txt
 block.txt
 keypops.log

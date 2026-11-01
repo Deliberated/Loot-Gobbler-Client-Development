@@ -108,7 +108,7 @@ public final class LootEvents {
     private static Map<Integer, List<CollectionStore.Find>> inventoryFinds(Entity player) {
         ItemDb db = ItemDb.get();
         Map<Integer, List<CollectionStore.Find>> held = new LinkedHashMap<>();
-        // enchant codes for equipment + inventory slots, same per-slot list loot bags use; none for the backpack
+        // enchant codes for every slot (equipment, inventory, backpack), same per-slot list loot bags use
         StatData udata = player.stat.get(StatType.UNIQUE_DATA_STRING);
         String[] codes = udata == null || udata.stringStatValue == null ? new String[0] : udata.stringStatValue.split(",", -1);
         for (int i = 0; i < 28; i++) {
@@ -118,9 +118,9 @@ public final class LootEvents {
             if (sd == null || sd.statValue < 1) continue;
             ItemDb.Item item = db.item(sd.statValue);
             if (item == null || !item.isCollectible()) continue;
-            // live enchant codes cover equipment + inventory; for the backpack (or when they are missing) use the
-            // character list's data for that slot, if the same item is still there
-            List<Integer> ids = !backpack && i < codes.length ? enchantIds(codes[i]) : null;
+            // live enchant codes: one per slot, equipment, inventory and backpack alike; when they are missing, use
+            // the character list's data for that slot, if the same item is still there
+            List<Integer> ids = i < codes.length ? enchantIds(codes[i]) : null;
             if (ids == null) {
                 int[] known = CharacterStore.get().slotEnchants(player.charId(), i, sd.statValue);
                 if (known != null) ids = Arrays.stream(known).boxed().toList();
@@ -130,7 +130,41 @@ public final class LootEvents {
                     : CollectionStore.Find.of(CollectionStore.INVENTORY, -1, "", "Inventory");
             held.computeIfAbsent(sd.statValue, k -> new ArrayList<>()).add(f);
         }
+        writeInventoryDebug(player, codes.length);
         return held;
+    }
+
+    private static String lastInventoryDebug = "";
+
+    /**
+     * Diagnostics, in inventory-debug.txt next to the app (rewritten only when it changes): every text stat the game
+     * sends for your character, and for each backpack slot whether its enchantments are known.
+     */
+    private static void writeInventoryDebug(Entity player, int liveCodes) {
+        StringBuilder sb = new StringBuilder("Character ").append(player.charId()).append(": live enchant codes for ")
+                .append(liveCodes).append(" slots\n\nText stats:\n");
+        for (int id = 0; id < 200; id++) {
+            StatData s = player.stat.get(id);
+            if (s != null && s.stringStatValue != null && !s.stringStatValue.isEmpty()) {
+                String v = s.stringStatValue;
+                sb.append(String.format("  %3d %-24s %s%n", id, StatType.byOrdinal(id), v.length() > 300 ? v.substring(0, 300) + "..." : v));
+            }
+        }
+        sb.append("\nBackpack:\n");
+        for (int i = 12; i < 28; i++) {
+            StatData sd = player.stat.get(StatType.BACKPACK_0_STAT.get() + (i - 12));
+            if (sd == null || sd.statValue < 1) continue;
+            int[] known = CharacterStore.get().slotEnchants(player.charId(), i, sd.statValue);
+            sb.append(String.format("  slot %2d  item %6d  enchants from char list: %s%n", i, sd.statValue,
+                    known == null ? "unknown" : Arrays.toString(known)));
+        }
+        String text = sb.toString();
+        if (text.equals(lastInventoryDebug)) return;
+        lastInventoryDebug = text;
+        try {
+            java.nio.file.Files.writeString(java.nio.file.Path.of("inventory-debug.txt"), text);
+        } catch (Exception ignore) {
+        }
     }
 
     /**
