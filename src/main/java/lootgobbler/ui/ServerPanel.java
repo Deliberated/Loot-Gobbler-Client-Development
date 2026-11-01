@@ -366,17 +366,27 @@ public class ServerPanel extends JPanel {
     }
 
     /**
-     * Which way this kind's data last went, oldest first, e.g. "server -> client 18:42:01, client -> server 18:43:10".
+     * What the latest sync did with this kind: which way data went (e.g. "server -> client 18:42:01, client ->
+     * server 18:42:01"), or that both sides were already the same, with the last transfer before that.
      */
     private static String transfers(ServerSync.Kind k) {
-        String down = k.lastDown() > 0 ? "server -> client " + time(k.lastDown()) : null;
-        String up = k.lastUp() > 0 ? "client -> server " + time(k.lastUp()) : null;
         String rev = k.revision() > 0 ? "revision " + k.revision() : "not on the server yet";
-        if (down != null && up != null) {
-            return rev + " - " + (k.lastDown() <= k.lastUp() ? down + ", " + up : up + ", " + down);
-        }
-        if (down != null || up != null) return rev + " - " + (down != null ? down : up);
-        return k.syncedAt() > 0 ? rev + " - already the same on both sides (" + time(k.syncedAt()) + ")" : rev;
+        if (k.checkedAt() == 0) return rev;
+        boolean down = k.lastDown() >= k.checkedAt(), up = k.lastUp() >= k.checkedAt();
+        if (down || up) return rev + " - " + directions(k, down, up);
+        String text = rev + " - already the same on both sides (checked " + time(k.syncedAt()) + ")";
+        boolean everDown = k.lastDown() > 0, everUp = k.lastUp() > 0;
+        return everDown || everUp ? text + ", last transfer " + directions(k, everDown, everUp) : text;
+    }
+
+    /**
+     * The given directions with their times, oldest first.
+     */
+    private static String directions(ServerSync.Kind k, boolean down, boolean up) {
+        String d = "server -> client " + time(k.lastDown());
+        String u = "client -> server " + time(k.lastUp());
+        if (down && up) return k.lastDown() <= k.lastUp() ? d + ", " + u : u + ", " + d;
+        return down ? d : u;
     }
 
     private static String time(long millis) {

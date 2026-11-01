@@ -37,6 +37,7 @@ public final class ServerSync {
         private volatile long syncedAt;
         private volatile long lastDown;         // server data last changed the local data (epoch ms), 0 = never
         private volatile long lastUp;           // local data last uploaded (epoch ms), 0 = never
+        private volatile long checkedAt;        // start of the latest sync run that looked at this kind, 0 = none
         private volatile boolean dirty;
 
         Kind(Syncable store) {
@@ -55,6 +56,11 @@ public final class ServerSync {
         /** When local data was last uploaded (client -> server), 0 = not since login. */
         public long lastUp() {
             return lastUp;
+        }
+
+        /** Start of the latest sync run that looked at this kind (0 = none); transfers since then are from it. */
+        public long checkedAt() {
+            return checkedAt;
         }
 
         /** When this kind last matched the server (epoch ms), 0 = not yet. */
@@ -151,6 +157,7 @@ public final class ServerSync {
             k.syncedAt = 0;
             k.lastDown = 0;
             k.lastUp = 0;
+            k.checkedAt = 0;
         }
         if (now.isEmpty()) {
             set(Phase.OFF, "");
@@ -167,7 +174,7 @@ public final class ServerSync {
 
     private synchronized void schedule(long delayMs) {
         if (scheduled != null && !scheduled.isDone()) return;
-        scheduled = exec.schedule(this::upload, delayMs, TimeUnit.MILLISECONDS);
+        scheduled = exec.schedule((Runnable) this::upload, delayMs, TimeUnit.MILLISECONDS);
         if (phase == Phase.UP_TO_DATE) set(Phase.WAITING, "");
     }
 
@@ -180,6 +187,7 @@ public final class ServerSync {
 
     private void fullSync() {
         running();
+        long runStart = System.currentTimeMillis();
         String acc = account;
         if (acc.isEmpty()) return;
         String owner = PropertiesManager.getProperty(KEY_OWNER);
@@ -193,6 +201,7 @@ public final class ServerSync {
             Map<String, DataItem> remote = server.data().join();
             if (!acc.equals(account)) return;   // logged out or switched account meanwhile
             for (Kind k : kinds) {
+                k.checkedAt = runStart;
                 DataItem item = remote.get(k.store.syncKind());
                 if (item != null && item.data != null) {
                     if (k.store.mergeSync(item.data)) k.lastDown = System.currentTimeMillis();
@@ -206,18 +215,27 @@ public final class ServerSync {
             }
             User u = server.user();
             PropertiesManager.setProperties(KEY_OWNER, acc + "|" + (u == null ? "" : u.ign));
-            upload();
+            upload(runStart);
         } catch (Exception e) {
             failed(e);
         }
     }
 
     private void upload() {
+        upload(System.currentTimeMillis());
+    }
+
+    /**
+     * @param runStart when this run started; transfers from then on belong to it (shown in the Server tab).
+     */
+    private void upload(long runStart) {
         running();
         if (account.isEmpty() || phase == Phase.OTHER_ACCOUNT) return;
         try {
             for (Kind k : kinds) {
-                if (k.dirty) uploadKind(k, 0);
+                if (!k.dirty) continue;
+                if (k.checkedAt < runStart) k.checkedAt = runStart;
+                uploadKind(k, 0);
             }
             lastSync = System.currentTimeMillis();
             set(kinds.stream().anyMatch(k -> k.dirty) ? Phase.WAITING : Phase.UP_TO_DATE, "");
