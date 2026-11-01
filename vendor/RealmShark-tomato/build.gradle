@@ -1,0 +1,77 @@
+plugins {
+    id 'java'
+    id 'application'
+    id 'com.github.johnrengelman.shadow' version '7.0.0'
+}
+sourceCompatibility = 1.8
+targetCompatibility = 1.8
+
+project.version = 'v1.9.2'
+applicationName = 'Tomato'
+
+project.ext.lwjglVersion = "3.3.1"
+project.ext.jomlVersion = "1.10.5"
+
+switch (org.gradle.internal.os.OperatingSystem.current()) {
+    case org.gradle.internal.os.OperatingSystem.MAC_OS:
+        project.ext.lwjglNatives = "natives-macos"
+        break
+    case org.gradle.internal.os.OperatingSystem.WINDOWS:
+        project.ext.lwjglNatives = "natives-windows"
+        break
+}
+
+repositories {
+    mavenCentral()
+    maven {url="https://s01.oss.sonatype.org/content/repositories/snapshots/"}
+    maven {url="https://mvnrepository.com/artifact/org.slf4j/slf4j-nop/"}
+}
+
+dependencies {
+    implementation files("libs/RealmShark-v1.2.3.jar")
+    implementation 'com.github.weisj:darklaf-core:3.0.2'
+    runtimeOnly 'org.slf4j:slf4j-nop:2.0.17'
+}
+
+mainClassName = applicationName.toLowerCase() + '.' + applicationName
+
+
+jar {
+    manifest {
+        attributes(
+                'Main-Class': mainClassName
+        )
+    }
+}
+
+// Ugly solution to get version into source.
+task generateSources {
+    doFirst {
+        def srcFile = new File(file("$buildDir/../src/main/java/" + applicationName.toLowerCase() + "/version"), "Version.java")
+        srcFile.parentFile.mkdirs()
+        srcFile.write("""package """ + applicationName.toLowerCase() + """.version;
+/**
+ * Don't edit this class. It's a gradle class to grab version from the build.gradle
+ */
+public class Version {
+    public static final String VERSION = "$project.version";
+}
+
+""")
+    }
+}
+compileJava.dependsOn generateSources
+compileJava.source generateSources.outputs.files, sourceSets.main.java
+
+/**
+ * add to vm optoins
+ * "-XstartOnFirstThread"
+ */
+shadowJar {
+    manifest {
+        attributes 'Main-Class': mainClassName
+    }
+    archiveFileName = "${applicationName}-${project.version}.jar"
+}
+
+apply plugin: 'com.github.johnrengelman.shadow'

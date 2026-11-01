@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>1 - Gobbler Gold Theme</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen&family=VT323&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #F3EBD3;
+    --sand: #E6D9B4;
+    --header: #D8C690;
+    --line: #A89150;
+    --ink: #2E2412;
+    --inkSoft: #6B5526;
+    --inkMuted: #9C8656;
+    --accent: #C8901C;
+    --accentDark: #8A6210;
+    --onAccent: #000000;
+    --red: #C2344E;
+    --check: #A8C94A;
+    --title: #FBF5E4;
+    --titleFg: #6B5526;
+    --outside: #3F2716;
+    --outsideInk: #F3EBD3;
+    --guild: #2F6FD6; --party: #2FA35A; --pm: #E5B23A; --public: #8A4FD0;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; background: var(--outside); font-family: 'VT323', monospace; font-size: 17px; color: var(--ink); }
+  .px { font-family: 'Silkscreen', monospace; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+  .window { max-width: 760px; margin: 0 auto; border: 1px solid var(--line); background: var(--sand); box-shadow: 0 8px 30px rgba(0,0,0,.35); }
+  .titlebar { display: flex; align-items: center; gap: 14px; padding: 6px 12px; background: var(--title); color: var(--titleFg); }
+  .titlebar .t { flex: 1; text-align: center; font-size: 18px; }
+  .titlebar .logo { width: 16px; height: 16px; background: var(--accent); box-shadow: inset -4px -4px 0 var(--accentDark); }
+  .tabs { display: flex; flex-wrap: wrap; background: var(--sand); border-bottom: 1px solid var(--line); }
+  .tab { padding: 8px 12px; border-right: 1px solid #000; color: var(--inkSoft); }
+  .tab.on { background: var(--paper); color: var(--accent); box-shadow: inset 0 -3px 0 var(--accent); }
+  .body { display: flex; gap: 8px; padding: 8px; flex-wrap: wrap; }
+  .section { border: 1px solid var(--line); background: var(--paper); flex: 1 1 360px; min-width: 0; }
+  .section.side { flex: 0 1 220px; }
+  .head { display: flex; align-items: center; gap: 8px; padding: 7px 10px; background: var(--header); border-bottom: 1px solid var(--line); color: var(--inkSoft); }
+  .sq { width: 8px; height: 8px; display: inline-block; flex: none; }
+  .row { display: grid; grid-template-columns: 70px 60px 1fr; padding: 4px 10px; }
+  .row:nth-child(even) { background: var(--header); }
+  .time { color: var(--inkMuted); font-size: 15px; }
+  .inner { padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+  .chan { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: var(--header); border: 1px solid var(--line); }
+  .box { width: 13px; height: 13px; border: 1px solid var(--accentDark); background: var(--check); box-shadow: inset 0 0 0 3px var(--check), inset 0 0 0 13px var(--accentDark); }
+  .box.off { background: var(--header); border-color: var(--line); box-shadow: none; }
+  button { font-family: 'Silkscreen', monospace; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; padding: 5px 10px; border: 1px solid #000; background: var(--header); color: var(--ink); cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--onAccent); }
+  button.danger { background: var(--paper); color: var(--red); border-color: var(--red); }
+  .bar { height: 10px; background: var(--line); }
+  .bar i { display: block; height: 100%; width: 38%; background: var(--accent); }
+  .status { display: flex; align-items: center; gap: 8px; padding: 4px 4px 4px 10px; background: var(--line); color: var(--ink); }
+  .status .grow { flex: 1; }
+  .swatches { max-width: 760px; margin: 14px auto 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 6px; }
+  .sw { border: 1px solid rgba(0,0,0,.25); font-size: 14px; }
+  .sw b { display: block; height: 30px; }
+  .sw span { display: block; padding: 2px 4px; background: #fff; color: #222; }
+  h1 { max-width: 760px; margin: 0 auto 4px; font-weight: normal; font-size: 26px; color: var(--outsideInk); }
+  p.desc { max-width: 760px; margin: 0 auto 12px; color: var(--outsideInk); opacity: .8; }
+  .gold { color: var(--accent); }
+</style>
+</head>
+<body>
+<h1>1 - Gobbler Gold</h1>
+<p class="desc">Light parchment like the map on the wall, coin gold as the accent, goblin green for checks. Closest to the current Light theme.</p>
+<div class="window">
+  <div class="titlebar"><span class="logo"></span><span>File</span><span>Edit</span><span>Info</span><span class="t">Loot Gobbler by Pluri</span><span>&#x2013; &#x25A1; &#x2715;</span></div>
+  <div class="tabs px">
+    <span class="tab on">Chat</span><span class="tab">Collection</span><span class="tab">Discord</span><span class="tab">DPS Logger</span><span class="tab">Statistics</span><span class="tab">Settings</span>
+  </div>
+  <div class="body">
+    <div class="section">
+      <div class="head px"><span class="sq" style="background:var(--guild)"></span>Chat Log</div>
+      <div>
+        <div class="row"><span class="time">22:08:22</span><span class="px" style="color:var(--public)">Public</span><span><b>Pluri</b>: the goblin got another white bag</span></div>
+        <div class="row"><span class="time">22:08:45</span><span class="px" style="color:var(--guild)">Guild</span><span><b>Gunshit</b>: gz!! what dropped?</span></div>
+        <div class="row"><span class="time">22:09:13</span><span class="px" style="color:var(--party)">Party</span><span><b>LeNendigo</b>: Sword of the Colossus</span></div>
+        <div class="row"><span class="time">22:09:23</span><span class="px" style="color:var(--pm)">PM</span><span><b>From Mmik</b>: trade me that</span></div>
+        <div class="row"><span class="time">22:11:50</span><span class="px" style="color:var(--public)">Public</span><span><b>#Oryx the Mad God</b>: You will drown in a sea of blood!</span></div>
+      </div>
+    </div>
+    <div class="section side">
+      <div class="head px"><span class="sq" style="background:var(--public)"></span>Channels</div>
+      <div class="inner">
+        <button class="danger">Clear chat</button>
+        <div class="chan px"><span class="box"></span><span class="sq" style="background:var(--guild)"></span>Guild</div>
+        <div class="chan px"><span class="box"></span><span class="sq" style="background:var(--party)"></span>Party</div>
+        <div class="chan px"><span class="box off"></span><span class="sq" style="background:var(--pm)"></span>PM</div>
+        <div class="px" style="color:var(--inkMuted)">Collected</div>
+        <div class="bar"><i></i></div>
+        <div>394 / 1696 &nbsp; <span class="gold">23,2%</span></div>
+        <div style="display:flex;gap:6px"><button>Copy log</button><button class="primary">+ Add</button></div>
+      </div>
+    </div>
+  </div>
+  <div class="status px"><span class="sq" style="background:var(--party);width:10px;height:10px"></span><span class="grow">Sniffing</span><button class="primary">Stop sniffer</button></div>
+</div>
+<div class="swatches">
+  <div class="sw"><b style="background:#F3EBD3"></b><span>paper<br>#F3EBD3</span></div>
+  <div class="sw"><b style="background:#E6D9B4"></b><span>sand<br>#E6D9B4</span></div>
+  <div class="sw"><b style="background:#D8C690"></b><span>header<br>#D8C690</span></div>
+  <div class="sw"><b style="background:#A89150"></b><span>line<br>#A89150</span></div>
+  <div class="sw"><b style="background:#2E2412"></b><span>ink<br>#2E2412</span></div>
+  <div class="sw"><b style="background:#6B5526"></b><span>inkSoft<br>#6B5526</span></div>
+  <div class="sw"><b style="background:#9C8656"></b><span>inkMuted<br>#9C8656</span></div>
+  <div class="sw"><b style="background:#C8901C"></b><span>accent<br>#C8901C</span></div>
+  <div class="sw"><b style="background:#8A6210"></b><span>accentDark<br>#8A6210</span></div>
+  <div class="sw"><b style="background:#000000"></b><span>onAccent<br>#000000</span></div>
+  <div class="sw"><b style="background:#C2344E"></b><span>red<br>#C2344E</span></div>
+  <div class="sw"><b style="background:#A8C94A"></b><span>check<br>#A8C94A</span></div>
+  <div class="sw"><b style="background:#FBF5E4"></b><span>title<br>#FBF5E4</span></div>
+  <div class="sw"><b style="background:#6B5526"></b><span>titleFg<br>#6B5526</span></div>
+</div>
+</body>
+</html>

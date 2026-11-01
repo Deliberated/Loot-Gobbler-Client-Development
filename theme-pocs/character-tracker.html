@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Character Tracker POC</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen&family=VT323&display=swap" rel="stylesheet">
+<style>
+  :root { --paper:#F3EBD3; --sand:#E6D9B4; --header:#D8C690; --line:#A89150; --ink:#2E2412; --inkSoft:#6B5526; --inkMuted:#9C8656;
+          --accent:#C8901C; --accentDark:#8A6210; --onAccent:#000; --red:#C2344E; --title:#FBF5E4; --titleFg:#6B5526; --outside:#3F2716; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; background: var(--outside); font-family: 'VT323', monospace; font-size: 17px; color: var(--ink); }
+  .px { font-family: 'Silkscreen', monospace; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+  .note { max-width: 1120px; margin: 0 auto 10px; color: #f3ebd3; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .note select { font-family: inherit; font-size: 16px; }
+  .window { max-width: 1120px; margin: 0 auto; border: 1px solid var(--line); background: var(--sand); box-shadow: 0 8px 30px rgba(0,0,0,.35); }
+  .titlebar { display: flex; gap: 14px; padding: 6px 12px; background: var(--title); color: var(--titleFg); }
+  .titlebar .t { flex: 1; text-align: center; font-size: 18px; }
+  .tabs { display: flex; overflow-x: auto; border-bottom: 1px solid var(--line); }
+  .tab { padding: 8px 12px; border-right: 1px solid #000; color: var(--inkSoft); white-space: nowrap; }
+  .tab.on { background: var(--paper); color: var(--accent); box-shadow: inset 0 -3px 0 var(--accent); }
+  .wrap { padding: 8px; display: flex; flex-direction: column; gap: 8px; }
+  .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .seg { display: flex; }
+  .seg button { font-family: 'Silkscreen', monospace; font-size: 10px; letter-spacing: .08em; padding: 5px 10px; border: 1px solid var(--line);
+                background: var(--paper); color: var(--inkSoft); cursor: pointer; }
+  .seg button.on { background: var(--accent); color: var(--onAccent); border-color: #000; }
+  .muted { color: var(--inkMuted); }
+  .cols { display: flex; gap: 8px; align-items: stretch; flex-wrap: wrap; }
+  .section { border: 1px solid var(--line); background: var(--paper); min-width: 0; display: flex; flex-direction: column; }
+  .main { flex: 1 1 520px; }
+  .side { flex: 1 1 420px; }
+  .head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--header); border-bottom: 1px solid var(--line); color: var(--inkSoft); }
+  .sq { width: 8px; height: 8px; display: inline-block; flex: none; }
+  .list { padding: 10px; display: flex; flex-direction: column; gap: 6px; max-height: 600px; overflow-y: auto; }
+  .group { color: var(--inkMuted); margin: 4px 0 0; }
+  .char { display: grid; grid-template-columns: 56px 1fr auto; gap: 4px 12px; align-items: center; padding: 6px 10px 6px 4px;
+          background: var(--header); border: 1px solid #000; cursor: pointer; }
+  .char:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .char.sel { background: color-mix(in srgb, var(--accent) 30%, var(--header)); outline: 2px solid var(--accent); outline-offset: -2px; }
+  .char img { width: 48px; height: 48px; image-rendering: pixelated; grid-row: span 2; justify-self: center; }
+  .name { font-size: 19px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .lock { font-size: 15px; }
+  .tags { display: flex; gap: 4px; flex-wrap: wrap; }
+  .tag { padding: 0 5px; border: 1px solid #000; font-family: 'Silkscreen', monospace; font-size: 8px; letter-spacing: .06em; line-height: 15px; }
+  .tag.seasonal { background: #3C9347; color: #fff; }
+  .tag.crucible { background: #E0702B; color: #000; }
+  .tag.ritual { background: #7A1020; color: #FFD5DC; }
+  .meta { color: var(--inkSoft); font-size: 15px; display: flex; gap: 14px; flex-wrap: wrap; }
+  .fame { color: var(--accent); }
+  .right { text-align: right; }
+  .stat8 { font-size: 22px; }
+  .stat8.max { color: var(--accent); }
+  .ago { color: var(--inkMuted); font-size: 14px; }
+  .panel { padding: 10px; display: flex; flex-direction: column; gap: 10px; }
+  .who { display: flex; gap: 12px; align-items: center; }
+  .who img { width: 64px; height: 64px; image-rendering: pixelated; }
+  .kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .kpi { background: var(--header); border: 1px solid var(--line); padding: 6px 8px; }
+  .kpi b { display: block; font-size: 24px; font-weight: normal; color: var(--accent); }
+  svg { width: 100%; height: 220px; background: var(--sand); border: 1px solid var(--line); }
+  .sessions { display: flex; flex-direction: column; gap: 4px; max-height: 190px; overflow-y: auto; }
+  .session { display: flex; justify-content: space-between; padding: 3px 8px; background: var(--header); }
+  .session:nth-child(even) { background: var(--sand); }
+  .gain { color: #3C9347; }
+  .status { display: flex; align-items: center; gap: 8px; padding: 4px 4px 4px 10px; background: var(--line); }
+  .status .grow { flex: 1; }
+  .status button { font-family: 'Silkscreen', monospace; font-size: 10px; padding: 5px 10px; border: 1px solid #000; background: var(--accent); color: var(--onAccent); }
+</style>
+</head>
+<body>
+<div class="note">
+  <b>Character Tracker POC</b> &mdash; real class sprites; characters, fame and dates are sample data.
+  <label>Theme <select id="theme"></select></label>
+</div>
+<div class="window">
+  <div class="titlebar"><span>File</span><span>Edit</span><span>Info</span><span class="t">Loot Gobbler by Pluri</span><span>&#x2013; &#x25A1; &#x2715;</span></div>
+  <div class="tabs px"><span class="tab">Chat</span><span class="tab">Collection</span><span class="tab on">Characters</span><span class="tab">Discord</span><span class="tab">DPS Logger</span><span class="tab">Statistics</span><span class="tab">Settings</span></div>
+  <div class="wrap">
+    <div class="toolbar">
+      <span class="px muted">Played in the last</span>
+      <div class="seg" id="range"></div>
+      <span class="muted" id="count"></span>
+    </div>
+    <div class="cols">
+      <div class="section main">
+        <div class="head px"><span class="sq" style="background:var(--accent)"></span>Characters</div>
+        <div class="list" id="list"></div>
+      </div>
+      <div class="section side">
+        <div class="head px"><span class="sq" style="background:#3C9347"></span>Fame Gain</div>
+        <div class="panel" id="panel"></div>
+      </div>
+    </div>
+  </div>
+  <div class="status px"><span class="sq" style="background:#3C9347;width:10px;height:10px"></span><span class="grow">Sniffing</span><button>Stop sniffer</button></div>
+</div>
+<script>
+const SPRITES = {"Rogue":"iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAABXElEQVR4Xu2YrU4DQRSF50WwNMHgKmrqSEiwKBwWRN+iqmkqeAMeBofhXZBDbsM0y3emW5jOzlK4J/lE25vzI7piQ/i5YiVGUdzczapgXjRvISlSinnRvIWkSCnmRfMWkiKlmBfNW0iKlGJeNB9CfHJIkVLo+0lVxfvZVHh/e6gCfQ3LZIljJAE+oAN9fUBGEjDiAP7Z+253iq/Pt4J9n4MFE7xL0LfjTcWn9SqL/cbjriTAB/gAH3BiAzZnN8LL+VUV6GtYJksEH+AD8tDXB2QkASc34PLxWmCRUuhrWCZLBB/gA/LQ998PSB++wIBGAwQW5wAxSiwXU2E+ucjCggne9cH8vh6GD+jC4j7gQI8/NWA7IgeNhob5Cb4/+sZ7pK0kYGgskyWCD2iIZbJE8AENsUyWCEcMMKWjHXz0JXhXyD7x7tD9XklxDPj1kuI+oLGkuA8YQXwSjFr+AzXa7RXwCvOBAAAAAElFTkSuQmCC",
+"Archer":"iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAABcklEQVR4Xu2WMU4DQRAE91UEJiEmJyIjJSDnF/wB8Q8nJA5I+AvhoREM4Orx+m69t8LStFSB5dme7rO1ulKWa+pEJM7UZps0Pbxcd8G86P10uwkJZpslQVoxL3ozeBYIJEFaMS96M3gWKF8H92CQVuhrMDgKRFQ1XT1eCgzSCn0N2xnBQnN/GVkwqAAlwbNAD+h7aoGf/9tfuGBQAYHBWWB6e74JudtcCDR3eNbhnENfg2cdBs8CETzrcC4LZIEgTM2Dc2sUMMmCQ0s+3u+7QN/aw2HwqEAkWTCoACXBs0AP6JsFAsmCsyvAl61BL3OUBM8CPaBvFggkC/5zAf+wBxcMKiAwOAuIkcOrz6CJs3vdhnDO4RVqcH8th5EFskAWaLiF1oT7HZZ3vr8/KFmwNraTIUoWGIjtZIiSBQZiOyMYfG4Bk5jx6nM41wIDImjEYklwFDhFEnzJk54rCZ4FfiXBs0AgCX5uBUxuSHqInke9PwFNATkpLvnNUgAAAABJRU5ErkJggg==",
+"Wizard":"iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAABXElEQVR4Xu2WPW7CQBBG90R0ScE9ohQgCsrkImnTcAI4CE2aFDScggtQbjLRLjJvxna8GAvL80mvCDv5fhpECN0Ve6KL+L8lHn+Kbx+HXhAvmtco7k4nE3njcZtUkVLEi+Y1UsV9QB+IF81rpIpPakA+usAipdA3YUkV/++AuFxtFCxSCn0FyWSJX8X1/NlE3nhclQrwARXo6wMMqYDRDThsXxTyuQXvSu7TG6WK+wAL3pXcpzdKFfcBFrwruU9vlCo+7QHn43sv0NcHGFIBPqACfX2AIRUwugH8sTW6H3MM8AEV6OsDDKmARx6Q/7iCAQMNULA4ByijDL/6hM/F3OT7a2/CuwzLCMxv6iH4AB/gAwq+he4J8zMcmknvtVIB90YyWSL4gAGRTJYIPmBAJNOCxW8aQJPM7Om1E/Rtglk+wIIF26BvE8zyARYs2AZ9m2DWZAaILl9lD0r4ATwAAGuajUF7AAAAAElFTkSuQmCC",
+"Priest":"iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAABZElEQVR4Xu2XMU7EQBAE/SqC+wcRGSmv4Q/8B4JLeAmh0ZzWaKker+zxsgYxLVVwt+Oe7sCru2nar7kTp2j+uD51wbxoPkISJIp50XyEJEgU86L5CEmQKOZF8xGSIFHMi+Y/Id4cEiQKfQtdNT9e7oTnh0sX6GvYToY4IlmQBSromwUcyYITC/Blb81+aX59uRfsew/ORebLGSVFNxS+SRbsDbR3vpxREjwLeHAuMl/OKAmeBTw4F5kvZ5QEP1SAv2mi0DcLOJIFWaCCvlnAkSz4cwXer29CL9HXsJ0MMWWBLOCLvv++wPLhG1wwqIDA4CwgRgu85gz+NYzCMAb3t3LU16480HqQQaIwfBbw4ANZoILhjxS4lfCgkdFL9DW4f4FFF8r5qmTBoAKUBM8CPUTfLOBIFgwqIDD4ry2whmVZoSkxOrnAbolRFqhE3xaWheG2SIyyQCX6trAsDLdVfOvPYlWf8e8MCpEHYHQAAAAASUVORK5CYII=",
+"Warrior":"iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAABWUlEQVR4Xu2WMW7CQBBF91QU3CMVoqHNWaIoBTfIRdKkSZGGu1A6GrRGzvuzQSz2GpP50ivwDn/+d7FySterG4lZ1O1fX0bBvGjeQhKkFvOieQtJkFrMi+YtJEFqMS+at5AEqcW8aD6FeHNIkFromymJc5fmT+p2263AILXQ17CdDJH+eGl2xuGhZEEUGEDfKOBIFiyuwPf7k2DPPThXM5/PKAkeBTw4VzOfzygJHgU8OFczn88oCf6/CxwPz6NA3yjgSBZEgQH0jQKOZMHiCvBja3Efc1wQBQbQNwo4kgX3XKD/8QsuaFRA4H978rkf1ODVZ7xt1i5fnx8unOvZrVeKk6GUw4gCUYA4GUo5HqrAqYQHjaaG+885WDSTz4uSBVNjOxkiRYGG2E6GSFGgIbaTIdINBUz90BmawOxWSuLcpfmiJPg1b+MeJMGjQGNJ8Cgwg3gTzBr+B7dY8NiSnc3xAAAAAElFTkSuQmCC",
+"Knight":"iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAABaElEQVR4Xu2XMW7EMAwE70H+0jX5T5AqD0qTJo9ywsA8CLMyFclGTnfgAtNYFHe3EeDLJdb6z5yq9eV6Fd7fXk+Bew3zZIgjEoMsUMC9WaAiMcgCBdzbKMDXKpq9af36/BDOEvca5skQP5Lyjp1xuJQYZIFC3JsFKhKDpyhg38+Ae7NARWKQBQq4NwtUJAZPUWAPm6/BuYjtDiXBs0ANm6/BuYjtDiXBs0ANm6/BuYjtDiXBawXE2KBBBO8e2EFJcBZYl2U5DJe34N9Y8Ecmdx07+x1gmBG4vAXDZ4GjcHkLhs8CR+HyFgxfFBB41zm1AJ9EPI1/goUc7uSzK2FG4PIskAU64fKHK0DTEVjIoZczawFKvBw7Cwd6YJgRPBAkXo6dhQM9MMwIHggSL8fOwoEeGGYEDwSJl2Nn4UAPDDOCB4LEy7Gz29Ak7IlzrfldcQGZXgxMphcDk+nFwGR6MTB5CDH0XcN/A8+8OnzuOlWgAAAAAElFTkSuQmCC",
+"Paladin":"iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAABh0lEQVR4Xu2WsU0DQRBFtyBiAhdASANE0ARVIESARDMExJRBAUguAKMxtyvvm7+Hbs93NmKe9AJrv2bmO7Cc0g+7hgpmelUwM5Yt7FrYm8tur46inN1AZCuYL9iby4pjepSzG4hsBfMFe3NZcUyPcnYDka1gvmBvLiuO6VHObiCyFcwX7M1lxTE9ytkNRLaC+YK9UR7SK+dOvWNwD/OF7euFk4f0yrn72Q2eHx+kuQTzBS6IAgdybhRQcMG5FtiXUL69XDuZGctOzTOT5eGqgMItGFvCXE9+eCPu8CigZK4nP7wRd3gUUDLXkx/eiDt8VoHP99ujyLlRQOAWRIEDOTcKCNyCP1eAf7aW/jNnO3lEigJRQMu5/75A/lDJBSsVcPJwFnCDsl8f986nm42Uw7PMZe82l07uH7vDjAJRIAp0/AotKfdnWTQ7vDdxC5bWdvKIFAVW1HbyiBQFVtR28og0o4CRQ0UOwbC5tmDut3wTd/iUb+MccIdHgZVxh0eBE8BfgpMe/w1QoJAuiCOaiQAAAABJRU5ErkJggg==",
+"Assassin":"iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAABdElEQVR4Xu2Wu00EMRRF3QgpJRAQECEiYgoghVYQIqCCrWQThERKDbRAaPQkGw3nemYZ74zHK70rnYD1434C0IYwX3EhNlG8e/xaBPOieQtJkVrMi+YtJEVqMS+at5AUqcW8aN5CUqQW86L5GuJ/DilSC30TiypeXe8EFqmFvoZlssQxkgAfMIC+PqAgCdhwAP/Yp25/Fb8/HwT7vATvau7TGxVfn5+K2BuPh5KAuYXm3qc3Sor7gBK8q7lPb5QU9wEleFdzn94oKf7vAS9nt8L7+c0i0NewTJYIPsAHlKGvDyhIAk5uAL9sGSxSC30nvsxJcR+wBPT1AQVJQM8D8g9/YECjAQKLc4AYZT7e9gLNMyyY4d0UzJ/qMegy7xcZmmFxH3Cghw8gLN5ygEnMpgzXgvmZ+8uLIul9VBKwNpbJEsEHNMQyWSL4gIZYJkuEIwaY8lErxsS7Q/ejogHpXixMuhcLk+7FwqR7sTA5CbH0puV/AFD7YBGAsDJtAAAAAElFTkSuQmCC",
+"Necromancer":"iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAABX0lEQVR4Xu2Wu01DQRBFtx86gDKIECKEKggJERItkFMECQm90MLCIMZazsza7LzVk588VzqB5fH9JCuXMq46iRHxtxGPH9WHi8cpiBfNO6r188pFvuPxIZkiUcSL5h2Z4jlgBuJF845M8ZMaoEc7WCQKfX/xZIr/d0C9PLszsEgU+gqSyRLfqs/X5y7yHY9bmYAc0EDfHODIBGxuwNP9jYEvgcK7yL1kskTJAQsKjd5LJkuUHLCg0Oi9ZLJEyQHg9eV2CvTNAY5MQA5ooG8OcGQCNjeAf7Y292eOATmggb45wJEJOOYB+uEPDFhpgIHFOcAYKXz6BJorH+9vLrzbB/P39Wi6jP2QoQqL54ADPXIAYfE1B4iMWc+Qr0kU+grMV/j68BXqyQSsNIAyxXPADOibAxyZgJUGGFh80YAeLBiBngqL5wAPlolAT4XFc4AHy0Sgp8LiJzNAtHvKjpTyBUfpGS4tsiRrAAAAAElFTkSuQmCC",
+"Huntress":"iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAABaklEQVR4Xu2UPU7DQBCFfQBqOspcgjPQUlFTRaLnGDkBTe6DhDgFF6BMtEGL1t8bz9p47URhnvQVSLPvJ0juuh8dzoAl3ni3vzp8vd2afLzcCLypwfeZlMseu6d7E+O2Jwn1wnlTg+9jgCEJ9cJ5U4PvY4AhCfXCeVOD7zGgB4tjgMVJYp7Z3T0ILPhXmDU0KsFB/M+I0ZkHUFI8BrSAWf96wOnIggFFiPC+fzTh3QhvSopbAyxJQAyIATHgCgZ8f26bQN8YYEgCYkABfWOAIQm4igHPm1cTfj4zvMvQNwYYkoAYEAOGB+Q/ejBgpQECi3OAmGf46UvQvCXM93oUXaY9ZOhMSkm+1yMGNKKU5Hs9LmVAD+Z7PcoBSWLmGS4F8zP8+vArNCQJWJqUyRJdDFiRlMkSXQxYkZRpweJjBySJ2ZKwIIpaTBYNyBxJ8Sm/9FixMJkjKR4DDLEwmSMpHgMGxNItA+hZ9T4C1R0XMhFvan8AAAAASUVORK5CYII=",
+"Mystic":"iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAABVUlEQVR4Xu2UMU7DUBBEfSoK2lyAhoaSgoYTUHMFjgAFLRehSUuNFIma0mgjbfTzdv0d/1iWFWakV5CY2Xkgueump5+JKeHvtnTs039/3Uzi5WOTYl0sH0j/ttul2Hd8eCxh4BgcLgEJJCNrcPjSAv7QAQ4cg8MhQLKE4acKhKMGB7bC3sp/pb+/vkqx7/hwmXBAAgXslUCScOAiBOzzjM/X2xQ+57BXAknCAQlIQAKb/nf7OAvslUCScEACBeyVQJJw4CIEHu7eU/j6dPicw14JJAkHJCCBYQH/4QgeWEggwOEUCOUOX30GS1rhyKk7jDUIlAn3azskcC5+vEi4X9uxFoEjeL+2oxTYS2SwyHh6/pkF9hq871Aef4TBhAMLCTBhuATmgL0SSBIOLCQQ4PCzBIbgwBbY6XC4BDI4pgV2OhwugQyOaYGdDof/GwHL4VW2Uro//+KBMjJXGpUAAAAASUVORK5CYII=",
+"Trickster":"iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAABT0lEQVR4Xu2UMU7DQBBF91QpuEcuEERFm2ugVNyAi9DQpKDhLpRGY2WQ82Z2rZXXawvmS69Acub/lwinVJ+hEZtkqM31491FbvF4j3DfbDg8BBaG+2bD4SFQGb45uG82HA4B0jSmVGgV3l3jVzEFITAJ7/57Af4zjbCgk0ANY4bPt6MLC0ol/KzC5xTeFfhZ5fXy4nK7lS9nQQiEQAjsU0BiCnIl31/PTeDd0pfD4Z6AF1PQSYAxw0OgBbwbAk5MwZ8QeHo8u/DVp/A5hXdDwIkpCIEQyAvoH3ewoJOAgcMpYI4rfPUJp4dDEziydoewB4FpTH9pRwgsRcsnMf2lHXsRuIP9pR1TgVHCg4fWhv0K5fElZGMK1kY6OSKFQEekkyNSCHREOjkiLRCQ6EO/8AiOLSUXPjf3fDZmeM23sYeY4SHQOWZ4CGwQvgk2Hf8DolW0nG/rW+QAAAAASUVORK5CYII=",
+"Sorcerer":"iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAABZklEQVR4Xu2WvU0DQRCFtwESUlIkqIE+CBCiKPdAIyQkBFAJLSwa5LOO7433tHu3eyDmSV9ge/x+Ap+cUr3yRuyi/HF1vQnmRfMRkiKtmBfNR0iKtGJeNB8hKdKKedF8hKRIK+ZF8x7ik0OKtELfI5sqHy5vBBZphb6GZbLEGklADJhB3xjgSAJ2HMAfe+n2JB5/kz8fXHjXep9U+fB452Kf8XguGjcV4t3SfVJJ8RjgwbvW+6SS4jHAg3et90klxVcNGAAlxWNAZygpHgM6Q0nx/zOAf7Z2+jMnxWPAFtA3BjiSgN88YHrxAwYMGiCwOAeI0cT7871A84m31xcX3pVgfqnHrEvdFxk6weIxYKFHDCAsPnKAScxKhr1g/qmH8wTiY9STBPTGMlkixYCBWCZLpBgwEMv0YPFVA+x9j6eL2yroW4JZM4oSo5IZCy5B3xLHjGqJUQyIAXUSo782wCRFd+KsvgCysHD5ZrBdHQAAAABJRU5ErkJggg==",
+"Ninja":"iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAABV0lEQVR4Xu2UMU4DQQxF9y5U1EgU9ClyDVrOgqjouQoNDRfJLRYZphjeNyOYWYdZ8Jdek/Xa7ytKluXnWTfCC2das11Zrw53m2C7uPvx4d7Fme2OiPRiu7ib4lnAiYj0Yru4m+JZYPl48RMU6YV7DYqjgEcz68XlQaBIL9xr2E0PFvruNyMHzlSAEfEssAXcmwWcrKeno2Cfe3CuZ748Y0Q8C3hwrme+PGNEPAt4cK5nvjxjRPz/FODf3O7+RnkgC1RwbxZwIgeyQAX3VgUEik9b4CteX55dzJHSdWRRFqjg3hYUzwJbwL0tKO4VkF/+ngrIC60XWfIc3N5cu5Tn0xVgRDwLBMOI+J8r8D7kwULR1EKIuBWakQPR2E1KjEQORGM3KTESORCN3aTESORANHaTEiORA9HYTUqMhr/6aMLDg2T6UJhMHwqT6UNhMn0oTHYRSv+q/BuwoNAxJHRxwgAAAABJRU5ErkJggg==",
+"Samurai":"iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAABb0lEQVR4Xu2YO0pFQRBE3xpMTQV3YGBs4jZciDsQMTB3KyYmIrgMd3Gl5Y0Op9rhvvlc52EXnMixqw5+QHe7cpZJqMry+vIsvJ+edYF3jcf7OxfbwnFrIgUhkMG7IeBECkIgg3dXCHgUszycnAu9wruGdXpQaO1XRgo2EmBkeAj0CO+2Cnx/v+WwYCMBgcMpIIcSb7dXAo8n+K7mPfsTHB4CHnxX8579IcCCQwcd+p79/0bAIgW/lXw8XXeBd0uyHO4JeJGCjQQYGR4CPeDdEHAiBRsJCBy+WoC/zgz+ZVUL75agfMI2cnQeORQCGbxbgsNDoAe8W4LDPQH5yT8mAfmE0idSMsH/8ST4roabywuX/cenE2BkeAh4cHgI/ESGU+DrkQeFRpMPQmTbnmKkYDTWyREtkYLRWCdHtEQKRmOdHNESKRiNdXJES6RgNNbJEa3hT/1ohoeFZPpwMJk+HEymDweT6cPB5CjC0X86/hOEj/HQS52m9wAAAABJRU5ErkJggg==",
+"Bard":"iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAABY0lEQVR4Xu2XMU7DQBBF905U0FNSUnGE1JwDcQd6Ck5AQ5OChrtQBg2wVvz+eMkYZ60o86VXEK33/6dIVijlJ7sV8MIzrbNDdlO5vH8Qbp5fQvD5ivVyx+PdlYtzdhTuHsLSFEgBP9w9hKUpoAIjOBwCHt+Ryyvbt1eBA+fCrhYU4jcjD1Q4PgX2YFcLDk+BJWBXCw4/WOD96Vb4fUjguTnn2Z8CLIgOip5nfwqwIDooep79ZyNgkYKpks+PzSLw3pYsh3sCXqSgkwAjw1NgCXhvCjiRgpMT4OvM4I+yufBewzo5oqRACvjw3rMXqH+MYEEnAYHDKSAXVfjqM3h5hf96VniuBftbO/a2xB5kaYXDU+CPHSlAOLyngEUua114LNhf4duHb6GpSMGxsU6OKCnQEevkiJICHbFODw7/l4B97nFxvQnBew0OxFCPZqRgZYFwpCAFUiAWKTg1AYsMXYnJfAHLrSWSlojBAQAAAABJRU5ErkJggg==",
+"Summoner":"iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAABkUlEQVR4Xu2YsU0EQRAELwAsDBxcJHIgDyxCQCKXjwCHfB4hoiABzEMjsc9+9d5of2/Zg9e0VAZw9FQbf0JM0+mZO7FJ5o/nqy5YF8tHRERasS6Wj4iItGJdLB8REWnFulg+IiLSinWx/DfCN4eItMLeb7pm3l3eCq/XN11gr2E3KbEmciAGZLA3BhQiBzYcwA+79+wh89vThWDfL7F/uS/C5xLszbqZefdwV8R+xofzyIEYEANiwBkM+Hx/7AJ7Y0AhciAGZLA3BhQiB/7dAP6x5cHXZ4LPedhNSkwxoBKKx4CfiPhZDkhfHMEDHhRfMUCgOAdIUYKvPoPlPeF9zyNzOe0XeXQleeS+5xEDOpFH7nsef2XAEbzveeQDLFK2VMj/77TCXoP3Dx6FNxBfo6XIgUEDGBGPAT1gbwwoRA4MGiBQfNWAJSjYAjsT5rKAGynyoEwL7EyYC+VqIkUelGmBnQlzoVxNpMiDMi2wM2EulKuJFHlQpgV2JsyFcjWRIg/KtMDOhLlQrjb81G/FYr4AXnMJHI73l7EAAAAASUVORK5CYII=",
+"Kensei":"iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAABiklEQVR4Xu2WO04DQRAFfSJCByZB4gQEXICUhJgLECEiQjISTkPCXQiNetm1x/XaI2s+Yoz6SRVtb3c9wBar1W+2R/DCmVK8cCY3u8v24mbjYs84+/Zx3QRv9+vLs4szexARjwIn4O2meBSwZ5ylSCneboq3KnAARUrhXoPiKOCxCx9MsJBx9XjZBO499gMzWKjqN0ORUrg3KcCIeBRoAffWFtj9vaXwwKgFZNHC5/utML8kcK5kfhFCRDwKeHCuZH4RQkQ8CnhwrmR+EUJE/N8VmIY8eMD4/rpvAvfWFvAiB6JAAvdGASdyIAokcG9SQKD4yQX4tWrwn7JSuDfH08PaxRwpnUYWRYEE7s1B8SjQAu7NQXGvgHzyz6mAvJB7kSUX+BWHr7oq7jZrl/n5cAUYEY8CHhSPAvuIOAtMQx4s1JtUCBG3mWzkQG/sJiVqIgd6YzcpURM50Bu7SYmayIHe2E1K1EQO9MZuUqI2/NT3pnt4kAwfCpPhQ2EyfChMhg+FyVmE0n8q/wMRfrcYUVBlggAAAABJRU5ErkJggg==",
+"Druid":"iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAABiElEQVR4Xu2YMU7DUBBEfaM0iCInAFFQUdHRwmUo6bkPDXehDPqCn/i/2b9J1o6DyI70isi7szMuXGQYfrTpYIkzUSxxxpvdavO0vjYpzzh783Y/C5Y37zs5GsmCsyhBoljevO/kaCQLzqIEiWJ5876To5EsOIsSJIrlzftOjkay4CxKkCiWN+87ORrJAhYbGCQKfQ/I0ZUsVFYvtwKDRKFvgfezAA9kgRH0vYQCFrsSFjxQ4Ezl4/3BhHMR79fHtcnv867kgHeEwScUoCR4FrBg8CywkwS/nAJ3qyvh6/N5FuhbKDcZYsgCWcCGvlnAkBz4FwX46aswYIVzFfpmAUNyIAtkgX6B+qOBBxYqIDA4C8jRCo08s2Ohb4El972cQwuMJUGiWN4MngXqwEgSJIrlzeBzFWhgkCj0nVKgSMw8w1PB+xX+T4T/i7qSA6em3GSIIQssSLnJEEMWWJBykyGGCQWK6tAWmsBsKj1xbt98VxL8mLfxFyTBs8DCkuBZ4Azil+Cs4b8ByjLDDZ27ZgAAAAAASUVORK5CYII=",
+};
+const H = 3600e3, NOW = Date.now();
+const RANGES = {'1H': H, '1D': 24 * H, '1W': 168 * H, '1M': 720 * H, 'ALL': Infinity};
+// sample characters: lastPlayed = hours ago; fame history built from sessions
+const CHARS = [
+  {id: 1, cls: 'Necromancer', lvl: 20, fame: 18420, stats: 8, fav: true, seasonal: false, crucible: false, ritual: true, ago: 0.2},
+  {id: 2, cls: 'Knight', lvl: 20, fame: 9310, stats: 7, fav: true, seasonal: false, crucible: false, ritual: false, ago: 30},
+  {id: 3, cls: 'Mystic', lvl: 20, fame: 4405, stats: 6, fav: false, seasonal: true, crucible: true, ritual: false, ago: 0.8},
+  {id: 4, cls: 'Wizard', lvl: 20, fame: 2210, stats: 5, fav: false, seasonal: true, crucible: false, ritual: false, ago: 5},
+  {id: 5, cls: 'Paladin', lvl: 20, fame: 12880, stats: 8, fav: true, seasonal: false, crucible: true, ritual: false, ago: 80},
+  {id: 6, cls: 'Huntress', lvl: 17, fame: 640, stats: 2, fav: false, seasonal: true, crucible: false, ritual: true, ago: 20},
+  {id: 7, cls: 'Samurai', lvl: 20, fame: 7020, stats: 4, fav: false, seasonal: false, crucible: false, ritual: false, ago: 400},
+  {id: 8, cls: 'Bard', lvl: 20, fame: 3330, stats: 3, fav: false, seasonal: false, crucible: true, ritual: false, ago: 140},
+];
+// sessions per character: [startHoursAgo, durationHours, fameGained]
+for (const c of CHARS) {
+  let seed = c.id * 9301 + 49297, rnd = () => (seed = (seed * 9301 + 49297) % 233280) / 233280;
+  c.sessions = [];
+  let t = c.ago + 0.1;
+  for (let i = 0; i < 9; i++) {
+    const dur = 0.4 + rnd() * 2.2, gained = Math.round(dur * (180 + rnd() * 900));
+    c.sessions.push({start: t + dur, dur, gained});
+    t += dur + 3 + rnd() * 60;
+  }
+}
+const THEMES = {
+  'Gobbler Gold':   ['#F3EBD3','#E6D9B4','#D8C690','#A89150','#2E2412','#6B5526','#9C8656','#C8901C','#8A6210','#000000','#C2344E','#FBF5E4','#6B5526','#3F2716'],
+  'Goblin Green':   ['#1F2A17','#172012','#2B3A1F','#4A5E33','#E8F0D2','#B5C78E','#7F8F62','#A8C94A','#6F8F2A','#10170B','#E05A6A','#10170B','#B5C78E','#0B1007'],
+  'Treasure Hoard': ['#2E2116','#23180F','#3D2C1C','#6B4E2E','#F4E6C6','#D2B988','#9A815A','#E5B23A','#A9771B','#1A120A','#D8285A','#1A120A','#D2B988','#120C06'],
+  'Burlap Sack':    ['#E9D8B8','#D7BF94','#C4A574','#8B6A3E','#2C1D0E','#5E4122','#8C6C47','#6F9A2B','#4C6E18','#FFFFFF','#B8364A','#F2E6CC','#5E4122','#5E3B1E'],
+  'Gem Vault':      ['#261D33','#1C1527','#332746','#54426E','#EFE6FA','#C3B2DC','#8E7DA8','#E5B23A','#A9771B','#140F1C','#D8285A','#140F1C','#C3B2DC','#0D0913'],
+  'Goblin Burlap':  ['#E7D7B6','#D2BB8F','#B9C08A','#6F7F42','#22200F','#4E5A26','#857A55','#8DB33A','#5F7F1F','#10170B','#B8364A','#1F2A17','#C6DD6A','#2B3A1F'],
+  'Amethyst Moss':  ['#24222B','#1B1A21','#2E3A22','#4D5A3A','#ECE6F2','#B5C78E','#8A8496','#B07BE0','#7A4BA8','#120D18','#E8607A','#121117','#B5C78E','#0C0B10'],
+};
+const VARS = ['paper','sand','header','line','ink','inkSoft','inkMuted','accent','accentDark','onAccent','red','title','titleFg','outside'];
+let range = '1W', selected = 1;
+
+const fmt = n => n.toLocaleString();
+function ago(h) {
+  if (h < 1) return Math.round(h * 60) + ' min ago';
+  if (h < 24) return Math.round(h) + ' h ago';
+  return Math.round(h / 24) + ' d ago';
+}
+const sprite = (cls, size) => SPRITES[cls] ? `<img src="data:image/png;base64,${SPRITES[cls]}" width="${size}" height="${size}" alt="">` : '';
+
+function card(c) {
+  const tags = [c.seasonal && '<span class="tag seasonal">Seasonal</span>', c.crucible && '<span class="tag crucible">Crucible</span>',
+                c.ritual && '<span class="tag ritual">Blood Ritual</span>'].filter(Boolean).join('');
+  return `<div class="char${c.id === selected ? ' sel' : ''}" onclick="selected=${c.id};render()">
+    ${sprite(c.cls, 48)}
+    <div class="name">${c.fav ? '<span class="lock" title="Favourited in-game">&#128274;</span>' : ''}${c.cls} <span class="muted">lvl ${c.lvl}</span> <span class="tags">${tags}</span></div>
+    <div class="right"><span class="stat8${c.stats === 8 ? ' max' : ''}" title="Stats maxed">${c.stats}/8</span></div>
+    <div class="meta"><span class="fame">&#9733; ${fmt(c.fame)} fame</span></div>
+    <div class="right ago">${ago(c.ago)}</div>
+  </div>`;
+}
+
+function render() {
+  const win = RANGES[range] / H;
+  const shown = CHARS.filter(c => c.ago <= win);
+  const favs = shown.filter(c => c.fav).sort((a, b) => a.ago - b.ago);
+  const rest = shown.filter(c => !c.fav).sort((a, b) => a.ago - b.ago);
+  document.getElementById('count').textContent = shown.length + ' of ' + CHARS.length + ' characters';
+  document.getElementById('list').innerHTML =
+    (favs.length ? '<div class="group px">Favourites</div>' + favs.map(card).join('') : '') +
+    (rest.length ? '<div class="group px">Recently played</div>' + rest.map(card).join('') : '') ||
+    '<div class="muted">No character played in this range.</div>';
+  renderPanel(CHARS.find(c => c.id === selected));
+}
+
+function renderPanel(c) {
+  const win = Math.min(RANGES[range] / H, 24 * 45);
+  const sessions = c.sessions.filter(s => s.start - s.dur <= win);
+  const gained = sessions.reduce((a, s) => a + s.gained, 0), hours = sessions.reduce((a, s) => a + s.dur, 0);
+  // fame curve: walk sessions from oldest to newest inside the window
+  const pts = [];
+  let fame = c.fame - gained;
+  pts.push([win, fame]);
+  for (const s of [...sessions].reverse()) {
+    pts.push([Math.min(win, s.start), fame]);
+    fame += s.gained;
+    pts.push([s.start - s.dur, fame]);
+  }
+  pts.push([0, c.fame]);
+  const W = 400, Hh = 200, minF = pts[0][1], maxF = c.fame, span = Math.max(1, maxF - minF);
+  const X = h => 30 + (1 - h / win) * (W - 40), Y = f => Hh - 20 - (f - minF) / span * (Hh - 40);
+  const line = pts.map(p => `${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join(' ');
+  const area = `30,${Hh - 20} ${line} ${X(0)},${Hh - 20}`;
+  document.getElementById('panel').innerHTML = `
+    <div class="who">${sprite(c.cls, 64)}<div><div class="name">${c.fav ? '&#128274; ' : ''}${c.cls} <span class="muted">lvl ${c.lvl}</span></div>
+      <div class="meta"><span class="fame">&#9733; ${fmt(c.fame)} fame</span><span>${c.stats}/8 stats</span><span>last played ${ago(c.ago)}</span></div></div></div>
+    <div class="kpis">
+      <div class="kpi px">Fame gained<b>+${fmt(gained)}</b></div>
+      <div class="kpi px">Fame / hour<b>${hours ? fmt(Math.round(gained / hours)) : '-'}</b></div>
+      <div class="kpi px">Time played<b>${hours.toFixed(1)} h</b></div>
+    </div>
+    <svg viewBox="0 0 ${W} ${Hh}" preserveAspectRatio="none">
+      <polygon points="${area}" fill="var(--accent)" opacity=".18"/>
+      <polyline points="${line}" fill="none" stroke="var(--accent)" stroke-width="2"/>
+      <text x="30" y="${Hh - 6}" font-size="11" fill="var(--inkMuted)">${range === 'ALL' ? '45 d ago' : range + ' ago'}</text>
+      <text x="${W - 30}" y="${Hh - 6}" font-size="11" fill="var(--inkMuted)">now</text>
+      <text x="32" y="14" font-size="11" fill="var(--inkMuted)">${fmt(maxF)}</text>
+    </svg>
+    <div class="px muted">Sessions</div>
+    <div class="sessions">${sessions.map(s => `<div class="session"><span>${new Date(NOW - s.start * H).toLocaleString([], {weekday: 'short', hour: '2-digit', minute: '2-digit'})}
+      &ndash; ${new Date(NOW - (s.start - s.dur) * H).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}</span><span class="gain">+${fmt(s.gained)} fame</span></div>`).join('')
+      || '<div class="muted">No sessions in this range.</div>'}</div>`;
+}
+
+const rEl = document.getElementById('range');
+Object.keys(RANGES).forEach(r => {
+  const b = document.createElement('button'); b.textContent = r; if (r === range) b.className = 'on';
+  b.onclick = () => { range = r; [...rEl.children].forEach(x => x.className = x === b ? 'on' : ''); render(); };
+  rEl.appendChild(b);
+});
+const tEl = document.getElementById('theme');
+Object.keys(THEMES).forEach(t => tEl.add(new Option(t, t)));
+tEl.onchange = () => THEMES[tEl.value].forEach((v, i) => document.documentElement.style.setProperty('--' + VARS[i], v));
+render();
+</script>
+</body>
+</html>

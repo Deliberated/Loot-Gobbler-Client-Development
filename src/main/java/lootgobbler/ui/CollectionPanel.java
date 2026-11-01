@@ -1,0 +1,547 @@
+package lootgobbler.ui;
+
+import assets.IdToAsset;
+import lootgobbler.CollectionStore;
+import lootgobbler.ItemDb;
+import lootgobbler.StSets;
+
+import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+import javax.swing.table.DefaultTableCellRenderer;
+import javax.swing.table.DefaultTableModel;
+import java.awt.*;
+import java.awt.datatransfer.DataFlavor;
+import java.awt.datatransfer.StringSelection;
+import java.awt.datatransfer.Transferable;
+import java.util.*;
+import java.util.List;
+
+/**
+ * Collection tab: lifetime Grid, Live view and a Log of every collectible item obtained,
+ * with progress, copy-as-text / copy-as-image and a recent list.
+ */
+public class CollectionPanel extends JPanel {
+    private static final int ALL = 0, SHINY = 1, NORMAL = 2;
+    private static final String[] VIEWS = {"grid", "st", "live", "log"};
+    private static final int RECENT = 8;
+
+    private final CollectionGrid grid = new CollectionGrid();
+    private final CollectionGrid live = new CollectionGrid();
+    private int gridFilter = ALL, liveFilter = ALL;
+    private final JProgressBar progress = bar(null), liveProgress = bar(Palette.GREEN);
+    private final JLabel progressText = new JLabel("Loading item data..."), liveText = new JLabel(" ");
+    private final JPanel recent = new JPanel();
+    private final DefaultTableModel logModel = new DefaultTableModel(new Object[]{"Date", "", "Item", "Count"}, 0) {
+        @Override
+        public boolean isCellEditable(int row, int column) {
+            return false;
+        }
+    };
+    private final CardLayout cards = new CardLayout();
+    private final JPanel views = new JPanel(cards);
+    private List<ItemDb.Item> universe = List.of();
+    private boolean loaded = false;
+    private final Segmented viewPicker;
+    private Segmented gridFilterPicker;
+    private final StSetsView stView = new StSetsView(item -> showHistory(item, true));
+    private List<StSets.Set> stSets = List.of();
+    private Section sideSection;
+    private JButton backToRecent;
+    private ItemDb.Item historyItem;   // item whose history replaces the Recent list, or null
+    private final JTextField search = new JTextField();
+
+    public CollectionPanel() {
+        super(new BorderLayout(0, 8));
+        setBorder(new EmptyBorder(8, 8, 8, 8));
+
+        viewPicker = new Segmented(false, 0, i -> cards.show(views, VIEWS[i]), "Items", "ST Sets", "Live", "Log");
+        add(viewPicker, BorderLayout.NORTH);
+        grid.onItemClick(item -> showHistory(item, false));
+        live.onItemClick(item -> showHistory(item, true));
+        views.setOpaque(false);
+        views.add(gridView(), VIEWS[0]);
+        views.add(stView, VIEWS[1]);
+        views.add(liveView(), VIEWS[2]);
+        views.add(logView(), VIEWS[3]);
+        add(views, BorderLayout.CENTER);
+
+        CollectionStore.get().onChange(() -> SwingUtilities.invokeLater(this::refresh));
+        Thread loader = new Thread(() -> {
+            ItemDb db = ItemDb.get();
+            List<StSets.Set> sets = StSets.get();
+            SwingUtilities.invokeLater(() -> {
+                universe = db.collectible();
+                stSets = sets;
+                loaded = true;
+                refresh();
+            });
+        }, "ItemDb loader");
+        loader.setDaemon(true);
+        loader.start();
+    }
+
+    private JPanel gridView() {
+        gridFilterPicker = new Segmented(true, 0, i -> {
+            gridFilter = i;
+            refresh();
+        }, "All", "Shiny", "Normal");
+        search.putClientProperty("JTextField.placeholderText", "Search items or enchants");
+        search.putClientProperty("JTextField.showClearButton", true);
+        search.setToolTipText("Item name, type (e.g. Katana, Ring), UT / ST / T14, or an enchantment on items you own");
+        search.setPreferredSize(new Dimension(220, search.getPreferredSize().height));
+        search.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            public void insertUpdate(javax.swing.event.DocumentEvent e) { refresh(); }
+            public void removeUpdate(javax.swing.event.DocumentEvent e) { refresh(); }
+            public void changedUpdate(javax.swing.event.DocumentEvent e) { refresh(); }
+        });
+        JPanel headerActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        headerActions.setOpaque(false);
+        headerActions.add(search);
+        headerActions.add(gridFilterPicker);
+        Section main = new Section("Collection · Items", Palette.GOLD, scroll(grid)).actions(headerActions);
+
+        JPanel top = column(new Section("Progress", Palette.GREEN, progressBody("Collected", progress, progressText)),
+                new Section("Actions", Palette.BLUE, actionsBody()));
+        recent.setLayout(new BoxLayout(recent, BoxLayout.Y_AXIS));
+        recent.setOpaque(false);
+        recent.setBorder(new EmptyBorder(8, 10, 8, 10));
+        JScrollPane sp = FitWidthPanel.scroll(recent, 16);
+        JPanel sideBody = new JPanel(new BorderLayout());
+        sideBody.add(sp);
+
+        backToRecent = button("Recent", null, () -> {
+            historyItem = null;
+            refresh();
+        });
+        backToRecent.setVisible(false);
+        sideSection = new Section("Recent", Palette.PURPLE, sideBody).actions(backToRecent);
+        // keep the header (title, search box, All/Shiny/Normal) readable
+        return split("collectionGrid", main, top, sideSection, grid).minMain(main.getPreferredSize().width + 24);
+    }
+
+    private JPanel liveView() {
+        Section main = new Section("Collection · Live", Palette.GREEN, scroll(live))
+                .actions(new Segmented(true, 0, i -> {
+                    liveFilter = i;
+                    refresh();
+                }, "All", "Shiny", "Normal"));
+
+        JTextArea about = new JTextArea("The live view mirrors your collection, minus items lost when a "
+                + "character dies carrying them.\n\nDeath losses are not tracked yet, so for now it matches "
+                + "your lifetime Grid, which is never changed.");
+        about.setEditable(false);
+        about.setLineWrap(true);
+        about.setWrapStyleWord(true);
+        about.setOpaque(false);
+        about.setFont(UIManager.getFont("Label.font"));
+        JPanel aboutBody = new JPanel(new BorderLayout());
+        aboutBody.setBorder(new EmptyBorder(10, 10, 10, 10));
+        aboutBody.add(about, BorderLayout.NORTH);
+
+        JPanel top = column(new Section("Live Progress", Palette.GREEN, progressBody("Still held", liveProgress, liveText)),
+                new Section("About", Palette.BLUE, aboutBody));
+        return split("collectionLive", main, top, null, live);
+    }
+
+    private JPanel logView() {
+        JTable table = new JTable(logModel);
+        table.setShowGrid(false);
+        table.setIntercellSpacing(new Dimension(0, 0));
+        table.setRowHeight(36);
+        table.setFillsViewportHeight(true);
+        table.getTableHeader().setReorderingAllowed(false);
+        table.setDefaultRenderer(Object.class, new LogRenderer());
+        fixWidth(table, 0, 120);
+        fixWidth(table, 1, 44);
+        fixWidth(table, 3, 80);
+        table.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        table.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent e) {
+                int row = table.rowAtPoint(e.getPoint());
+                if (row < 0) return;
+                ItemDb.Item item = ItemDb.get().item((Integer) logModel.getValueAt(table.convertRowIndexToModel(row), 1));
+                if (item != null) showHistory(item, true);
+            }
+        });
+        JScrollPane sp = new JScrollPane(table);
+        sp.setBorder(null);
+        JPanel p = new JPanel(new BorderLayout());
+        p.setOpaque(false);
+        p.add(new Section("Collection · Log", Palette.GOLD, sp));
+        return p;
+    }
+
+    private void refresh() {
+        if (!loaded) return;
+        Map<Integer, CollectionStore.Entry> owned = collected();
+        List<ItemDb.Item> g = matching(filter(gridFilter), owned), l = filter(liveFilter);
+        grid.setData(g, owned);
+        live.setData(l, owned);
+        stView.setData(stSets, owned);
+        setProgress(progress, progressText, g, owned);
+        setProgress(liveProgress, liveText, l, owned);
+
+        List<Map.Entry<Integer, CollectionStore.Entry>> byLast = new ArrayList<>(owned.entrySet());
+        byLast.sort((a, b) -> String.valueOf(b.getValue().last).compareTo(String.valueOf(a.getValue().last)));
+
+        recent.removeAll();
+        if (historyItem != null) {
+            renderHistory(historyItem, owned.get(historyItem.id));
+        } else {
+            sideSection.setTitle("Recent");
+            backToRecent.setVisible(false);
+            if (byLast.isEmpty()) recent.add(new JLabel("Nothing collected yet."));
+            for (int i = 0; i < Math.min(RECENT, byLast.size()); i++) {
+                recent.add(recentRow(byLast.get(i).getKey(), byLast.get(i).getValue()));
+                recent.add(Box.createVerticalStrut(4));
+            }
+        }
+        recent.revalidate();
+        recent.repaint();
+
+        logModel.setRowCount(0);
+        for (Map.Entry<Integer, CollectionStore.Entry> e : byLast) {
+            logModel.addRow(new Object[]{e.getValue().firstDate(), e.getKey(), name(e.getKey()), e.getValue().count});
+        }
+    }
+
+    /**
+     * Shows the clicked item's finds in place of the Recent list (on the Grid view).
+     */
+    private void showHistory(ItemDb.Item item, boolean highlight) {
+        historyItem = item;
+        viewPicker.select(0);
+        cards.show(views, VIEWS[0]);
+        refresh();
+        if (highlight && !grid.pulse(item.id)) {   // hidden by the filter or search: show all, then highlight
+            gridFilterPicker.select(ALL);
+            gridFilter = ALL;
+            search.setText("");
+            refresh();
+            grid.pulse(item.id);
+        }
+    }
+
+    private void renderHistory(ItemDb.Item item, CollectionStore.Entry entry) {
+        sideSection.setTitle("History");
+        backToRecent.setVisible(true);
+
+        Image icon = CollectionGrid.icon(item.id);
+        JLabel name = new JLabel(item.name, icon == null ? null : new ImageIcon(icon), SwingConstants.LEFT);
+        name.setIconTextGap(8);
+        name.setFont(name.getFont().deriveFont(18f));
+        name.setAlignmentX(LEFT_ALIGNMENT);
+        recent.add(name);
+        JLabel count = new JLabel(entry == null ? "Not found yet" : entry.count == 1 ? "Found 1 time" : "Found " + entry.count + " times");
+        count.setForeground(Palette.MUTED);
+        count.setAlignmentX(LEFT_ALIGNMENT);
+        recent.add(count);
+        recent.add(Box.createVerticalStrut(8));
+
+        if (entry == null) return;
+        List<CollectionStore.Find> finds = new ArrayList<>(entry.history());
+        Collections.reverse(finds);   // latest at the top
+        for (CollectionStore.Find f : finds) {
+            recent.add(findRow(item.id, f));
+            recent.add(Box.createVerticalStrut(6));
+        }
+    }
+
+    private static JPanel findRow(int itemId, CollectionStore.Find f) {
+        String how = switch (f.source) {
+            case CollectionStore.VAULT -> f.bag.isEmpty() ? "Vault" : f.bag;
+            case CollectionStore.INVENTORY -> "Inventory";
+            default -> (f.bag.isEmpty() ? "Drop" : f.bag + " bag") + (f.where.isEmpty() ? "" : "  ·  " + f.where);
+        };
+        JLabel what = new JLabel(how);
+        JPanel text = new JPanel(new GridLayout(0, 1));
+        text.setOpaque(false);
+        text.add(what);
+        int count = f.enchantIds != null ? f.enchantIds.size() : Math.max(0, f.enchants);
+        if (f.enchantIds != null && f.enchantIds.stream().anyMatch(id -> id >= 0)) text.add(enchantIcons(f.enchantIds));
+
+        // item icon with in-game style enchantment diamonds
+        JLabel icon = new JLabel(EnchantBadge.icon(CollectionGrid.icon(itemId), 32, count));
+        icon.setVerticalAlignment(SwingConstants.TOP);
+        if (count > 0) icon.setToolTipText(count + (count == 1 ? " enchantment" : " enchantments") + " (" + EnchantBadge.RARITY[Math.min(4, count)] + ")");
+        // how long ago, counted in days from today, big and gold on the right; exact time on hover
+        JLabel ago = new JLabel(daysAgo(f.time));
+        Font titleFont = UIManager.getFont("TabbedPane.font");   // same as section titles like "PROGRESS"
+        if (titleFont != null) ago.setFont(titleFont.deriveFont(titleFont.getStyle()));
+        ago.setForeground(new Color(0xF5C542));
+        if (f.time != null) ago.setToolTipText(f.time.replace('T', ' '));
+        JPanel row = new JPanel(new BorderLayout(8, 0));
+        row.setOpaque(false);
+        row.add(icon, BorderLayout.WEST);
+        row.add(text, BorderLayout.CENTER);
+        row.add(ago, BorderLayout.EAST);
+        row.setAlignmentX(LEFT_ALIGNMENT);
+        row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
+        return row;
+    }
+
+    /**
+     * "today", "1 day", "63 days": calendar days between the find and today.
+     */
+    private static String daysAgo(String isoTime) {
+        if (isoTime == null || isoTime.length() < 10) return "";
+        try {
+            long days = java.time.temporal.ChronoUnit.DAYS.between(
+                    java.time.LocalDate.parse(isoTime.substring(0, 10)), java.time.LocalDate.now());
+            return days <= 0 ? "today" : days == 1 ? "1 day" : days + " days";
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /**
+     * One icon per enchantment (hover for its name); the rarity color frames the row.
+     */
+    private static JPanel enchantIcons(List<Integer> ids) {
+        JPanel p = new JPanel(new FlowLayout(FlowLayout.LEFT, 3, 1));
+        p.setOpaque(false);
+        Color frame = EnchantBadge.COLORS[Math.min(4, ids.size())];
+        for (int id : ids) {
+            if (id < 0) continue;   // empty slot: counts for rarity, no icon
+            Image img = lootgobbler.EnchantIcons.icon(id, 20);
+            JLabel l = img != null ? new JLabel(new ImageIcon(img)) : new JLabel("?");
+            l.setBorder(BorderFactory.createLineBorder(frame));
+            l.setToolTipText(lootgobbler.EnchantIcons.name(id));
+            p.add(l);
+        }
+        return p;
+    }
+
+    private List<ItemDb.Item> filter(int mode) {
+        if (mode == ALL) return universe;
+        return universe.stream().filter(i -> (mode == SHINY) == i.isShiny()).toList();
+    }
+
+    /**
+     * Items matching the search box: by name, type (slot), UT / ST / T14 tag, or an enchantment found on them.
+     */
+    private List<ItemDb.Item> matching(List<ItemDb.Item> items, Map<Integer, CollectionStore.Entry> owned) {
+        String q = search.getText().trim().toLowerCase(Locale.ROOT);
+        if (q.isEmpty()) return items;
+        return items.stream().filter(i -> i.name.toLowerCase(Locale.ROOT).contains(q)
+                || i.slotName().toLowerCase(Locale.ROOT).contains(q)
+                || i.tierTag().toLowerCase(Locale.ROOT).replace("(", "").replace(")", "").equals(q)
+                || (!i.tier.isEmpty() && q.equals("t" + i.tier))
+                || hasEnchant(owned.get(i.id), q)).toList();
+    }
+
+    private static boolean hasEnchant(CollectionStore.Entry entry, String q) {
+        if (entry == null) return false;
+        for (CollectionStore.Find f : entry.history()) {
+            if (f.enchantIds == null) continue;
+            for (int id : f.enchantIds) {
+                if (id < 0) continue;
+                String name = lootgobbler.EnchantIcons.name(id);
+                if (name != null && name.toLowerCase(Locale.ROOT).contains(q)) return true;
+            }
+        }
+        return false;
+    }
+
+    private static void setProgress(JProgressBar bar, JLabel text, List<ItemDb.Item> items,
+                                    Map<Integer, CollectionStore.Entry> owned) {
+        long have = items.stream().filter(i -> owned.containsKey(i.id)).count();
+        double pct = items.isEmpty() ? 0 : 100.0 * have / items.size();
+        bar.setValue((int) Math.round(pct * 10));
+        text.setText(have + " / " + items.size() + "   " + String.format("%.1f%%", pct));
+    }
+
+    private JPanel actionsBody() {
+        JPanel p = new JPanel(new GridLayout(0, 1, 0, 6));
+        p.setBorder(new EmptyBorder(10, 10, 10, 10));
+        p.add(button("Copy as text", null, this::copyText));
+        p.add(button("Copy as image", null, this::copyImage));
+        p.add(button("Clear collection", "danger", this::clearCollection));
+        return p;
+    }
+
+    /**
+     * The collection without entries that are not collectible gear (e.g. consumables recorded by older versions).
+     */
+    private static Map<Integer, CollectionStore.Entry> collected() {
+        Map<Integer, CollectionStore.Entry> all = CollectionStore.get().snapshot();
+        all.keySet().removeIf(id -> {
+            ItemDb.Item item = ItemDb.get().item(id);
+            return item == null || !item.isCollectible();
+        });
+        return all;
+    }
+
+    private void copyText() {
+        Map<Integer, CollectionStore.Entry> owned = collected();
+        List<String> lines = new ArrayList<>();
+        for (Map.Entry<Integer, CollectionStore.Entry> e : owned.entrySet()) {
+            ItemDb.Item item = ItemDb.get().item(e.getKey());
+            String line = name(e.getKey());
+            if (item != null && item.isShiny() && !line.contains("Shiny")) line += " (Shiny)";
+            if (e.getValue().count > 1) line += " x" + e.getValue().count;
+            lines.add(line);
+        }
+        lines.sort(String.CASE_INSENSITIVE_ORDER);
+        StringBuilder sb = new StringBuilder("ROTMG Collection — " + owned.size() + " items\n");
+        for (String l : lines) sb.append("- ").append(l).append('\n');
+        Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(sb.toString()), null);
+        JOptionPane.showMessageDialog(this, "Collection copied to the clipboard as text.", "Copy as text",
+                JOptionPane.INFORMATION_MESSAGE);
+    }
+
+    /**
+     * Copies the grid as one image, laid out with the same number of columns the grid shows right now.
+     */
+    private void copyImage() {
+        int cols = grid.getWidth() > 0 ? grid.columns() : live.getWidth() > 0 ? live.columns() : 12;
+        Image img = grid.renderImage(cols);
+        Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new ImageSelection(img), null);
+        JOptionPane.showMessageDialog(this, "Collection grid copied to the clipboard as an image.", "Copy as image",
+                JOptionPane.INFORMATION_MESSAGE);
+    }
+
+    private void clearCollection() {
+        int ok = JOptionPane.showConfirmDialog(this, "Delete your whole collection history? This cannot be undone.",
+                "Clear collection", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+        if (ok == JOptionPane.YES_OPTION) CollectionStore.get().clear();
+    }
+
+    private JPanel recentRow(int id, CollectionStore.Entry e) {
+        JPanel row = new JPanel(new BorderLayout(8, 0));
+        row.setOpaque(false);
+        row.setAlignmentX(LEFT_ALIGNMENT);
+        Image icon = CollectionGrid.icon(id);
+        JLabel name = new JLabel(name(id), icon == null ? null : new ImageIcon(icon.getScaledInstance(22, 22, Image.SCALE_REPLICATE)), SwingConstants.LEFT);
+        name.setIconTextGap(8);
+        JLabel date = new JLabel(e.lastDate());
+        date.setForeground(Palette.MUTED);
+        row.add(name, BorderLayout.CENTER);
+        row.add(date, BorderLayout.EAST);
+        row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 28));
+        return row;
+    }
+
+    private static String name(int id) {
+        ItemDb.Item item = ItemDb.get().item(id);
+        if (item != null && !item.name.isEmpty()) return item.name;
+        String n = IdToAsset.objectName(id);
+        return n == null ? "Item #" + id : n;
+    }
+
+    private static JPanel progressBody(String caption, JProgressBar bar, JLabel text) {
+        JPanel p = new JPanel();
+        p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS));
+        p.setBorder(new EmptyBorder(10, 10, 10, 10));
+        JLabel c = new JLabel(caption.toUpperCase(Locale.ROOT));
+        c.putClientProperty("FlatLaf.styleClass", "small");
+        c.setAlignmentX(LEFT_ALIGNMENT);
+        bar.setAlignmentX(LEFT_ALIGNMENT);
+        text.setAlignmentX(LEFT_ALIGNMENT);
+        p.add(c);
+        p.add(Box.createVerticalStrut(4));
+        p.add(bar);
+        p.add(Box.createVerticalStrut(4));
+        p.add(text);
+        return p;
+    }
+
+    private static JProgressBar bar(Color color) {
+        JProgressBar b = new JProgressBar(0, 1000);
+        if (color != null) b.setForeground(color);
+        b.setMaximumSize(new Dimension(Integer.MAX_VALUE, 12));
+        b.setPreferredSize(new Dimension(200, 12));
+        return b;
+    }
+
+    private static JButton button(String text, String style, Runnable action) {
+        JButton b = new JButton(text.toUpperCase(Locale.ROOT));
+        if (style != null) b.putClientProperty("FlatLaf.styleClass", style);
+        b.addActionListener(e -> action.run());
+        return b;
+    }
+
+    private static JScrollPane scroll(JComponent c) {
+        JScrollPane sp = new JScrollPane(c);
+        sp.setBorder(null);
+        sp.getVerticalScrollBar().setUnitIncrement(CollectionGrid.CELL);
+        return sp;
+    }
+
+    private static JPanel column(JComponent... parts) {
+        JPanel p = new JPanel();
+        p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS));
+        p.setOpaque(false);
+        for (int i = 0; i < parts.length; i++) {
+            if (i > 0) p.add(Box.createVerticalStrut(8));
+            parts[i].setAlignmentX(LEFT_ALIGNMENT);
+            p.add(parts[i]);
+        }
+        return p;
+    }
+
+    /**
+     * Main area on the left, a resizable side column on the right (drag the gap; width saved per view), with the
+     * top parts at natural height and the filler below.
+     */
+    private static SideSplit split(String name, JComponent main, JComponent sideTop, JComponent sideFill,
+                                   CollectionGrid grid) {
+        JPanel side = new JPanel(new BorderLayout(0, 8));
+        side.setOpaque(false);
+        side.add(sideTop, BorderLayout.NORTH);
+        if (sideFill != null) side.add(sideFill, BorderLayout.CENTER);
+        SideSplit split = new SideSplit(main, side, name, 380, 200);
+        // the divider settles where the grid shows whole item columns
+        if (grid.getParent() instanceof JViewport vp) split.setSnap(vp, CollectionGrid::snapWidth);
+        return split;
+    }
+
+    private static void fixWidth(JTable t, int col, int w) {
+        t.getColumnModel().getColumn(col).setMinWidth(w);
+        t.getColumnModel().getColumn(col).setMaxWidth(w);
+    }
+
+    private static class LogRenderer extends DefaultTableCellRenderer {
+        @Override
+        public Component getTableCellRendererComponent(JTable table, Object value, boolean selected,
+                                                       boolean focus, int row, int column) {
+            super.getTableCellRendererComponent(table, value, selected, false, row, column);
+            setBorder(new EmptyBorder(0, 10, 0, 10));
+            setIcon(null);
+            setHorizontalAlignment(LEFT);
+            if (!selected) {
+                Color alt = UIManager.getColor("Table.alternateRowColor");
+                setBackground(row % 2 == 1 && alt != null ? alt : table.getBackground());
+                setForeground(table.getForeground());
+            }
+            if (column == 1) {
+                Image icon = CollectionGrid.icon((Integer) value);
+                setText("");
+                setIcon(icon == null ? null : new ImageIcon(icon));
+            } else if (column == 3) {
+                setText("x" + value);
+                setHorizontalAlignment(RIGHT);
+                if (!selected) setForeground(Palette.GOLD);
+            }
+            return this;
+        }
+    }
+
+    private record ImageSelection(Image image) implements Transferable {
+        @Override
+        public DataFlavor[] getTransferDataFlavors() {
+            return new DataFlavor[]{DataFlavor.imageFlavor};
+        }
+
+        @Override
+        public boolean isDataFlavorSupported(DataFlavor flavor) {
+            return DataFlavor.imageFlavor.equals(flavor);
+        }
+
+        @Override
+        public Object getTransferData(DataFlavor flavor) {
+            return image;
+        }
+    }
+}

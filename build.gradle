@@ -1,0 +1,90 @@
+plugins {
+    id 'java'
+    id 'application'
+    id 'com.gradleup.shadow' version '8.3.5'
+}
+
+version = '0.4.0'
+
+repositories {
+    mavenCentral()
+}
+
+// RealmShark (the sniffing engine) is compiled straight from the unmodified upstream copy in vendor/.
+sourceSets.main.java.srcDirs += 'vendor/RealmShark-realmshark/src/main/java'
+
+dependencies {
+    implementation 'com.ardikars.pcap:pcap-spi:1.4.2'
+    implementation 'com.ardikars.pcap:pcap-jdk7:1.4.2'
+    implementation 'com.google.code.gson:gson:2.9.1'
+    implementation 'com.google.flatbuffers:flatbuffers-java:23.5.26'
+    implementation 'com.formdev:flatlaf:3.5.4'
+    runtimeOnly 'org.slf4j:slf4j-nop:2.0.17'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 21
+    options.encoding = 'UTF-8'
+}
+
+application {
+    mainClass = 'tomato.Tomato'
+    applicationDefaultJvmArgs = ['-Xmx2g']
+}
+
+// `gradlew run` works from the project root, so assets/ and realmShark.properties live there.
+tasks.named('run') {
+    workingDir = projectDir
+}
+
+shadowJar {
+    archiveFileName = "LootGobbler-${project.version}.jar"
+}
+
+// `gradlew packageExe`: build/dist/LootGobbler/LootGobbler.exe with its own Java runtime (no Java install needed),
+// plus build/dist/LootGobbler-<version>-win.zip to share. The exe keeps its data files next to itself.
+def distDir = layout.buildDirectory.dir('dist').get().asFile
+def exeInput = layout.buildDirectory.dir('jpackage-input').get().asFile
+def appIcon = file('src/main/resources/icon/lootgobbler.ico')
+
+tasks.register('packageExe', Exec) {
+    group = 'distribution'
+    description = 'Builds the LootGobbler.exe folder and zip with jpackage.'
+    dependsOn tasks.named('shadowJar')
+    doFirst {
+        delete distDir, exeInput
+        copy {
+            from tasks.named('shadowJar')
+            into exeInput
+        }
+        // native DLLs shipped in app\natives, so FlatLaf and JNA don't unpack them into %TEMP% at every start
+        copy {
+            from(zipTree(tasks.named('shadowJar').get().archiveFile)) {
+                include 'com/formdev/flatlaf/natives/flatlaf-windows-x86_64.dll', 'com/sun/jna/win32-x86-64/jnidispatch.dll'
+                eachFile { path = name }
+                includeEmptyDirs = false
+            }
+            into new File(exeInput, 'natives')
+        }
+    }
+    // nothing is written outside the exe's folder: no perf data in %TEMP%, natives loaded from app\natives
+    def javaOptions = ['-Xmx2g', '-XX:-UsePerfData', '-Dflatlaf.nativeLibraryPath=$APPDIR\\natives',
+                       '-Djna.boot.library.path=$APPDIR\\natives', '-Djna.nounpack=true']
+    def cmd = ['jpackage', '--type', 'app-image', '--name', 'LootGobbler', '--app-version', project.version,
+               '--vendor', 'Pluribus Guild', '--description', 'Loot Gobbler - your right hand for your RotMG adventures',
+               '--input', exeInput.path, '--main-jar', "LootGobbler-${project.version}.jar",
+               '--main-class', 'tomato.Tomato', '--dest', distDir.path]
+    javaOptions.each { cmd += ['--java-options', it] }
+    if (appIcon.exists()) cmd += ['--icon', appIcon.path]
+    commandLine cmd
+    doLast {
+        copy {
+            from 'LICENSE', 'THIRD_PARTY_LICENSE-RealmShark.md', 'src/main/resources/fonts/OFL-Jersey10.txt',
+                    'src/main/resources/fonts/OFL-Jersey15.txt'
+            into new File(distDir, 'LootGobbler')
+        }
+        ant.zip(destfile: new File(distDir, "LootGobbler-${project.version}-win.zip").path) {
+            zipfileset(dir: new File(distDir, 'LootGobbler').path, prefix: 'LootGobbler')
+        }
+    }
+}

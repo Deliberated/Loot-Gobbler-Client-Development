@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gobbler Icon Previews</title>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen&family=VT323&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --frame: #172012; --frameInk: #C6DD6A; --paper: #EFE2C6; --sand: #DCC8A2; --ink: #2C1D0E; --muted: #93765A;
+    --line: #3E5A2A;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--frame); color: var(--paper); font: 20px VT323, monospace; }
+  header { padding: 18px 16px 6px; }
+  h1 { font: 22px Silkscreen, monospace; color: var(--frameInk); margin: 0 0 4px; }
+  header p { margin: 0; color: #B5C78E; max-width: 900px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px; padding: 14px 16px 28px; }
+  .card { background: var(--paper); color: var(--ink); border: 2px solid #000; box-shadow: 4px 4px 0 #000; padding: 12px; }
+  .card h2 { font: 14px Silkscreen, monospace; margin: 0 0 2px; }
+  .card .why { color: var(--muted); margin: 0 0 10px; line-height: 1.05; }
+  .big { display: flex; gap: 10px; align-items: flex-end; }
+  .big canvas { image-rendering: pixelated; border: 2px solid #000; }
+  .bg-dark { background: #1d1d1d; }
+  .bg-light { background: #f3f3f3; }
+  .bg-check { background: repeating-conic-gradient(#d9d9d9 0 25%, #fff 0 50%) 0 0 / 16px 16px; }
+  .sizes { display: flex; gap: 14px; align-items: flex-end; margin-top: 10px; flex-wrap: wrap; }
+  .sizes figure { margin: 0; text-align: center; font-size: 16px; color: var(--muted); }
+  .sizes canvas { display: block; margin: 0 auto 2px; }
+  .chip { display: flex; align-items: center; gap: 8px; margin-top: 10px; background: #202020; color: #ddd; padding: 6px 10px; font-size: 18px; border: 2px solid #000; }
+  .chip canvas { image-rendering: auto; }
+  @media (max-width: 400px) { .grid { grid-template-columns: 1fr; } .big canvas:first-child { width: 192px; height: 192px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Loot Gobbler - icon previews</h1>
+  <p>Pixel art on a 32x32 grid with a RotMG-style black outline, inspired by the goblin artwork. Each card shows the
+    icon large, at real Windows sizes (taskbar 32, title bar 16), and as a title-bar chip. Pick a letter; I can then tweak it
+    (colors, expression, hand-tuned 16px version).</p>
+</header>
+<div class="grid" id="grid"></div>
+<script>
+const C = {
+  o: '#0B0B08', skin: '#9CCB3B', skinD: '#6E9A22', skinL: '#C9E86E', ear: '#F2A27A', earD: '#D97A55',
+  white: '#FFF6DC', iris: '#C08A2A', pupil: '#2A1608', teeth: '#FFF3C8', mouth: '#5A1A12', tongue: '#C8564A',
+  nose: '#E8A070', hair: '#C89A3A',
+  sack: '#A87A45', sackD: '#7A5430', sackL: '#CFA369', rope: '#5E4122', patch: '#8C6236',
+  gold: '#F2C230', goldD: '#B8860B', goldL: '#FFEB8A',
+  red: '#E83A5A', blue: '#3A7BE8', purple: '#9A4AE0', green: '#3AC86A', cyan: '#5FE0F0', gemL: '#FFFFFF'
+};
+let N = 32;   // grid size of the concept being drawn (32, or 48 for the detailed ones)
+function grid() { return Array(N * N).fill(null); }
+function set(g, x, y, c) { x = Math.round(x); y = Math.round(y); if (x >= 0 && y >= 0 && x < N && y < N) g[y * N + x] = c; }
+function rect(g, x, y, w, h, c) { for (let j = y; j < y + h; j++) for (let i = x; i < x + w; i++) set(g, i, j, c); }
+function ell(g, cx, cy, rx, ry, c, dark, light) {
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const dx = (x + .5 - cx) / rx, dy = (y + .5 - cy) / ry;
+    if (dx * dx + dy * dy > 1) continue;
+    let col = c;
+    if (dark && dx * .7 + dy * .7 > .55) col = dark;
+    if (light && dx * .7 + dy * .7 < -.75) col = light;
+    g[y * N + x] = col;
+  }
+}
+function poly(g, pts, c) {
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const px = x + .5, py = y + .5; let inside = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const [xi, yi] = pts[i], [xj, yj] = pts[j];
+      if ((yi > py) !== (yj > py) && px < (xj - xi) * (py - yi) / (yj - yi) + xi) inside = !inside;
+    }
+    if (inside) g[y * N + x] = c;
+  }
+}
+const mirror = pts => pts.map(([x, y]) => [N - x, y]);
+function outline(g) {
+  const out = g.slice();
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    if (g[y * N + x]) continue;
+    const n = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([a, b]) => {
+      const i = x + a, j = y + b; return i >= 0 && j >= 0 && i < N && j < N && g[j * N + i] && g[j * N + i] !== C.o;
+    });
+    if (n) out[y * N + x] = C.o;
+  }
+  return out;
+}
+function coin(g, x, y) { ell(g, x, y, 2.2, 1.6, C.gold, C.goldD, C.goldL); }
+function gem(g, x, y, c) { rect(g, x, y, 2, 2, c); set(g, x, y, C.gemL); }
+
+// --- goblin head parts, reused by several concepts ---
+function ears(g, dy = 0, s = 1) {
+  const L = [[9, 13], [1, 6 + (1 - s) * 4], [3, 12], [8, 18]].map(([x, y]) => [16 + (x - 16) * s, y + dy]);
+  const Li = [[8, 14], [3.2, 9 + (1 - s) * 3], [4.6, 12.6], [8, 16.5]].map(([x, y]) => [16 + (x - 16) * s, y + dy]);
+  poly(g, L, C.skin); poly(g, mirror(L), C.skin);
+  poly(g, Li, C.ear); poly(g, mirror(Li), C.ear);
+}
+function eyes(g, y, gap = 3.5, r = 2.6) {
+  for (const s of [-1, 1]) {
+    ell(g, 16 + s * gap, y, r, r * 1.08, C.white);
+    ell(g, 16 + s * gap - s * .4, y + .4, r * .5, r * .55, C.pupil);
+    set(g, 16 + s * gap - s * .4 - .5, y - .6, C.white);
+  }
+}
+
+// Detailed 48x48 version modelled on the artwork: the goblin grinning over the loot pile of the sack it hugs.
+function artGoblin(g) {
+  const pearl = '#F4EEE4';
+  // arms first, so the sack covers the shoulders
+  poly(g, [[14, 21], [6, 26], [5, 32], [10, 32], [12, 27], [17, 24]], C.skin);
+  poly(g, [[34, 21], [42, 27], [42, 38], [38, 38], [38, 29], [31, 24]], C.skin);
+  // sack
+  ell(g, 24, 37, 17, 10.8, C.sack, C.sackD, C.sackL);
+  rect(g, 15, 37, 9, 7, C.patch);
+  for (let x = 15; x <= 23; x += 2) { set(g, x, 37, C.sackD); set(g, x, 43, C.sackD); }
+  for (let y = 39; y <= 41; y += 2) { set(g, 15, y, C.sackD); set(g, 23, y, C.sackD); }
+  set(g, 31, 33, C.sackD); set(g, 32, 34, C.sackD); set(g, 9, 36, C.sackD); set(g, 10, 37, C.sackD);
+  // head: ears, face, eyes, nose
+  const ear = [[15, 11], [1, 3], [3, 9], [7, 13], [15, 18]], earIn = [[13.5, 12], [4, 6], [6, 10.5], [13.5, 16]];
+  poly(g, ear, C.skin); poly(g, mirror(ear).map(([x, y]) => [x - 0, y]), C.skin);
+  poly(g, earIn, C.ear); poly(g, mirror(earIn), C.ear);
+  ell(g, 24, 14.5, 11, 10, C.skin, C.skinD, C.skinL);
+  for (const [x, y] of [[20, 5], [22, 4], [24, 3], [26, 4], [28, 5], [23, 4]]) set(g, x, y, C.hair);
+  rect(g, 15, 7, 6, 1, C.skinD); rect(g, 27, 7, 6, 1, C.skinD);
+  for (const s of [-1, 1]) {
+    const cx = 24 + s * 5;
+    ell(g, cx, 11.5, 3.6, 3.8, C.white);
+    ell(g, cx - s * .3, 12, 2.3, 2.5, '#8A5A1A');
+    ell(g, cx - s * .3, 12.1, 1.1, 1.2, C.pupil);
+    set(g, cx - s * .3 - 1, 10.6, C.white);
+  }
+  ell(g, 24, 16.3, 2.4, 1.9, C.nose);
+  set(g, 23, 17, C.earD); set(g, 25, 17, C.earD);
+  // wide open grin
+  ell(g, 24, 20.8, 8.5, 3.8, C.mouth);
+  for (const x of [17, 19, 21, 27, 29, 31]) { set(g, x, 18.4, C.teeth); set(g, x, 19.2, C.teeth); }
+  ell(g, 24, 22.2, 4, 1.6, C.tongue);
+  // sack rim and the loot pile spilling up into the mouth
+  ell(g, 24, 27.5, 15, 3.6, C.sackL);
+  ell(g, 24, 25.8, 12.5, 3.4, C.gold, C.goldD, C.goldL);
+  for (const [x, y] of [[15, 25.5], [20, 24.5], [27, 24.8], [32, 26], [24, 27]]) coin(g, x, y);
+  gem(g, 18, 24, C.red); gem(g, 25, 23, C.blue); gem(g, 30, 24, C.purple); gem(g, 21, 27, C.cyan); gem(g, 34, 26, C.red);
+  // claw hands over the sack
+  ell(g, 9, 32, 3.6, 3, C.skin, C.skinD);
+  for (const [y, len] of [[30, 5], [32, 6], [34, 5]]) { rect(g, 11, y, len, 1, C.skin); set(g, 11 + len, y, C.skinD); rect(g, 11, y + 1, len, 1, C.sackD); }
+  ell(g, 39, 39, 3.6, 3, C.skin, C.skinD);
+  for (const [y, len] of [[37, 5], [39, 6], [41, 5]]) { rect(g, 37 - len, y, len, 1, C.skin); set(g, 36 - len, y, C.skinD); rect(g, 37 - len, y + 1, len, 1, C.sackD); }
+  // pearl string hanging out of the sack, loot on the floor
+  for (let y = 29; y <= 46; y += 2) set(g, 29 + Math.round(Math.sin(y / 3)), y, pearl);
+  coin(g, 4.5, 45.5); coin(g, 43.5, 45.5); coin(g, 40, 46.5); gem(g, 7, 44, C.green); gem(g, 37, 45, C.blue);
+}
+
+// H x G: the artwork's face close-up (H), drawn as clean transparent pixel art with an outline (G).
+function faceGoblin(g) {
+  const amber = '#C08A2A', pink = '#E85A9A';
+  // ears: the left one points up-left, the right one out to the right, as in the painting
+  const earL = [[14, 16], [1, 5], [3, 12], [7, 18], [14, 24]], earLIn = [[12.5, 17], [4, 8.5], [6, 13.5], [12.5, 21.5]];
+  const earR = [[34, 16], [47, 19], [44, 23], [39, 26], [34, 27]], earRIn = [[35, 18.5], [44, 20.3], [40, 23.4], [35, 25]];
+  poly(g, earL, C.skin); poly(g, earR, C.skin); poly(g, earLIn, C.ear); poly(g, earRIn, C.ear);
+  set(g, 5, 9, C.earD); set(g, 6, 11, C.earD); set(g, 41, 21, C.earD); set(g, 43, 21, C.earD);
+  // head with shading and a messy tuft of hair
+  ell(g, 24, 19, 12, 11, C.skin, C.skinD, C.skinL);
+  for (const [x, y] of [[18, 8], [20, 7], [21, 6], [23, 7], [25, 6], [26, 5], [28, 7], [30, 8], [22, 5], [27, 6]]) set(g, x, y, C.hair);
+  for (const [x, y] of [[14, 22], [15, 25], [33, 25], [16, 12]]) set(g, x, y, C.skinD);
+  // brows and the big amber eyes (the left one larger and higher, like the artwork)
+  for (let x = 15; x <= 21; x++) set(g, x, x < 18 ? 10 : 11, C.skinD);
+  for (let x = 27; x <= 33; x++) set(g, x, x < 30 ? 13 : 12, C.skinD);
+  ell(g, 19, 15.5, 3.9, 4.1, C.white); ell(g, 19.8, 16, 2.5, 2.7, amber); ell(g, 19.8, 16.1, 1.2, 1.3, C.pupil);
+  set(g, 18, 14, C.white); set(g, 19, 14, C.white);
+  ell(g, 30, 18, 3.4, 3.6, C.white); ell(g, 29.5, 18.4, 2.2, 2.4, amber); ell(g, 29.5, 18.5, 1.1, 1.2, C.pupil);
+  set(g, 28, 17, C.white);
+  // round pink nose
+  ell(g, 25, 21, 2.9, 2.3, C.nose); set(g, 24, 20, C.teeth); set(g, 24, 22, C.earD); set(g, 26, 22, C.earD);
+  // wide open grin: upper teeth, tongue
+  ell(g, 23, 27, 10.5, 5, C.mouth);
+  for (let x = 14; x <= 32; x += 2) { set(g, x, 23, C.teeth); set(g, x, 24, C.teeth); }
+  ell(g, 25, 29.3, 4.8, 1.8, C.tongue);
+  // loot pile filling the bottom, spilling into the mouth
+  ell(g, 24, 38, 17, 8, C.gold, C.goldD, C.goldL);
+  for (const [x, y] of [[12, 34], [19, 31.5], [30, 32], [36, 35], [24, 36], [15, 40], [33, 41], [27, 43], [9, 39]]) {
+    ell(g, x, y, 2.6, 1.8, C.gold, C.goldD, C.goldL); set(g, Math.round(x) - 1, Math.round(y) - 1, C.goldL);
+  }
+  const bigGem = (x, y, c, light) => { rect(g, x, y, 3, 3, c); set(g, x, y, light); set(g, x + 1, y, light); set(g, x, y + 1, light); };
+  bigGem(16, 33, C.red, '#FF9AAE'); bigGem(26, 30, C.blue, '#A9C8FF'); bigGem(10, 36, C.purple, '#D7B2FF');
+  bigGem(33, 37, pink, '#FFC2DD'); bigGem(21, 39, C.cyan, '#E2FCFF'); bigGem(36, 32, C.red, '#FF9AAE');
+  // claw hand grabbing the loot on the left
+  ell(g, 7, 40, 4, 3.2, C.skin, C.skinD);
+  for (const [y, len] of [[37, 6], [39, 7], [41, 6]]) {
+    rect(g, 10, y, len, 1, C.skin); set(g, 10 + len, y, C.teeth); rect(g, 10, y + 1, len, 1, C.goldD);
+  }
+  // pearls
+  for (let x = 28; x <= 40; x += 2) set(g, x, 44 - Math.round(Math.abs(x - 34) / 3), '#F4EEE4');
+}
+
+const concepts = [
+  { key: 'K', n: 48, name: 'H x G (face, clean)', why: 'The face close-up of H - grin, amber eyes, loot pile, claw - drawn as clean transparent pixel art like G.', draw: faceGoblin },
+  { key: 'G', n: 48, name: 'Loot Gobbler (artwork)', why: 'Detailed 48px pixel version of the artwork: grinning over the loot pile of the sack it hugs, claws, pearls and all.', draw: artGoblin },
+  { key: 'A', name: 'Grinning goblin', why: 'Just the face: big ears, bulging eyes, toothy grin. Reads best at 16px.', draw(g) {
+    ears(g);
+    ell(g, 16, 17, 9, 8.2, C.skin, C.skinD, C.skinL);
+    rect(g, 13, 8, 1, 2, C.hair); rect(g, 16, 7, 1, 2, C.hair); rect(g, 19, 8, 1, 2, C.hair);
+    eyes(g, 14.5);
+    rect(g, 10, 11, 4, 1, C.skinD); rect(g, 18, 11, 4, 1, C.skinD);
+    ell(g, 16, 18.6, 1.7, 1.3, C.nose);
+    ell(g, 16, 22.4, 5.6, 2.7, C.mouth);
+    for (const x of [12, 14, 17, 19]) set(g, x, 20.6, C.teeth);
+    for (const x of [13, 18]) set(g, x, 23.6, C.teeth);
+    ell(g, 16, 23.5, 2.4, 1, C.tongue);
+  }},
+  { key: 'B', name: 'Overstuffed sack', why: 'The loot itself: a patched burlap sack bursting with coins and gems.', draw(g) {
+    ell(g, 16, 21, 11.5, 9.5, C.sack, C.sackD, C.sackL);
+    rect(g, 12, 9, 8, 4, C.sack);
+    rect(g, 11, 11, 10, 2, C.rope); set(g, 21, 13, C.rope); set(g, 22, 14, C.rope);
+    ell(g, 16, 8, 7.5, 3, C.sackL);
+    coin(g, 12.5, 6.5); coin(g, 17.5, 5.5); coin(g, 15, 3.8); coin(g, 20, 7.5);
+    gem(g, 14, 6, C.red); gem(g, 18, 3, C.blue); gem(g, 10, 7, C.purple);
+    rect(g, 18, 21, 6, 5, C.patch);
+    for (const [x, y] of [[18, 21], [20, 21], [22, 21], [23, 23], [23, 25], [18, 25], [20, 25], [18, 23]]) set(g, x, y, C.sackD);
+    set(g, 9, 18, C.sackD); set(g, 10, 19, C.sackD); set(g, 11, 20, C.sackD);
+    coin(g, 4.5, 28.5); coin(g, 27.5, 28.5); gem(g, 7, 27, C.green);
+  }},
+  { key: 'C', name: 'Goblin hugs sack', why: 'Closest to the artwork: the goblin peeking over a sack it clutches.', draw(g) {
+    ears(g, -5, .8);
+    ell(g, 16, 10, 7, 6.5, C.skin, C.skinD, C.skinL);
+    eyes(g, 8.5, 2.8, 2);
+    ell(g, 16, 13.4, 3.6, 1.6, C.mouth);
+    for (const x of [14, 17]) set(g, x, 12.4, C.teeth);
+    ell(g, 16, 23, 11.5, 8.5, C.sack, C.sackD, C.sackL);
+    ell(g, 16, 16.5, 7.5, 2.3, C.sackL);
+    coin(g, 12.5, 16); coin(g, 18.5, 16); gem(g, 15, 15, C.red); gem(g, 20, 15, C.blue);
+    ell(g, 6, 21, 2.6, 2.2, C.skin, C.skinD); ell(g, 26, 21, 2.6, 2.2, C.skin, C.skinD);
+    for (const x of [5, 7]) set(g, x, 23, C.skinD); for (const x of [25, 27]) set(g, x, 23, C.skinD);
+    rect(g, 18, 25, 5, 4, C.patch);
+    for (const [x, y] of [[18, 25], [20, 25], [22, 25], [18, 28], [20, 28], [22, 28]]) set(g, x, y, C.sackD);
+  }},
+  { key: 'D', name: 'The gobbler sack', why: 'The sack is the goblin: its open mouth chomps the loot. Most playful.', draw(g) {
+    poly(g, [[6, 15], [0, 9], [2, 16], [6, 20]], C.skin); poly(g, mirror([[6, 15], [0, 9], [2, 16], [6, 20]]), C.skin);
+    poly(g, [[5.5, 15.5], [2, 11.5], [3, 15.5], [5.5, 18]], C.ear); poly(g, mirror([[5.5, 15.5], [2, 11.5], [3, 15.5], [5.5, 18]]), C.ear);
+    ell(g, 16, 19, 11, 11.5, C.sack, C.sackD, C.sackL);
+    rect(g, 11, 5, 10, 3, C.rope); set(g, 10, 6, C.rope); set(g, 21, 6, C.rope);
+    ell(g, 16, 4, 4, 1.6, C.sackL);
+    eyes(g, 12.5, 4, 2.4);
+    ell(g, 16, 21, 7.5, 4.5, C.mouth);
+    for (let x = 10; x <= 22; x += 2) set(g, x, 17.6, C.teeth);
+    for (const x of [12, 20]) set(g, x, 24.4, C.teeth);
+    coin(g, 13.5, 21.5); coin(g, 18.5, 20.5); gem(g, 15, 22, C.cyan); gem(g, 17, 23, C.red);
+    coin(g, 5, 29); coin(g, 27, 29); gem(g, 9, 28, C.purple);
+  }},
+  { key: 'E', name: 'Goblin coin', why: 'A gold coin with a goblin face struck into it. Very clean, very "loot".', draw(g) {
+    ell(g, 16, 16, 14, 14, C.goldD);
+    ell(g, 16, 16, 12, 12, C.gold, C.goldD, C.goldL);
+    poly(g, [[10, 14], [5, 9], [6, 14], [10, 18]], C.goldD); poly(g, mirror([[10, 14], [5, 9], [6, 14], [10, 18]]), C.goldD);
+    ell(g, 16, 17, 6, 5.6, C.goldL);
+    ell(g, 13.5, 15.5, 1.3, 1.5, C.goldD); ell(g, 18.5, 15.5, 1.3, 1.5, C.goldD);
+    ell(g, 16, 20, 3.5, 1.4, C.goldD);
+    for (const x of [14, 17]) set(g, x, 19.3, C.goldL);
+    set(g, 9, 9, C.goldL); set(g, 10, 8, C.goldL); set(g, 8, 10, C.goldL);
+  }},
+  { key: 'F', name: 'Gem chomper', why: 'The goblin face biting down on a big cut gem. Strong silhouette, lots of color.', draw(g) {
+    ears(g, -1);
+    ell(g, 16, 16, 9, 8, C.skin, C.skinD, C.skinL);
+    rect(g, 13, 7, 1, 2, C.hair); rect(g, 18, 7, 1, 2, C.hair);
+    eyes(g, 13.5);
+    ell(g, 16, 17.6, 1.6, 1.2, C.nose);
+    ell(g, 16, 21.5, 5.8, 2.6, C.mouth);
+    poly(g, [[16, 17.5], [21.5, 22.5], [16, 30], [10.5, 22.5]], C.purple);
+    poly(g, [[16, 17.5], [21.5, 22.5], [16, 23.5]], '#C58CF5');
+    poly(g, [[10.5, 22.5], [16, 23.5], [16, 30]], '#6A2AB0');
+    set(g, 15, 19, C.gemL); set(g, 16, 20, C.gemL);
+    for (const x of [11, 13, 19, 21]) set(g, x, 20, C.teeth);
+  }}
+];
+
+function paint(canvas, px, size, smooth) {
+  const src = document.createElement('canvas'); src.width = src.height = N;
+  const sx = src.getContext('2d');
+  px.forEach((c, i) => { if (c) { sx.fillStyle = c; sx.fillRect(i % N, Math.floor(i / N), 1, 1); } });
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = !!smooth; ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(src, 0, 0, size, size);
+}
+
+const root = document.getElementById('grid');
+for (const k of concepts) {
+  N = k.n || 32;
+  const g = grid(); k.draw(g); const px = outline(g);
+  const card = document.createElement('div'); card.className = 'card';
+  card.innerHTML = `<h2>${k.key} - ${k.name}</h2><p class="why">${k.why}</p>`;
+  const big = document.createElement('div'); big.className = 'big';
+  for (const [size, bg] of [[192, 'bg-check'], [96, 'bg-dark']]) {
+    const c = document.createElement('canvas'); c.className = bg; paint(c, px, size); big.appendChild(c);
+  }
+  card.appendChild(big);
+  const sizes = document.createElement('div'); sizes.className = 'sizes';
+  for (const [size, bg] of [[64, 'bg-dark'], [48, 'bg-light'], [32, 'bg-dark'], [32, 'bg-light'], [16, 'bg-dark'], [16, 'bg-light']]) {
+    const f = document.createElement('figure'); const c = document.createElement('canvas'); c.className = bg;
+    paint(c, px, size, size < N); f.appendChild(c); f.append(size + 'px'); sizes.appendChild(f);
+  }
+  card.appendChild(sizes);
+  const chip = document.createElement('div'); chip.className = 'chip';
+  const ci = document.createElement('canvas'); paint(ci, px, 16, true); chip.appendChild(ci); chip.append('Loot Gobbler by Pluri');
+  card.appendChild(chip);
+  root.appendChild(card);
+}
+
+// icons.html#export: renders K at the small icon sizes into <pre id="export"> as data URLs (read by the build tool)
+if (location.hash === '#export') {
+  N = 48;
+  const g = grid(); faceGoblin(g); const px = outline(g);
+  const out = {};
+  for (const size of [16, 24, 32]) { const c = document.createElement('canvas'); paint(c, px, size, true); out[size] = c.toDataURL('image/png'); }
+  const pre = document.createElement('pre'); pre.id = 'export'; pre.textContent = JSON.stringify(out); document.body.appendChild(pre);
+}
+
+// The artwork itself, pixelated (background faded to a dark tile). Generated into icon-art/.
+const art = [
+  { key: 'H', file: 'face-v', name: 'Artwork - face', why: 'The painting, cropped to the grin and the loot. Most faithful; busy below 48px.' },
+  { key: 'I', file: 'head-v', name: 'Artwork - head and loot', why: 'A bit wider: ears, grin and the overflowing sack opening.' },
+  { key: 'J', file: 'full-v', name: 'Artwork - whole goblin', why: 'The full goblin hugging the sack. Reads only at 64px and up.' }
+];
+for (const k of art.slice().reverse()) {   // each is inserted right after G, so go backwards to end up H, I, J
+  const card = document.createElement('div'); card.className = 'card';
+  card.innerHTML = `<h2>${k.key} - ${k.name}</h2><p class="why">${k.why}</p>
+    <div class="big"><img src="icon-art/${k.file}-64.png" width="192" height="192" style="image-rendering:pixelated" class="bg-check" alt="">
+      <img src="icon-art/${k.file}-48.png" width="96" height="96" style="image-rendering:pixelated" class="bg-dark" alt=""></div>
+    <div class="sizes">
+      <figure><img src="icon-art/${k.file}-64.png" width="64" height="64" class="bg-dark" alt=""><br>64px</figure>
+      <figure><img src="icon-art/${k.file}-48.png" width="48" height="48" class="bg-light" alt=""><br>48px</figure>
+      <figure><img src="icon-art/${k.file}-32.png" width="32" height="32" class="bg-dark" alt=""><br>32px</figure>
+      <figure><img src="icon-art/${k.file}-32.png" width="16" height="16" class="bg-dark" alt=""><br>16px</figure>
+    </div>
+    <div class="chip"><img src="icon-art/${k.file}-32.png" width="16" height="16" alt="">Loot Gobbler by Pluri</div>`;
+  root.insertBefore(card, root.children[1]);
+}
+</script>
+</body>
+</html>

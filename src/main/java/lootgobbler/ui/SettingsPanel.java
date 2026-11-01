@@ -1,0 +1,246 @@
+package lootgobbler.ui;
+
+import assets.ImageBuffer;
+import lootgobbler.StartupSound;
+import lootgobbler.Themes;
+import tomato.realmshark.enums.LootBags;
+import tomato.gui.TomatoGUI;
+import tomato.gui.maingui.PingSoundGUI;
+import tomato.gui.stats.LootGUI;
+import tomato.realmshark.Sound;
+import util.PropertiesManager;
+
+import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+import java.awt.*;
+import java.util.function.Consumer;
+
+/**
+ * Settings tab: sound/ping toggles, loot bag filter and theme. Uses the same settings keys and
+ * static flags as Tomato's original menus, so saved settings carry over.
+ */
+public class SettingsPanel extends JPanel {
+
+    public SettingsPanel() {
+        super(new BorderLayout());
+
+        JPanel sections = new JPanel();
+        sections.setLayout(new BoxLayout(sections, BoxLayout.Y_AXIS));
+        sections.setBorder(new EmptyBorder(8, 8, 8, 8));
+        sections.add(new Section("Sound & Pings", Palette.GOLD, soundBody()));
+        sections.add(Box.createVerticalStrut(8));
+        sections.add(new Section("Startup Sound", Palette.GOLD, startupBody()));
+        sections.add(Box.createVerticalStrut(8));
+        sections.add(new Section("Ping Lists", Palette.GOLD, pingListsBody()));
+        sections.add(Box.createVerticalStrut(8));
+        sections.add(new Section("Loot Filter", Palette.GOLD, filterBody()));
+        sections.add(Box.createVerticalStrut(8));
+        sections.add(new Section("Theme", Palette.GOLD, themeBody()));
+
+        JPanel holder = new JPanel(new BorderLayout());   // keeps sections at their natural height
+        holder.add(sections, BorderLayout.NORTH);
+        JScrollPane scroll = new JScrollPane(holder);
+        scroll.setBorder(null);
+        scroll.getVerticalScrollBar().setUnitIncrement(16);
+        add(scroll);
+    }
+
+    private JPanel soundBody() {
+        JPanel body = body();
+
+        JSlider volume = new JSlider(0, 100, intProperty("soundVolume", 100));
+        volume.setOpaque(false);
+        volume.addChangeListener(e -> {
+            if (volume.getValueIsAdjusting()) return;
+            Sound.setVolume(volume.getValue());
+            PropertiesManager.setProperties("soundVolume", String.valueOf(volume.getValue()));
+            Sound.pm.play();
+        });
+        JPanel volumeRow = row();
+        volumeRow.add(new JLabel("Volume"));
+        volumeRow.add(Box.createHorizontalStrut(24));
+        volumeRow.add(volume);
+        body.add(volumeRow);
+
+        JPanel grid = grid();
+        grid.add(toggle("PM ping", "chatPing", false, v -> Sound.playPmSound = v, Sound.pm));
+        grid.add(toggle("Party ping", "chatPingParty", false, v -> Sound.playPartySound = v, Sound.party));
+        grid.add(toggle("Guild ping", "chatPingGuild", false, v -> Sound.playGuildSound = v, Sound.guild));
+        grid.add(toggle("White bag", "whiteBagSound", true, v -> Sound.playWhiteBagSound = v, Sound.whitebag));
+        grid.add(toggle("Orange bag", "orangeBagSound", false, v -> Sound.playOrangeBagSound = v, Sound.orangebag));
+        grid.add(toggle("Red bag", "redBagSound", false, v -> Sound.playRedBagSound = v, Sound.redbag));
+        grid.add(toggle("Gold bag", "goldBagSound", false, v -> Sound.playGoldBagSound = v, Sound.goldbag));
+        grid.add(toggle("Egg bag", "eggBagSound", false, v -> Sound.playEggBagSound = v, Sound.eggbag));
+        grid.add(toggle("Blue bag", "blueBagSound", false, v -> Sound.playBlueBagSound = v, Sound.bluebag));
+        grid.add(toggle("Trade", "tradePing", false, v -> Sound.playTradeSound = v, Sound.trade));
+        body.add(grid);
+        return body;
+    }
+
+    /**
+     * Sound played once when Loot Gobbler opens. Picking one plays it, so you can hear the choice.
+     */
+    private JPanel startupBody() {
+        JPanel body = body();
+        JPanel hint = row();
+        hint.add(new JLabel("Played once when Loot Gobbler opens."));
+        body.add(hint);
+        int selected = java.util.Arrays.asList(StartupSound.IDS).indexOf(StartupSound.saved());
+        Segmented picker = new Segmented(true, selected, i -> {
+            PropertiesManager.setProperties(StartupSound.KEY, StartupSound.IDS[i]);
+            StartupSound.play(StartupSound.IDS[i]);
+        }, StartupSound.LABELS);
+        JPanel pickRow = row();
+        pickRow.add(picker);
+        pickRow.add(Box.createHorizontalStrut(8));
+        pickRow.add(button("Play", StartupSound::playSaved));
+        body.add(pickRow);
+        return body;
+    }
+
+    private JPanel pingListsBody() {
+        JPanel body = body();
+        JPanel hint = row();
+        hint.add(new JLabel("Play a sound when chat, items, enchants, entities or dungeons match your lists."));
+        body.add(hint);
+        JPanel buttons = new JPanel(new GridLayout(0, 3, 8, 6));
+        buttons.setOpaque(false);
+        buttons.setAlignmentX(LEFT_ALIGNMENT);
+        buttons.setBorder(new EmptyBorder(4, 6, 4, 6));
+        buttons.add(button("Chat pings...", TomatoGUI::openChatPingMessage));
+        buttons.add(button("Item pings...", TomatoGUI::openItemPing));
+        buttons.add(button("Enchant pings...", TomatoGUI::openEnchantPing));
+        buttons.add(button("Entity pings...", TomatoGUI::openEntityIdPing));
+        buttons.add(button("Dungeon pings...", TomatoGUI::openDungeonPing));
+        buttons.add(button("Ping sounds...", PingSoundGUI::open));
+        body.add(buttons);
+        return body;
+    }
+
+    private JPanel filterBody() {
+        JPanel body = body();
+        JPanel hint = row();
+        hint.add(new JLabel("Which loot-bag colours appear in the logger."));
+        body.add(hint);
+
+        JPanel grid = grid();
+        grid.add(filter("White bags", LootBags.WHITE, "filterWhiteBag", v -> LootGUI.filterWhiteBag = v));
+        grid.add(filter("Orange bags", LootBags.ORANGE, "filterOrangeBag", v -> LootGUI.filterOrangeBag = v));
+        grid.add(filter("Red bags", LootBags.RED, "filterRedBag", v -> LootGUI.filterRedBag = v));
+        grid.add(filter("Gold bags", LootBags.GOLD, "filterGoldBag", v -> LootGUI.filterGoldBag = v));
+        grid.add(filter("Egg bags", LootBags.EGG, "filterEggBag", v -> LootGUI.filterEggBag = v));
+        grid.add(filter("Blue bags", LootBags.BLUE, "filterBlueBag", v -> LootGUI.filterBlueBag = v));
+        grid.add(filter("Teal bags", LootBags.TEAL, "filterTealBag", v -> LootGUI.filterTealBag = v));
+        grid.add(filter("Purple bags", LootBags.PURPLE, "filterPurpleBag", v -> LootGUI.filterPurpleBag = v));
+        grid.add(filter("Pink bags", LootBags.PINK, "filterPinkBag", v -> LootGUI.filterPinkBag = v));
+        grid.add(filter("Brown bags", LootBags.BROWN, "filterBrownBag", v -> LootGUI.filterBrownBag = v));
+        body.add(grid);
+        return body;
+    }
+
+    private JPanel themeBody() {
+        JPanel body = body();
+        String current = Themes.normalize(PropertiesManager.getProperty("theme"));
+        int selected = java.util.Arrays.asList(Themes.KEYS).indexOf(current);
+        Segmented picker = new Segmented(true, selected, i -> {
+            Themes.install(Themes.KEYS[i]);
+            PropertiesManager.setProperties("theme", Themes.KEYS[i]);
+        }, Themes.LABELS);
+        picker.setAlignmentX(LEFT_ALIGNMENT);
+        body.add(picker);
+        return body;
+    }
+
+    private JCheckBox toggle(String text, String key, boolean byDefault, Consumer<Boolean> apply, Sound preview) {
+        JCheckBox box = checkBox(text, boolProperty(key, byDefault));
+        box.addActionListener(e -> {
+            boolean on = box.isSelected();
+            PropertiesManager.setProperties(key, Boolean.toString(on));
+            apply.accept(on);
+            preview.play();   // every click plays the sound, so you can hear it before deciding
+        });
+        return box;
+    }
+
+    /**
+     * Check box followed by the bag's sprite and name; clicking the sprite or name toggles it too.
+     */
+    private JComponent filter(String text, LootBags bag, String key, Consumer<Boolean> apply) {
+        JCheckBox box = checkBox("", boolProperty(key, true));
+        box.addActionListener(e -> {
+            PropertiesManager.setProperties(key, Boolean.toString(box.isSelected()));
+            apply.accept(box.isSelected());
+            LootGUI.applyFilters();
+        });
+        JLabel label = new JLabel(text, bagIcon(bag), SwingConstants.LEFT);
+        label.setIconTextGap(6);
+        label.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        label.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent e) {
+                box.doClick();
+            }
+        });
+        JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));
+        row.setOpaque(false);
+        row.add(box);
+        row.add(label);
+        return row;
+    }
+
+    private static Icon bagIcon(LootBags bag) {
+        try {
+            return ImageBuffer.getOutlinedIcon(bag.getId(), 22);
+        } catch (Exception e) {
+            return null;   // assets not extracted yet
+        }
+    }
+
+    private static JCheckBox checkBox(String text, boolean selected) {
+        JCheckBox box = new JCheckBox(text, selected);
+        box.setOpaque(false);
+        box.setFont(UIManager.getFont("Label.font"));
+        return box;
+    }
+
+    private static JButton button(String text, Runnable action) {
+        JButton b = new JButton(text.toUpperCase(java.util.Locale.ROOT));
+        b.addActionListener(e -> action.run());
+        return b;
+    }
+
+    private static JPanel body() {
+        JPanel p = new JPanel();
+        p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS));
+        p.setBorder(new EmptyBorder(10, 12, 12, 12));
+        return p;
+    }
+
+    private static JPanel row() {
+        JPanel p = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
+        p.setOpaque(false);
+        p.setAlignmentX(LEFT_ALIGNMENT);
+        return p;
+    }
+
+    private static JPanel grid() {
+        JPanel p = new JPanel(new GridLayout(0, 3, 24, 4));
+        p.setOpaque(false);
+        p.setAlignmentX(LEFT_ALIGNMENT);
+        p.setBorder(new EmptyBorder(4, 6, 8, 6));
+        return p;
+    }
+
+    private static boolean boolProperty(String key, boolean byDefault) {
+        String v = PropertiesManager.getProperty(key);
+        return v == null ? byDefault : v.equals("true");
+    }
+
+    private static int intProperty(String key, int byDefault) {
+        try {
+            return Integer.parseInt(PropertiesManager.getProperty(key));
+        } catch (Exception e) {
+            return byDefault;
+        }
+    }
+}
