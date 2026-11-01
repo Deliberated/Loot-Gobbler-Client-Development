@@ -46,6 +46,23 @@ public class DungeonStatsPanel extends JPanel {
     public static void update(DungeonStatData data) {
         latest = data;
         if (instance != null) SwingUtilities.invokeLater(instance::refresh);
+        for (Runnable l : LISTENERS) l.run();
+    }
+
+    private static final List<Runnable> LISTENERS = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /**
+     * Called (on any thread) whenever dungeon.stats changes.
+     */
+    static void onUpdate(Runnable listener) {
+        LISTENERS.add(listener);
+    }
+
+    /**
+     * Your most entered dungeons, most runs first: name and run count.
+     */
+    static List<Map.Entry<String, Integer>> topDungeons(int n) {
+        return rows().stream().limit(n).map(r -> Map.entry(r.name(), r.runs())).toList();
     }
 
     private void refresh() {
@@ -80,7 +97,7 @@ public class DungeonStatsPanel extends JPanel {
         content.repaint();
     }
 
-    private List<Row> rows() {
+    private static List<Row> rows() {
         DungeonStatData data = latest;
         Map<String, double[]> peaks = new HashMap<>();   // name -> {last, best}
         for (DpsHistory.Run r : DpsHistory.get().runs()) {   // newest first

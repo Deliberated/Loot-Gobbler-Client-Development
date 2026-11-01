@@ -37,10 +37,11 @@ import java.util.concurrent.CompletableFuture;
 public class GuildPanel extends SubTabs {
     private static final NumberFormat NUM = NumberFormat.getIntegerInstance();
     private static final DateTimeFormatter DROP_TIME = DateTimeFormatter.ofPattern("d MMM, HH:mm", Locale.ENGLISH);
-    private static final String LEADERBOARD = "Leaderboard", DROPS = "Recent Drops", MEMBER = "Member";
+    private static final String CARAVAN = "Loot Caravan", LEADERBOARD = "Leaderboard", DROPS = "Recent Drops", MEMBER = "Member";
     private static final int DROP_LIMIT = 100;
 
     private final GobblerServer server = GobblerServer.get();
+    private final CaravanView caravan = new CaravanView();
     private final Section leaderboardSection;
     private final JPanel leaderboardBody = column();
     private final JPanel dropsBody = column();
@@ -53,6 +54,7 @@ public class GuildPanel extends SubTabs {
         leaderboardSection = new Section("Leaderboard", Palette.GOLD, wrap(FitWidthPanel.scroll(leaderboardBody, 24)))
                 .actions(button("Refresh", this::refresh));
         memberSection = new Section("Member", Palette.BLUE, wrap(FitWidthPanel.scroll(memberBody, 24)));
+        page(CARAVAN, caravan);
         page(LEADERBOARD, leaderboardSection);
         page(DROPS, new Section("Recent Drops", Palette.PURPLE, wrap(FitWidthPanel.scroll(dropsBody, 24)))
                 .actions(button("Refresh", this::refresh)));
@@ -71,6 +73,7 @@ public class GuildPanel extends SubTabs {
     }
 
     private void refresh() {
+        caravan.load();
         if (loading) return;
         if (server.user() == null || server.state() != GobblerServer.State.ONLINE) {
             leaderboardSection.setTitle("Leaderboard");
@@ -84,9 +87,7 @@ public class GuildPanel extends SubTabs {
         CompletableFuture.allOf(board, drops).whenComplete((v, e) -> SwingUtilities.invokeLater(() -> {
             loading = false;
             if (e != null) {
-                Throwable cause = GobblerServer.unwrap(e);
-                String text = cause instanceof GobblerServer.ServerException se && "no_guild".equals(se.code)
-                        ? noGuildText() : "Could not load the guild: " + GobblerServer.message(e);
+                String text = loadError(e);
                 message(leaderboardBody, text);
                 message(dropsBody, text);
                 return;
@@ -95,6 +96,15 @@ public class GuildPanel extends SubTabs {
             showDrops(drops.join().drops);
             if (shownMember >= 0) openMember(shownMember, false);
         }));
+    }
+
+    /**
+     * What to show when a guild view could not be loaded.
+     */
+    static String loadError(Throwable e) {
+        Throwable cause = GobblerServer.unwrap(e);
+        return cause instanceof GobblerServer.ServerException se && "no_guild".equals(se.code)
+                ? noGuildText() : "Could not load the guild: " + GobblerServer.message(e);
     }
 
     private static String noGuildText() {

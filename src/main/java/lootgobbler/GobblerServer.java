@@ -148,6 +148,40 @@ public final class GobblerServer {
         public Map<String, Integer> collection = Map.of();   // item id -> copies found
     }
 
+    /** One item in a caravan member's loot. bag is the bag's color ("White", "Orange", ..., "Other"). */
+    public static final class CaravanItem {
+        public int itemId;
+        public String bag = "";
+        public String time = "";
+        public String where = "";
+    }
+
+    /** A caravan member's most played character in the range. */
+    public static final class CaravanCharacter {
+        public int classType;
+        public String className = "";
+        public int skin, tex1, tex2;
+        public long fame;
+    }
+
+    /** A guild member in the loot caravan: bags opened per color in the range, their items, most played character. */
+    public static final class CaravanMember {
+        public long id;
+        public String ign = "";
+        public int guildRank;
+        public Map<String, Integer> bags = Map.of();
+        public int total;
+        public List<CaravanItem> items = List.of();   // newest first, at most 120
+        public String lastDrop;                        // the player's local time, null if none
+        public CaravanCharacter character;             // null if unknown
+    }
+
+    public static final class Caravan {
+        public String guild = "";
+        public String range = "";
+        public List<CaravanMember> members = List.of();   // most bags first
+    }
+
     /** An error answer from the server (code is its stable "error" field). */
     public static final class ServerException extends RuntimeException {
         public final int status;
@@ -424,6 +458,11 @@ public final class GobblerServer {
     /** Your guild's most recent drops, newest first (at most 200). */
     public CompletableFuture<GuildDrops> guildDrops(int limit) {
         return call("GET", "/guild/drops?limit=" + limit, null, GuildDrops.class);
+    }
+
+    /** Your guild's loot caravan; range is "week", "month" or "all". */
+    public CompletableFuture<Caravan> caravan(String range) {
+        return call("GET", "/guild/caravan?range=" + range, null, Caravan.class);
     }
 
     public CompletableFuture<MemberProfile> memberProfile(long userId) {

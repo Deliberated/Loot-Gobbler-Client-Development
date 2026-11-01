@@ -65,7 +65,7 @@ public class TomatoGUI {
 
         myDmg = new MyInfoGUI(data);
         lootgobbler.ui.CharactersView characters = new lootgobbler.ui.CharactersView();
-        tabbedPane.addTab("Profile", new lootgobbler.ui.ProfileView(myDmg, new lootgobbler.ui.DungeonStatsPanel(), id -> {
+        tabbedPane.addTab("Profile", new lootgobbler.ui.ProfileView(new lootgobbler.ui.DungeonStatsPanel(), id -> {
             characters.showCharacter(id);   // clicking your character on the profile opens it in Characters
             tabbedPane.show("Characters");
         }));
