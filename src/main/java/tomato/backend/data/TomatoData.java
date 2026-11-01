@@ -352,6 +352,7 @@ public class TomatoData {
 
     private void addPet(ObjectData object) {
         CharacterPetsGUI.addPet(object);
+        lootgobbler.PetStore.get().importYardPet(object);
     }
 
     /**
@@ -850,6 +851,9 @@ public class TomatoData {
                 )
             );
             DpsGUI.updateLabel();
+        }
+        // Loot Gobbler's run history also keeps each guild hall visit (shooting range dummies)
+        if (map != null && (isLoggedDungeon(map.displayName) || lootgobbler.DpsHistory.isGuildHall(map))) {
             lootgobbler.DpsHistory.get().record(map, entityHitList.values(), deathNotifications, dungeonTime());
         }
         if (map != null) {

@@ -2,6 +2,7 @@ package lootgobbler.ui;
 
 import assets.ImageBuffer;
 import lootgobbler.DpsHistory;
+import lootgobbler.ItemDb;
 import lootgobbler.DpsHistory.Boss;
 import lootgobbler.DpsHistory.PlayerRow;
 import lootgobbler.DpsHistory.Run;
@@ -47,8 +48,9 @@ public class DpsPanel extends JPanel {
     private final JToggleButton liveButton = new JToggleButton("LIVE", true);
     private final JPanel bosses = column();
     private final JPanel past = column();
-    private final Set<String> expanded = new HashSet<>();   // boss blocks start collapsed
+    private final Set<String> expanded = new HashSet<>();   // toggled boss blocks (see bossBlock)
     private Run selected;   // null = live
+    private static final String[] SLOT_NAMES = {"Weapon", "Ability", "Armor", "Ring"};
 
     public DpsPanel(Runnable openDetail) {
         super(new BorderLayout(0, 8));
@@ -65,7 +67,7 @@ public class DpsPanel extends JPanel {
 
         Section bossSection = new Section("Boss Damage", Palette.GOLD, scroll(bosses))
                 .actions(button("Detail", null, openDetail), button("Copy all", null, this::copyAll));
-        Section pastSection = new Section("Past Dungeons", Palette.BLUE, scroll(past))
+        Section pastSection = new Section("Run History", Palette.BLUE, scroll(past))
                 .actions(button("Clear all", "danger", this::clearAll));
         add(new SideSplit(bossSection, pastSection, "dps", 320, 220), BorderLayout.CENTER);   // drag the gap to resize
 
@@ -100,9 +102,9 @@ public class DpsPanel extends JPanel {
         List<Run> runs = DpsHistory.get().runs();
         if (selected != null && !runs.contains(selected)) selected = null;
         liveButton.setSelected(selected == null);
-        Run run = selected != null ? selected : DpsHistory.get().live();
-        renderRun(run);
-        renderPast(runs);
+        Run live = DpsHistory.get().live();
+        renderRun(selected != null ? selected : live);
+        renderPast(live, runs);
     }
 
     private void renderRun(Run run) {
@@ -117,10 +119,11 @@ public class DpsPanel extends JPanel {
             bosses.add(empty);
         } else {
             title.setText(run.dungeon.toUpperCase(Locale.ROOT) + (selected == null ? "    (LIVE)" : "    (LOGGED RUN)"));
-            Boss main = run.mainBoss();
+            // guild hall: your latest loadout, ranked against your other loadouts
+            Boss main = run.guildHall ? run.bosses.get(run.bosses.size() - 1) : run.mainBoss();
             PlayerRow me = main == null ? null : main.me();
             yourDps.setText(me == null ? "0" : NUM.format(Math.round(main.dps(me))));
-            rank.setText(me == null ? "-" : String.valueOf(main.rankOf(me)));
+            rank.setText(me == null ? "-" : String.valueOf(run.guildHall ? loadoutRank(run, main) : main.rankOf(me)));
             for (int i = 0; i < run.bosses.size(); i++) {
                 bosses.add(bossBlock(run, run.bosses.get(i), i));
                 bosses.add(Box.createVerticalStrut(6));
@@ -131,11 +134,16 @@ public class DpsPanel extends JPanel {
     }
 
     private JPanel bossBlock(Run run, Boss boss, int index) {
-        String key = run.start + "/" + index;
-        boolean open = expanded.contains(key);
+        // The live run's start is recomputed every second, so live blocks are keyed by the boss alone. Live bosses
+        // start open, so their damage shows from the first hit; logged runs start collapsed.
+        boolean live = selected == null;
+        String key = live ? "live/" + boss.id + "/" + boss.objectType
+                : run.start + "/" + (boss.id != 0 ? boss.id : index);
+        boolean open = live != expanded.contains(key);   // for live blocks the set holds the collapsed ones
 
         JLabel name = new JLabel((open ? "[-]  " : "[+]  ") + boss.name + "     " + duration(boss.fightMs)
-                + "  ·  " + boss.players.size() + " players", bossIcon(boss.objectType), SwingConstants.LEFT);
+                + (run.guildHall ? "" : "  ·  " + boss.players.size() + " players"), bossIcon(boss.objectType),
+                SwingConstants.LEFT);
         name.setIconTextGap(10);
         name.setFont(name.getFont().deriveFont(18f));
         name.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
@@ -148,14 +156,31 @@ public class DpsPanel extends JPanel {
         });
 
         JPanel head = row(true);
-        head.add(name, BorderLayout.CENTER);
+        if (run.guildHall) {   // the loadout of this block, right after its name
+            JLabel items = new JLabel(loadoutIcon(boss.loadout));
+            items.setToolTipText("<html>" + PlayerRenderer.escape(loadoutText(boss.loadout, "\n")).replace("\n", "<br>") + "</html>");
+            JPanel title = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+            title.setOpaque(false);
+            title.add(name);
+            title.add(Box.createHorizontalStrut(16));
+            title.add(items);
+            JLabel total = new JLabel(NUM.format(boss.totalDamage()) + " total damage");
+            total.setFont(total.getFont().deriveFont(18f));
+            total.setForeground(Palette.GOLD);
+            total.setToolTipText("Your damage with this loadout");
+            title.add(Box.createHorizontalStrut(16));
+            title.add(total);
+            head.add(title, BorderLayout.CENTER);
+        } else {
+            head.add(name, BorderLayout.CENTER);
+        }
         head.add(button("Copy log", null, () -> copy(bossText(run, boss))), BorderLayout.EAST);
 
         JPanel block = new JPanel(new BorderLayout());
         block.setOpaque(false);
         block.setAlignmentX(LEFT_ALIGNMENT);
         block.add(head, BorderLayout.NORTH);
-        if (open) block.add(bossTable(boss), BorderLayout.CENTER);
+        if (open) block.add(run.guildHall ? rangeTable(boss) : bossTable(boss), BorderLayout.CENTER);
         block.setMaximumSize(new Dimension(Integer.MAX_VALUE, block.getPreferredSize().height));
         return block;
     }
@@ -179,10 +204,48 @@ public class DpsPanel extends JPanel {
         table.setIntercellSpacing(new Dimension(0, 0));
         table.setRowHeight(26);
         table.getTableHeader().setReorderingAllowed(false);
-        table.setDefaultRenderer(Object.class, new PlayerRenderer(boss, maxShare));
+        table.setDefaultRenderer(Object.class, new PlayerRenderer(boss, maxShare, 6));
         table.getColumnModel().getColumn(0).setMaxWidth(40);
         table.getColumnModel().getColumn(6).setMaxWidth(70);
+        return tablePanel(table);
+    }
 
+    /**
+     * Guild hall: one loadout's block with your damage; DPS over the time that loadout was used.
+     */
+    private JComponent rangeTable(Boss block) {
+        DefaultTableModel model = new DefaultTableModel(new Object[]{"#", "Name", "Class", "DPS", "DMG", "%"}, 0) {
+            @Override
+            public boolean isCellEditable(int r, int c) {
+                return false;
+            }
+        };
+        double maxShare = block.players.stream().mapToDouble(block::share).max().orElse(1);
+        for (int i = 0; i < block.players.size(); i++) {
+            PlayerRow p = block.players.get(i);
+            model.addRow(new Object[]{i + 1, p, p, NUM.format(Math.round(block.dps(p))), NUM.format(p.damage),
+                    String.format("%.1f%%", block.share(p))});
+        }
+        JTable table = new JTable(model);
+        table.setShowGrid(false);
+        table.setIntercellSpacing(new Dimension(0, 0));
+        table.setRowHeight(26);
+        table.getTableHeader().setReorderingAllowed(false);
+        table.setDefaultRenderer(Object.class, new PlayerRenderer(block, maxShare, 5));
+        table.getColumnModel().getColumn(0).setMaxWidth(40);
+        table.getColumnModel().getColumn(5).setMaxWidth(70);
+        return tablePanel(table);
+    }
+
+    /**
+     * Place of this loadout among the run's loadouts by your DPS.
+     */
+    private static int loadoutRank(Run run, Boss block) {
+        double dps = block.dps(block.me());
+        return 1 + (int) run.bosses.stream().filter(b -> b.me() != null && b.dps(b.me()) > dps).count();
+    }
+
+    private static JPanel tablePanel(JTable table) {
         JPanel p = new JPanel(new BorderLayout());
         p.setOpaque(false);
         p.add(table.getTableHeader(), BorderLayout.NORTH);
@@ -190,50 +253,58 @@ public class DpsPanel extends JPanel {
         return p;
     }
 
-    private void renderPast(List<Run> runs) {
+    /**
+     * The run in progress on top (from the first boss hit on), then the saved runs.
+     */
+    private void renderPast(Run live, List<Run> runs) {
         past.removeAll();
-        if (runs.isEmpty()) {
-            JLabel empty = new JLabel("Finished dungeons appear here.");
+        if (live != null) past.add(historyRow(live, true));
+        if (live == null && runs.isEmpty()) {
+            JLabel empty = new JLabel("Your dungeon runs appear here.");
             empty.setForeground(Palette.MUTED);
             empty.setBorder(new EmptyBorder(10, 10, 10, 10));
             past.add(empty);
         }
-        for (Run r : runs) {
-            boolean isSelected = r == selected;
-            JLabel name = new JLabel(r.dungeon);
-            name.setFont(name.getFont().deriveFont(18f));
-            if (isSelected) name.setForeground(Palette.GOLD);
-            JLabel when = new JLabel(WHEN.format(Instant.ofEpochMilli(r.start).atZone(ZoneId.systemDefault()))
-                    + "  ·  " + duration(r.durationMs));
-            when.setForeground(isSelected ? Palette.GOLD : Palette.MUTED);
-            JPanel text = new JPanel(new GridLayout(2, 1));
-            text.setOpaque(false);
-            text.add(name);
-            text.add(when);
-
-            JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
-            buttons.setOpaque(false);
-            buttons.add(button("Detail", null, () -> select(r)));
-            buttons.add(button("x", "danger", () -> DpsHistory.get().remove(r)));
-
-            JPanel row = row(true);
-            if (isSelected) {
-                row.setBorder(BorderFactory.createCompoundBorder(new LineBorder(Palette.GOLD, 2), new EmptyBorder(4, 8, 4, 6)));
-            }
-            row.add(text, BorderLayout.CENTER);
-            row.add(buttons, BorderLayout.EAST);
-            row.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-            row.addMouseListener(new MouseAdapter() {
-                @Override
-                public void mouseClicked(MouseEvent e) {
-                    select(r);
-                }
-            });
-            row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
-            past.add(row);
-        }
+        for (Run r : runs) past.add(historyRow(r, false));
         past.revalidate();
         past.repaint();
+    }
+
+    private JPanel historyRow(Run r, boolean current) {
+        boolean isSelected = current ? selected == null : r == selected;
+        Run target = current ? null : r;   // selecting the current run means following it live
+        JLabel name = new JLabel(r.dungeon);
+        name.setFont(name.getFont().deriveFont(18f));
+        if (isSelected) name.setForeground(Palette.GOLD);
+        JLabel when = new JLabel(WHEN.format(Instant.ofEpochMilli(r.start).atZone(ZoneId.systemDefault()))
+                + "  ·  " + duration(r.durationMs));
+        when.setForeground(isSelected ? Palette.GOLD : Palette.MUTED);
+        JPanel text = new JPanel(new GridLayout(2, 1));
+        text.setOpaque(false);
+        text.add(name);
+        text.add(when);
+
+        JPanel row = row(true);
+        if (isSelected) {
+            row.setBorder(BorderFactory.createCompoundBorder(new LineBorder(Palette.GOLD, 2), new EmptyBorder(4, 8, 4, 6)));
+        }
+        row.add(text, BorderLayout.CENTER);
+        if (!current) {   // Detail and delete only once the run is finished and saved
+            JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+            buttons.setOpaque(false);
+            buttons.add(button("Detail", null, () -> select(target)));
+            buttons.add(button("x", "danger", () -> DpsHistory.get().remove(r)));
+            row.add(buttons, BorderLayout.EAST);
+        }
+        row.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        row.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                select(target);
+            }
+        });
+        row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
+        return row;
     }
 
     private void select(Run run) {
@@ -259,6 +330,16 @@ public class DpsPanel extends JPanel {
         sb.append(boss.name).append(" - ").append(run.dungeon).append(" (")
                 .append(WHEN.format(Instant.ofEpochMilli(run.start).atZone(ZoneId.systemDefault()))).append(")  ")
                 .append(duration(boss.fightMs)).append('\n');
+        if (run.guildHall) {
+            sb.append(loadoutText(boss.loadout, ", ")).append('\n');
+            sb.append(String.format("%-3s %-14s %-12s %8s %10s %7s%n", "#", "Name", "Class", "DPS", "DMG", "%"));
+            for (int i = 0; i < boss.players.size(); i++) {
+                PlayerRow p = boss.players.get(i);
+                sb.append(String.format("%-3d %-14s %-12s %8s %10s %6.1f%%%n", i + 1, p.name, p.className(),
+                        NUM.format(Math.round(boss.dps(p))), NUM.format(p.damage), boss.share(p)));
+            }
+            return sb.toString();
+        }
         sb.append(String.format("%-3s %-14s %-12s %8s %10s %8s %7s%n", "#", "Player", "Class", "DPS", "DMG", "Taken", "%"));
         for (int i = 0; i < boss.players.size(); i++) {
             PlayerRow p = boss.players.get(i);
@@ -279,11 +360,54 @@ public class DpsPanel extends JPanel {
     }
 
     private static Icon bossIcon(int objectType) {
+        return icon(objectType, 20);
+    }
+
+    private static Icon icon(int objectType, int size) {
+        if (objectType <= 0) return null;
         try {
-            return ImageBuffer.getOutlinedIcon(objectType, 20);
+            return ImageBuffer.getOutlinedIcon(objectType, size);
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private static final int LOADOUT_ICON = 22;
+
+    /**
+     * The four equipped items side by side; an empty slot keeps its place.
+     */
+    private static Icon loadoutIcon(int[] loadout) {
+        Icon[] items = new Icon[4];
+        for (int i = 0; i < 4; i++) items[i] = loadout != null && i < loadout.length ? icon(loadout[i], LOADOUT_ICON) : null;
+        return new Icon() {
+            @Override
+            public void paintIcon(Component c, Graphics g, int x, int y) {
+                for (int i = 0; i < 4; i++) if (items[i] != null) items[i].paintIcon(c, g, x + i * (LOADOUT_ICON + 4), y);
+            }
+
+            @Override
+            public int getIconWidth() {
+                return 4 * LOADOUT_ICON + 12;
+            }
+
+            @Override
+            public int getIconHeight() {
+                return LOADOUT_ICON;
+            }
+        };
+    }
+
+    private static String itemName(int id) {
+        ItemDb.Item info = id > 0 ? ItemDb.get().item(id) : null;
+        return id <= 0 ? "empty" : info != null ? info.name : "Item " + id;
+    }
+
+    private static String loadoutText(int[] loadout, String separator) {
+        if (loadout == null) return "unknown";
+        List<String> parts = new ArrayList<>();
+        for (int i = 0; i < Math.min(4, loadout.length); i++) parts.add(SLOT_NAMES[i] + ": " + itemName(loadout[i]));
+        return String.join(separator, parts);
     }
 
     private static JComponent stat(String caption, JLabel value) {
@@ -343,11 +467,13 @@ public class DpsPanel extends JPanel {
     private static class PlayerRenderer extends DefaultTableCellRenderer {
         private final Boss boss;
         private final double maxShare;
+        private final int goldColumn;   // the % column, -1 = none
         private double bar;
 
-        PlayerRenderer(Boss boss, double maxShare) {
+        PlayerRenderer(Boss boss, double maxShare, int goldColumn) {
             this.boss = boss;
             this.maxShare = maxShare <= 0 ? 1 : maxShare;
+            this.goldColumn = goldColumn;
         }
 
         @Override
@@ -356,6 +482,7 @@ public class DpsPanel extends JPanel {
             super.getTableCellRendererComponent(table, value, selected, false, row, column);
             setBorder(new EmptyBorder(0, 8, 0, 8));
             setIcon(null);
+            setToolTipText(null);
             bar = 0;
             Color bg = row % 2 == 1 && UIManager.getColor("Table.alternateRowColor") != null
                     ? UIManager.getColor("Table.alternateRowColor") : table.getBackground();
@@ -378,7 +505,7 @@ public class DpsPanel extends JPanel {
                 setIcon(new Section.Square(c, 8));
                 setIconTextGap(8);
                 if (!selected) setForeground(c);
-            } else if (column == 6 && !selected) {
+            } else if (column == goldColumn && !selected) {
                 setForeground(Palette.GOLD);
             }
             setOpaque(bar == 0);

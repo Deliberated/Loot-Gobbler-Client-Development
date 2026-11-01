@@ -17,10 +17,12 @@ character-tags.txt
 characters.json
 collection.json
 exalts.json
+pets.json
 dps_history.json
 dungeon.stats
 vault-contents.txt
 vault-debug.txt
+guildhall-debug.txt
 vault-packet.txt
 block.txt
 keypops.log

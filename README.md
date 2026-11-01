@@ -9,15 +9,17 @@ From Tomato you get:
 - DPS logger, stats, characters, vault and more
 
 Added in this fork:
-- **Collection tab**: lifetime Items grid of all 1,696 UT/ST collection items (All / Shiny / Normal). Items are added when they drop for you and when you enter your vault (vault and gift chest contents; already-collected items are left unchanged). Also includes a Live view, dated Log, progress, recent drops, copy as text, and copy as image (laid out with the grid's current column count). Saved in `collection.json`.
-- **Discord tab**: any number of webhooks with a connection check. "Tops" (UT/ST items, or anything from a cyan bag) are posted as rendered loot-card images. Includes a Send Test Loot button.
-- **DPS Logger tab**: live or logged run with one damage table per boss (DPS, damage, damage taken, % share of boss damage, deaths), Copy Log / Copy All, and a Past Dungeons list kept across restarts in `dps_history.json`. "Detail" opens Tomato's original DPS view.
-- **Statistics → Dungeon Stats**: favourite dungeons and your peak boss DPS per dungeon (last run vs. best). Tomato's per-mob loot view is now "Dungeon Loot".
-- **Chat tab**: one striped log (time, channel, name: text) with a Channels sidebar (Clear Chat, per-channel toggles).
+- **Inventory tab**: lifetime Items grid of all 1,696 UT/ST collection items (All / Shiny / Normal). Items are added when they drop for you and when you enter your vault (vault and gift chest contents; already-collected items are left unchanged). Also includes a Live view, dated Log, progress, recent drops, copy as text, and copy as image (laid out with the grid's current column count). Saved in `collection.json`.
+- **Profile tab** (leftmost): your player name and your recently most played character (most fame in the last 24 h, else the one you play), plus the My Info and Dungeon Stats pages.
+- **Social → Daily Quests**: Tomato's daily quest list.
+- **Social → Discord** (under construction: greyed out, nothing is posted for now): any number of webhooks with a connection check. "Tops" (UT/ST items, or anything from a cyan bag) are posted as rendered loot-card images. Includes a Send Test Loot button.
+- **DPS Logger tab**: live or logged run with one damage table per boss (DPS, damage, damage taken, % share of boss damage, deaths), Copy Log / Copy All, and a Run History list (the current run on top, flagged as current) kept across restarts in `dps_history.json`. "Detail" opens Tomato's original DPS view.
+- **Profile → Dungeon Stats**: favourite dungeons and your peak boss DPS per dungeon (last run vs. best).
+- **Social → Chat**: one striped log (time, channel, name: text) with a Channels sidebar (Clear Chat, per-channel toggles).
 - **Settings tab**: Sound & Pings, Loot Filter and Theme in one place (these replace the old Edit → Sound / Theme / Filter Loot menus).
 - **Status bar**: sniffer state and a Start/Stop Sniffer button.
 - **Window** reopens at the size, position and maximized state it had when closed. The tab row scrolls sideways instead of wrapping, and tabs can be reordered by dragging (the order is remembered).
-- **Characters tab**: all your characters (favourites first, then most recently played) with their skin drawn with its applied dyes and cloths (like in-game), the equipped items with enchantment markers, fame, stats maxed (x/8) and seasonal / crucible / blood ritual tags; click one for its fame gain over 1h / 1d / 1w / 1m. Data comes from the character list at login plus live tracking while you play (`characters.json`). A **Classes** view lists every class with its exaltations per stat and in total (most exalted first) and your characters of that class; exaltations are saved in `exalts.json`. Tomato's original tab is now "Characters Old".
+- **Characters tab**: all your characters (favourites first, then most recently played) with their skin drawn with its applied dyes and cloths (like in-game), the equipped items with enchantment markers, fame, stats maxed (x/8) and seasonal / crucible / blood ritual tags; click one for its fame gain over 1h / 1d / 1w / 1m. Data comes from the character list at login plus live tracking while you play (`characters.json`). A **Classes** view lists every class with its exaltations per stat and in total (most exalted first) and your characters of that class; exaltations are saved in `exalts.json`.
 - **ST Sets** (Collection → ST Sets): every 4-piece ST set with its skin, which pieces you own, filters by status and class, and progress per class.
 - **Vault diagnostics**: entering the vault writes `vault-debug.txt` (which packets arrived, and any that could not be decoded) and, if the vault packet decodes, `vault-contents.txt`.
 - **Item history**: click an item in the Collection grid or log to see every time you found it (drop, vault or inventory), where, and with how many enchantments.
@@ -53,7 +55,7 @@ Start the sniffer via **File → Start Sniffer**, then start RotMG or change ser
 All settings are saved in `realmShark.properties` in the project root (Tomato's own settings file).
 
 - **Bag sounds, chat pings, volume, ping lists, loot filter, theme:** Settings tab
-- **Discord webhooks:** Discord tab. Anyone with a webhook URL can post to that channel.
+- **Discord webhooks:** Social → Discord. Anyone with a webhook URL can post to that channel.
 - **Fonts, chat saving, DPS options:** Edit menu
 
 ## Layout

@@ -19,6 +19,11 @@ import java.util.concurrent.CompletableFuture;
 public class Discord {
     private static final HttpClient HTTP = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
     private static final String PAYLOAD = "{\"username\":\"Loot Gobbler\"}";
+    /**
+     * Webhooks are switched off while the feature is under construction: nothing is posted, and the Discord page
+     * is shown greyed out.
+     */
+    public static final boolean ENABLED = false;
 
     public static boolean isWebhookUrl(String url) {
         return url != null && (url.startsWith("https://discord.com/api/webhooks/")
@@ -31,6 +36,7 @@ public class Discord {
      * @return Future holding null on success, or an error message.
      */
     public static CompletableFuture<String> postImage(String webhook, byte[] png, String fileName) {
+        if (!ENABLED) return CompletableFuture.completedFuture("Discord webhooks are under construction");
         String boundary = "----LootGobbler" + UUID.randomUUID();
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         write(body, "--" + boundary + "\r\nContent-Disposition: form-data; name=\"payload_json\"\r\n"
@@ -55,6 +61,7 @@ public class Discord {
      * @return Future holding the webhook's name. Completes exceptionally if the URL does not work.
      */
     public static CompletableFuture<String> fetchName(String webhook) {
+        if (!ENABLED) return CompletableFuture.failedFuture(new IllegalStateException("under construction"));
         HttpRequest req = HttpRequest.newBuilder(URI.create(webhook)).timeout(Duration.ofSeconds(10)).GET().build();
         return send(req).thenApply(res -> {
             if (res.statusCode() >= 300) throw new IllegalStateException("HTTP " + res.statusCode());

@@ -74,13 +74,46 @@ public class TabBar extends JPanel {
      */
     public void restoreOrder(String... defaultOrder) {
         String saved = PropertiesManager.getProperty(KEY_ORDER);
-        List<String> names = saved != null && !saved.isBlank() ? Arrays.asList(saved.split("\\|"))
+        List<String> names = saved != null && !saved.isBlank() ? withNewTabs(saved.split("\\|"), defaultOrder)
                 : Arrays.asList(defaultOrder);
         if (!names.isEmpty()) {
             order.sort((a, b) -> Integer.compare(rank(names, a.title), rank(names, b.title)));
             snapAll();
         }
         if (!order.isEmpty()) select(order.get(0));   // the app opens on whatever tab you dragged to the far left
+    }
+
+    /**
+     * The saved order plus the tabs that are new since it was saved, each placed in front of the saved tab that
+     * follows it in the default order (so a new first tab really comes first).
+     */
+    private static List<String> withNewTabs(String[] saved, String[] defaultOrder) {
+        List<String> names = new ArrayList<>(Arrays.asList(saved));
+        for (int i = defaultOrder.length - 1; i >= 0; i--) {
+            if (names.contains(defaultOrder[i])) continue;
+            int at = names.size();
+            for (int j = i + 1; j < defaultOrder.length; j++) {
+                int k = names.indexOf(defaultOrder[j]);
+                if (k >= 0) {
+                    at = k;
+                    break;
+                }
+            }
+            names.add(at, defaultOrder[i]);
+        }
+        return names;
+    }
+
+    /**
+     * Switches to the tab with this title, if there is one.
+     */
+    public void show(String title) {
+        for (Tab t : order) {
+            if (t.title.equals(title)) {
+                select(t);
+                return;
+            }
+        }
     }
 
     private static int rank(List<String> order, String title) {

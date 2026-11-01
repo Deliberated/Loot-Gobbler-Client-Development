@@ -8,6 +8,7 @@ import tomato.backend.data.Entity;
 import tomato.backend.data.TomatoData;
 import tomato.realmshark.RealmCharacter;
 import tomato.realmshark.enums.CharacterClass;
+import util.PropertiesManager;
 
 import java.io.Reader;
 import java.io.Writer;
@@ -50,6 +51,8 @@ public final class CharacterStore {
         public int[] equipment;        // weapon, ability, armor, ring item ids (-1 = empty); null = unknown
         public int[] enchants;         // enchantment slots (rarity) per equipment slot; null = unknown
         public int[][] enchantIds;     // per equipment slot: enchantment ids, -1 = empty slot; null = unknown
+        public int[] slots;            // every slot from the last char list: equipment, inventory, backpack; null = unknown
+        public int[][] slotEnchantIds; // per slot of "slots": enchantment ids
         public List<Sample> samples = new ArrayList<>();
 
         /**
@@ -78,8 +81,12 @@ public final class CharacterStore {
     private static final CharacterStore INSTANCE = new CharacterStore();
 
     private static final long MIN_FETCH_MS = 10_000;   // be gentle with the game servers (shared with the game's own login)
+    private static final String KEY_PLAYER_NAME = "playerName";
+    private static final long DAY_MS = 24 * 3_600_000L;
 
     private final Map<Integer, Char> chars = new LinkedHashMap<>();
+    private volatile int currentCharId;      // character you are playing (or last played this run), 0 = none yet
+    private volatile String playerName = PropertiesManager.getProperty(KEY_PLAYER_NAME);
     private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
     private long lastLive, lastSave;
     private volatile IntSupplier fetcher;    // requests the char list; returns characters received, 0 = rejected
@@ -225,6 +232,12 @@ public final class CharacterStore {
         int id = p.charId();
         if (id <= 0) return;
         lastLive = now;
+        currentCharId = id;
+        String name = p.name();
+        if (name != null && !name.isBlank() && !name.equals(playerName)) {
+            playerName = name;
+            PropertiesManager.setProperties(KEY_PLAYER_NAME, name);   // still shown after a restart, before login
+        }
         try {
             boolean sampled;
             synchronized (this) {
@@ -325,20 +338,24 @@ public final class CharacterStore {
             java.util.regex.Pattern.DOTALL);
     private static final java.util.regex.Pattern PET_XML = java.util.regex.Pattern.compile("<Pet[ >].*?</Pet>",
             java.util.regex.Pattern.DOTALL);
+    private static final java.util.regex.Pattern EQUIPMENT_XML = java.util.regex.Pattern.compile("<Equipment>([^<]*)</Equipment>");
     private static final java.util.regex.Pattern ITEM_DATA = java.util.regex.Pattern.compile(
             "<ItemData[^>]*\\btype=\"(\\d+)\"[^>]*>([^<]*)</ItemData>");
 
     /**
-     * Enchantments of the equipped items from the raw char list: each character's UniqueItemInfo has an ItemData
-     * (item type + enchant code) per item, matched to the equipment slots by item type in order.
+     * Enchantments of every item a character holds, from the raw char list: each character's UniqueItemInfo has an
+     * ItemData (item type + enchant code) per item, matched to the slots of its Equipment list (equipment,
+     * inventory, backpack) by item type in order. The equipped four also go to the loadout.
      */
     private void importItemData(String xml) {
         synchronized (this) {
             java.util.regex.Matcher ch = CHAR_XML.matcher(xml);
             while (ch.find()) {
                 Char c = chars.get(Integer.parseInt(ch.group(1)));
-                if (c == null || c.equipment == null) continue;
+                if (c == null) continue;
                 String body = PET_XML.matcher(ch.group(2)).replaceAll("");   // the pet has a UniqueItemInfo of its own
+                java.util.regex.Matcher eq = EQUIPMENT_XML.matcher(body);
+                int[] slots = eq.find() ? Arrays.stream(eq.group(1).split(",")).mapToInt(s -> intOr(s, -1)).toArray() : null;
                 int start = body.indexOf("<UniqueItemInfo>"), end = body.indexOf("</UniqueItemInfo>");
                 List<Map.Entry<Integer, int[]>> data = new ArrayList<>();   // item type -> enchantment ids
                 if (start >= 0 && end > start) {
@@ -347,23 +364,44 @@ public final class CharacterStore {
                         data.add(Map.entry(Integer.parseInt(m.group(1)), toArray(LootEvents.enchantIds(m.group(2).trim()))));
                     }
                 }
-                int[][] ids = new int[4][];
-                for (int i = 0; i < 4; i++) {
+                if (slots == null) continue;
+                int[][] ids = new int[slots.length][];
+                for (int i = 0; i < slots.length; i++) {
                     ids[i] = new int[0];
                     for (Iterator<Map.Entry<Integer, int[]>> it = data.iterator(); it.hasNext(); ) {
                         Map.Entry<Integer, int[]> d = it.next();
-                        if (d.getKey() == c.equipment[i]) {
+                        if (d.getKey() == slots[i]) {
                             ids[i] = d.getValue();
                             it.remove();
                             break;
                         }
                     }
                 }
-                setEnchants(c, ids);
+                c.slots = slots;
+                c.slotEnchantIds = ids;
+                if (c.equipment != null && slots.length >= 4) setEnchants(c, Arrays.copyOf(ids, 4));
             }
             save();
         }
         fire();
+    }
+
+    /**
+     * Enchantment ids of the item in a character's slot (0-3 equipment, 4-11 inventory, 12+ backpack), as of the
+     * last character list; null if unknown or that slot held a different item then.
+     */
+    public synchronized int[] slotEnchants(int charId, int slot, int itemId) {
+        Char c = chars.get(charId);
+        if (c == null || c.slots == null || c.slotEnchantIds == null || slot < 0 || slot >= c.slots.length) return null;
+        return c.slots[slot] == itemId && slot < c.slotEnchantIds.length ? c.slotEnchantIds[slot] : null;
+    }
+
+    private static int intOr(String s, int fallback) {
+        try {
+            return Integer.parseInt(s.trim());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
     }
 
     public synchronized List<Char> all() {
@@ -427,6 +465,43 @@ public final class CharacterStore {
             out.add(s);
         }
         return out;
+    }
+
+    /**
+     * Your in-game name, as last seen while playing; null if you have not played with the sniffer on yet.
+     */
+    public String playerName() {
+        return playerName;
+    }
+
+    /**
+     * Fame gained by a character in the last 24 hours.
+     */
+    public synchronized long gainedToday(Char c) {
+        long since = System.currentTimeMillis() - DAY_MS;
+        return sessions(c, since).stream().mapToLong(Session::gained).sum();
+    }
+
+    /**
+     * Your recently most played character: the living one with the most fame gained in the last 24 hours. If none
+     * gained any, the one you are playing now (or last played); null if no character is known.
+     */
+    public synchronized Char mostPlayed() {
+        Char best = null;
+        long bestGain = 0;
+        for (Char c : chars.values()) {
+            if (!c.alive) continue;
+            long gain = gainedToday(c);
+            if (gain > bestGain) {
+                best = c;
+                bestGain = gain;
+            }
+        }
+        if (best != null) return best;
+        Char current = chars.get(currentCharId);
+        if (current != null) return current;
+        return chars.values().stream().filter(c -> c.alive && c.lastPlayed > 0)
+                .max(Comparator.comparingLong(c -> c.lastPlayed)).orElse(null);
     }
 
     public void onChange(Runnable listener) {
@@ -545,6 +620,11 @@ public final class CharacterStore {
             importItemData(xml);
         } catch (Exception e) {
             System.err.println("Could not read equipment enchantments: " + e);
+        }
+        try {
+            PetStore.get().importCharList(xml);   // pets, their abilities and saddlebags
+        } catch (Exception e) {
+            System.err.println("Could not read pets: " + e);
         }
         try {
             Files.writeString(Path.of("char-list.xml"), xml);

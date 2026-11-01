@@ -25,7 +25,6 @@ public class StatisticsGUI extends JPanel {
 
         LootGUI loot = new LootGUI(data);
         tabbedPane.addTab("Loot", loot);
-        tabbedPane.addTab("Dungeon Stats", new lootgobbler.ui.DungeonStatsPanel());
         DungeonStats dungeonStats = new DungeonStats();
         tabbedPane.addTab("Dungeon Loot", dungeonStats);
     }

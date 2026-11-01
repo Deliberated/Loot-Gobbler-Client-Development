@@ -245,16 +245,19 @@ public class ClassesView extends JPanel {
             Graphics2D g2 = (Graphics2D) g.create();
             if (icon != null) icon.paintIcon(this, g2, 0, (getHeight() - icon.getIconHeight()) / 2);
             int x = ICON + 6, y = (getHeight() - PIP_H) / 2;
+            // narrow cards give the cell less than its preferred width: shrink the pips so all five stay visible
+            int step = Math.max(3, Math.min(PIP_STEP, (getWidth() - x) / ExaltStore.MAX_PER_STAT));
+            int w = Math.max(2, step - (PIP_STEP - PIP_W));
             for (int i = 0; i < ExaltStore.MAX_PER_STAT; i++) {
-                int px = x + i * PIP_STEP;
+                int px = x + i * step;
                 if (i < level) {   // earned: gold with a black frame
                     g2.setColor(Color.BLACK);
-                    g2.fillRect(px, y, PIP_W, PIP_H);
+                    g2.fillRect(px, y, w, PIP_H);
                     g2.setColor(PIP_ON);
-                    g2.fillRect(px + 1, y + 1, PIP_W - 2, PIP_H - 2);
+                    g2.fillRect(px + 1, y + 1, w - 2, PIP_H - 2);
                 } else {
                     g2.setColor(new Color(0, 0, 0, 50));
-                    g2.fillRect(px + 1, y + 1, PIP_W - 2, PIP_H - 2);
+                    g2.fillRect(px + 1, y + 1, w - 2, PIP_H - 2);
                 }
             }
             g2.dispose();

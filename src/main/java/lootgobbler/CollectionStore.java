@@ -133,16 +133,19 @@ public final class CollectionStore {
                 List<Find> copies = h.getValue();
                 Entry e = entries.get(h.getKey());
                 int known = e == null ? 0 : e.count;
-                if (e != null && fillEnchants(e, copies.subList(0, Math.min(known, copies.size())))) changed = true;
+                if (e != null && fillEnchants(e, copies)) changed = true;
                 if (copies.size() <= known) continue;
                 if (e == null) {
                     e = new Entry();
                     e.first = copies.get(0).time;
                     entries.put(h.getKey(), e);
                 }
-                for (Find f : copies.subList(known, copies.size())) addHistory(e, f);   // one entry per new copy
+                // the new copies are the ones the history does not show yet, so each keeps its own place and enchantments
+                List<Find> fresh = notInHistory(e, copies);
+                int n = copies.size() - known;
+                for (int i = 0; i < n; i++) addHistory(e, i < fresh.size() ? fresh.get(i) : copies.get(copies.size() - n + i));
                 e.last = copies.get(copies.size() - 1).time;
-                added += copies.size() - known;
+                added += n;
                 e.count = copies.size();
             }
             if (added > 0 || changed) save();
@@ -152,18 +155,41 @@ public final class CollectionStore {
     }
 
     /**
-     * Copies seen again with known enchantments complete earlier vault/inventory finds that lacked them.
+     * Held copies that the history does not account for yet: copies are paired with history finds of the same
+     * enchantments first, then with finds of the same source whose enchantments are unknown.
+     */
+    private static List<Find> notInHistory(Entry e, List<Find> copies) {
+        List<Find> rest = new ArrayList<>(copies);
+        List<Find> unknown = new ArrayList<>();
+        for (Find f : e.history()) {
+            if (f.enchantIds == null) {
+                unknown.add(f);
+                continue;
+            }
+            rest.stream().filter(c -> f.enchantIds.equals(c.enchantIds)).findFirst().ifPresent(rest::remove);
+        }
+        for (Find f : unknown) {
+            rest.stream().filter(c -> c.source.equals(f.source)).findFirst().ifPresent(rest::remove);
+        }
+        return rest;
+    }
+
+    /**
+     * Copies seen again with known enchantments complete earlier vault/inventory finds that lacked them. A set of
+     * enchantments the history already shows belongs to that find, so it is never copied onto another one.
      *
      * @return True if any find was updated.
      */
     private static boolean fillEnchants(Entry e, List<Find> seen) {
         boolean changed = false;
         List<Find> unknown = new ArrayList<>();
+        List<List<Integer>> shown = new ArrayList<>();   // enchantment sets already in the history, one per find
         for (Find f : e.history()) {
             if (f.enchantIds == null && !DROP.equals(f.source)) unknown.add(f);
+            if (f.enchantIds != null) shown.add(f.enchantIds);
         }
         for (Find s : seen) {
-            if (s.enchantIds == null) continue;
+            if (s.enchantIds == null || shown.remove(s.enchantIds)) continue;   // that copy is already in the history
             // older versions did not count empty slots: upgrade a find with the same enchantments but fewer slots
             Find upgrade = null;
             for (Find f : e.history()) {
@@ -173,7 +199,12 @@ public final class CollectionStore {
                     break;
                 }
             }
-            Find f = upgrade != null ? upgrade : unknown.isEmpty() ? null : unknown.remove(0);
+            Find f = upgrade;
+            if (f == null) {   // an unknown find from the same place (vault / inventory) first
+                f = unknown.stream().filter(u -> u.source.equals(s.source)).findFirst()
+                        .orElse(unknown.isEmpty() ? null : unknown.get(0));
+                unknown.remove(f);
+            }
             if (f == null) continue;
             f.enchantIds = s.enchantIds;
             f.enchants = s.enchantIds.size();

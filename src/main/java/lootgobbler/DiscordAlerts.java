@@ -17,7 +17,7 @@ import java.util.function.Consumer;
 public class DiscordAlerts {
 
     public static void bagDropped(MapInfoPacket map, Entity bag, Entity player, List<LootEvents.Drop> drops) {
-        if (Webhooks.get().active().isEmpty()) return;
+        if (!Discord.ENABLED || Webhooks.get().active().isEmpty()) return;
 
         // only real UT/ST gear (the game's UT/ST collection tabs); consumables also carry a "UT" label
         List<LootEvents.Drop> tops = new ArrayList<>();
@@ -43,6 +43,10 @@ public class DiscordAlerts {
      * Posts a sample white bag with four random collectible items, one per rarity.
      */
     public static void sendTest(Consumer<String> done) {
+        if (!Discord.ENABLED) {
+            done.accept("Discord webhooks are under construction.");
+            return;
+        }
         CompletableFuture.runAsync(() -> {
             List<ItemDb.Item> pool = new ArrayList<>(ItemDb.get().collectible());
             if (pool.isEmpty()) {

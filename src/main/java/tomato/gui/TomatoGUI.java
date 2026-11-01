@@ -63,31 +63,33 @@ public class TomatoGUI {
     public void create() {
         TabBar tabbedPane = new TabBar();   // one scrollable row, tabs reorderable by dragging
 
+        myDmg = new MyInfoGUI(data);
+        lootgobbler.ui.CharactersView characters = new lootgobbler.ui.CharactersView();
+        tabbedPane.addTab("Profile", new lootgobbler.ui.ProfileView(myDmg, new lootgobbler.ui.DungeonStatsPanel(), id -> {
+            characters.showCharacter(id);   // clicking your character on the profile opens it in Characters
+            tabbedPane.show("Characters");
+        }));
         chatPanel = new ChatGUI(data);
-        tabbedPane.addTab("Chat", chatPanel);
-        tabbedPane.addTab("Collection", new CollectionPanel());
-        tabbedPane.addTab("Characters", new lootgobbler.ui.CharactersView());
-        tabbedPane.addTab("Discord", new DiscordPanel());
+        questPanel = new QuestGUI();
+        JComponent discord = new DiscordPanel();
+        if (!lootgobbler.Discord.ENABLED) {
+            discord = lootgobbler.ui.UnderConstruction.wrap(discord,
+                    "Discord webhooks are under construction - nothing is posted for now.");
+        }
+        tabbedPane.addTab("Social", new lootgobbler.ui.SubTabs()
+                .page("Chat", chatPanel).page("Daily Quests", questPanel).page("Discord", discord).done());
+        tabbedPane.addTab("Inventory", new CollectionPanel());
+        tabbedPane.addTab("Characters", characters);
 
         dpsPanel = new DpsGUI(data);   // Tomato's original view, opened from the DPS tab's "Detail" button
         tabbedPane.addTab("DPS Logger", new DpsPanel(this::openDpsDetail));
 
-        // Key-pops and Security have no tab any more, but are still created: packet handlers, key-pop sounds and font
-        // changes call into them.
+        // Key-pops, Security, the old Characters view and Statistics have no tab any more, but are still created: packet
+        // handlers, key-pop sounds, the loot filter, fame tracking and font changes call into them.
         new KeypopGUI();
         securityPanel = new SecurityGUI();
-
         characterPanel = new CharacterPanelGUI(data);
-        tabbedPane.addTab("Characters Old", characterPanel);
-
         statistics = new StatisticsGUI(data);
-        tabbedPane.addTab("Statistics", statistics);
-
-        questPanel = new QuestGUI();
-        tabbedPane.addTab("Daily Quests", questPanel);
-
-        myDmg = new MyInfoGUI(data);
-        tabbedPane.addTab("My Info", myDmg);
 
         center =
             GraphicsEnvironment.getLocalGraphicsEnvironment().getCenterPoint();
@@ -113,8 +115,7 @@ public class TomatoGUI {
         }
         // Built after the menu so the sound/filter flags are already loaded from settings.
         tabbedPane.addTab("Settings", new SettingsPanel());
-        tabbedPane.restoreOrder("Collection", "Characters", "DPS Logger", "Chat", "Discord", "Statistics",
-                "Daily Quests", "My Info", "Settings", "Characters Old");
+        tabbedPane.restoreOrder("Profile", "Inventory", "Characters", "DPS Logger", "Social", "Settings");
         makeFrame();
 
         frame.setVisible(true);

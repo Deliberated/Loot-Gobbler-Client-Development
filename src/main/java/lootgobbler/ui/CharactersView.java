@@ -40,18 +40,21 @@ public class CharactersView extends JPanel {
     private boolean graveyard = false;
     private final JPanel list = column();
     private final JPanel panel = column();
-    private static final String[] PAGES = {"characters", "classes"};
+    private static final String[] PAGES = {"characters", "classes", "pets"};
     private final Map<Integer, Long> gains = new HashMap<>();   // charId -> fame gained in the selected range
+    private final CardLayout pages;
+    private final JPanel views;
+    private final Segmented viewPicker, alivePicker;
 
     public CharactersView() {
         super(new BorderLayout(0, 8));
         setBorder(new EmptyBorder(8, 8, 8, 8));
 
         // top bar: Characters / Classes on the left, Refresh on the right
-        CardLayout pages = new CardLayout();
-        JPanel views = new JPanel(pages);
+        pages = new CardLayout();
+        views = new JPanel(pages);
         views.setOpaque(false);
-        Segmented viewPicker = new Segmented(false, 0, i -> pages.show(views, PAGES[i]), "Characters", "Classes");
+        viewPicker = new Segmented(false, 0, i -> pages.show(views, PAGES[i]), "Characters", "Classes", "Pets");
 
         JLabel status = new JLabel(" ");
         status.putClientProperty("FlatLaf.styleClass", "small");
@@ -78,7 +81,7 @@ public class CharactersView extends JPanel {
             range = i;
             refresh();
         }, RANGE_LABELS);
-        Segmented alivePicker = new Segmented(true, 0, i -> {
+        alivePicker = new Segmented(true, 0, i -> {
             graveyard = i == 1;
             selected = TOTAL;
             refresh();
@@ -93,9 +96,24 @@ public class CharactersView extends JPanel {
 
         views.add(characters, PAGES[0]);
         views.add(new ClassesView(), PAGES[1]);
+        views.add(new PetsView(), PAGES[2]);
         add(views, BorderLayout.CENTER);
 
         CharacterStore.get().onChange(() -> SwingUtilities.invokeLater(this::refresh));
+        refresh();
+    }
+
+    /**
+     * Opens the Characters page with this character selected (in the graveyard if it is dead).
+     */
+    public void showCharacter(int charId) {
+        Char c = CharacterStore.get().all().stream().filter(x -> x.charId == charId).findFirst().orElse(null);
+        if (c == null) return;
+        pages.show(views, PAGES[0]);
+        viewPicker.select(0);
+        graveyard = !c.alive;
+        alivePicker.select(graveyard ? 1 : 0);
+        selected = charId;
         refresh();
     }
 
@@ -392,7 +410,7 @@ public class CharactersView extends JPanel {
     /**
      * @param showEmpty draw a faint square when there is no item (equipment slots; the backpack slot stays blank)
      */
-    private static JLabel slot(int id, int[] enchantIds, String slotName, boolean showEmpty) {
+    static JLabel slot(int id, int[] enchantIds, String slotName, boolean showEmpty) {
         Icon item = id > 0 ? sprite(id, 48) : null;
         int enchants = enchantIds == null ? 0 : enchantIds.length;
         JLabel l = new JLabel(new Icon() {
@@ -667,13 +685,14 @@ public class CharactersView extends JPanel {
         protected void paintComponent(Graphics g) {
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            int w = getWidth(), h = getHeight(), left = 8, right = w - 8, top = 18, bottom = h - 18;
+            int w = getWidth(), h = getHeight(), left = 8, right = w - 8, top = 18, bottom = h - 24;
             g2.setColor(Section.color("LootGobbler.sand", Color.LIGHT_GRAY));
             g2.fillRect(0, 0, w, h);
             g2.setColor(Section.color("LootGobbler.line", Color.GRAY));
             g2.drawRect(0, 0, w - 1, h - 1);
             Color accent = Section.color("LootGobbler.gold", Palette.GOLD);
             g2.setFont(getFont().deriveFont(13f));
+            timeAxis(g2, left, right, top, bottom, h);
             if (points.isEmpty()) {
                 g2.setColor(Palette.MUTED);
                 g2.drawString("No fame recorded in this range yet.", left + 6, h / 2);
@@ -712,10 +731,51 @@ public class CharactersView extends JPanel {
             g2.draw(line);
             g2.setColor(Palette.MUTED);
             g2.drawString(NUM.format(max), left + 4, top - 4);
-            g2.drawString(NUM.format(min), left + 4, h - 4);
-            String nowLabel = "now";
-            g2.drawString(nowLabel, right - g2.getFontMetrics().stringWidth(nowLabel), h - 4);
+            g2.drawString(NUM.format(min), left + 4, bottom - 4);
             g2.dispose();
+        }
+
+        private static final long MIN = 60_000L;
+        private static final long[] STEPS = {5 * MIN, 10 * MIN, 15 * MIN, 30 * MIN, HOUR, 2 * HOUR, 3 * HOUR, 6 * HOUR,
+                12 * HOUR, 24 * HOUR, 48 * HOUR, 7 * 24 * HOUR, 14 * 24 * HOUR, 30 * 24 * HOUR, 90 * 24 * HOUR};
+        private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("d MMM", Locale.ENGLISH);
+
+        /**
+         * Time scale under the chart: faint gridlines with clock times (or dates for long ranges) at round local
+         * times, about one label per 80 px, and "now" at the right end.
+         */
+        private void timeAxis(Graphics2D g2, int left, int right, int top, int bottom, int h) {
+            FontMetrics fm = g2.getFontMetrics();
+            double tspan = Math.max(1, to - from);
+            int maxLabels = Math.max(2, (right - left) / 80);
+            long step = STEPS[STEPS.length - 1];
+            for (long s : STEPS) {
+                if (tspan / s <= maxLabels) {
+                    step = s;
+                    break;
+                }
+            }
+            boolean days = step >= 24 * HOUR;
+            ZoneId zone = ZoneId.systemDefault();
+            long offset = zone.getRules().getOffset(Instant.ofEpochMilli(from)).getTotalSeconds() * 1000L;
+            long tick = Math.floorDiv(from + offset + step - 1, step) * step - offset;   // first round local time
+            String nowLabel = "now";
+            int nowLeft = right - fm.stringWidth(nowLabel);
+            Color grid = Section.color("LootGobbler.line", Color.GRAY);
+            g2.setColor(Palette.MUTED);
+            g2.drawLine(left, bottom, right, bottom);
+            for (; tick < to; tick += step) {
+                int x = (int) Math.round(left + (tick - from) / tspan * (right - left));
+                g2.setColor(new Color(grid.getRed(), grid.getGreen(), grid.getBlue(), 70));
+                g2.drawLine(x, top, x, bottom);
+                g2.setColor(Palette.MUTED);
+                g2.drawLine(x, bottom, x, bottom + 3);
+                String label = (days ? DAY : TIME).format(Instant.ofEpochMilli(tick).atZone(zone));
+                int lx = x - fm.stringWidth(label) / 2;
+                if (lx >= 2 && lx + fm.stringWidth(label) < nowLeft - 6) g2.drawString(label, lx, h - 5);
+            }
+            g2.setColor(Palette.MUTED);
+            g2.drawString(nowLabel, nowLeft, h - 5);
         }
     }
 
@@ -1088,7 +1148,7 @@ public class CharactersView extends JPanel {
     /**
      * The character's skin with its applied dyes and cloths.
      */
-    private static Icon skin(Char c, int size) {
+    static Icon skin(Char c, int size) {
         try {
             return Dyes.icon(c.spriteId(), c.tex1, c.tex2, size);
         } catch (Exception e) {
@@ -1096,7 +1156,7 @@ public class CharactersView extends JPanel {
         }
     }
 
-    private static Icon sprite(int id, int size) {
+    static Icon sprite(int id, int size) {
         if (id <= 0) return null;
         try {
             return ImageBuffer.getOutlinedIcon(id, size);

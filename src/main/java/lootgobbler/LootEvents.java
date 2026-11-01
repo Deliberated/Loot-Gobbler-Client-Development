@@ -10,6 +10,7 @@ import tomato.realmshark.ParseEnchants;
 import tomato.realmshark.enums.LootBags;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -66,11 +67,16 @@ public final class LootEvents {
             System.out.println("Vault: " + vault + " vault + " + gift + " gift items"
                     + (p.partial ? "  (packet only partly decoded)" : ""));
             if (p.lastVaultPacket) {
+                // vault and inventory together: an item can't be in both, so this is everything you hold right now
+                if (player != null) {
+                    inventoryFinds(player).forEach((id, finds) -> vaultVisit.computeIfAbsent(id, k -> new ArrayList<>()).addAll(finds));
+                }
                 int added = CollectionStore.get().recordHeld(vaultVisit);
                 System.out.println("Vault: " + added + " copies new to the collection");
                 vaultVisit.clear();
+            } else if (player != null) {
+                scanInventory(player);
             }
-            if (player != null) scanInventory(player);
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -91,6 +97,15 @@ public final class LootEvents {
     }
 
     private static void scanInventory(Entity player) {
+        Map<Integer, List<CollectionStore.Find>> held = inventoryFinds(player);
+        int added = held.isEmpty() ? 0 : CollectionStore.get().recordHeld(held);
+        if (added > 0) System.out.println("Inventory: " + added + " copies new to the collection");
+    }
+
+    /**
+     * Collectible items in your equipment, inventory and backpack: item id to one Find per copy.
+     */
+    private static Map<Integer, List<CollectionStore.Find>> inventoryFinds(Entity player) {
         ItemDb db = ItemDb.get();
         Map<Integer, List<CollectionStore.Find>> held = new LinkedHashMap<>();
         // enchant codes for equipment + inventory slots, same per-slot list loot bags use; none for the backpack
@@ -103,13 +118,19 @@ public final class LootEvents {
             if (sd == null || sd.statValue < 1) continue;
             ItemDb.Item item = db.item(sd.statValue);
             if (item == null || !item.isCollectible()) continue;
-            CollectionStore.Find f = !backpack && i < codes.length
-                    ? CollectionStore.Find.of(CollectionStore.INVENTORY, enchantIds(codes[i]), "", "Inventory")
+            // live enchant codes cover equipment + inventory; for the backpack (or when they are missing) use the
+            // character list's data for that slot, if the same item is still there
+            List<Integer> ids = !backpack && i < codes.length ? enchantIds(codes[i]) : null;
+            if (ids == null) {
+                int[] known = CharacterStore.get().slotEnchants(player.charId(), i, sd.statValue);
+                if (known != null) ids = Arrays.stream(known).boxed().toList();
+            }
+            CollectionStore.Find f = ids != null
+                    ? CollectionStore.Find.of(CollectionStore.INVENTORY, ids, "", "Inventory")
                     : CollectionStore.Find.of(CollectionStore.INVENTORY, -1, "", "Inventory");
             held.computeIfAbsent(sd.statValue, k -> new ArrayList<>()).add(f);
         }
-        int added = held.isEmpty() ? 0 : CollectionStore.get().recordHeld(held);
-        if (added > 0) System.out.println("Inventory: " + added + " copies new to the collection");
+        return held;
     }
 
     /**
