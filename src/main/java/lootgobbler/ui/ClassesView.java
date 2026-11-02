@@ -34,6 +34,9 @@ public class ClassesView extends JPanel {
     private final JProgressBar totalBar = bar(null);
     private final JLabel totalText = new JLabel(" "), classesText = new JLabel(" ");
     private final JPanel perStat = column();
+    private final JPanel classBody = column();
+    private Section classSection;
+    private int selected = -1;   // class shown on the right (its object type), -1 = none
 
     public ClassesView() {
         super(new BorderLayout());
@@ -58,9 +61,21 @@ public class ClassesView extends JPanel {
         progress.add(Box.createVerticalStrut(6));
         progress.add(classesText);
         perStat.setBorder(new EmptyBorder(8, 10, 8, 10));
+        classBody.setBorder(new EmptyBorder(10, 10, 10, 10));
+        JButton close = new JButton("Close");
+        close.addActionListener(e -> {
+            selected = -1;
+            showClass();
+        });
+        classSection = new Section("Class", Palette.BLUE, classBody).actions(close);
+        classSection.setVisible(false);
+        JPanel top = new JPanel(new BorderLayout(0, GAP));
+        top.setOpaque(false);
+        top.add(classSection, BorderLayout.NORTH);
+        top.add(new Section("Exaltation Progress", Palette.GREEN, progress), BorderLayout.CENTER);
         JPanel side = new JPanel(new BorderLayout(0, GAP));
         side.setOpaque(false);
-        side.add(new Section("Exaltation Progress", Palette.GREEN, progress), BorderLayout.NORTH);
+        side.add(top, BorderLayout.NORTH);
         side.add(new Section("Per Stat", Palette.PURPLE, wrap(FitWidthPanel.scroll(perStat, 16))), BorderLayout.CENTER);
 
         SideSplit split = new SideSplit(main, side, "classes", 280, 220);   // drag the gap to resize
@@ -73,7 +88,78 @@ public class ClassesView extends JPanel {
 
         ExaltStore.get().onChange(() -> SwingUtilities.invokeLater(this::refresh));
         CharacterStore.get().onChange(() -> SwingUtilities.invokeLater(this::refresh));
+        lootgobbler.DpsHistory.get().onChange(() -> {
+            if (selected >= 0) SwingUtilities.invokeLater(this::showClass);
+        });
         refresh();
+    }
+
+    /**
+     * The class picked by clicking its sprite, on the right: how many of your characters of it died, and the
+     * dungeons where you did the most damage per second with it (from the DPS Logger's run history).
+     */
+    private void showClass() {
+        classBody.removeAll();
+        CharacterClass cls = Arrays.stream(CharacterClass.CHAR_CLASS_LIST).filter(c -> c.getId() == selected).findFirst().orElse(null);
+        classSection.setVisible(cls != null);
+        if (cls == null) {
+            revalidate();
+            return;
+        }
+        classSection.setTitle(cls.toString());
+        JLabel head = new JLabel(cls.toString(), sprite(cls.getId(), 64), SwingConstants.LEFT);
+        head.setIconTextGap(12);
+        head.setFont(head.getFont().deriveFont(26f));
+        classBody.add(left(head));
+        classBody.add(Box.createVerticalStrut(8));
+
+        List<CharacterStore.Char> all = CharacterStore.get().all().stream().filter(c -> c.classType == cls.getId()).toList();
+        List<CharacterStore.Char> dead = all.stream().filter(c -> !c.alive).toList();
+        classBody.add(left(caption("Deaths")));
+        JLabel deaths = new JLabel(dead.size() + (dead.size() == 1 ? " character died" : " characters died")
+                + "  ·  " + (all.size() - dead.size()) + " alive");
+        deaths.setFont(deaths.getFont().deriveFont(18f));
+        classBody.add(left(deaths));
+        if (!dead.isEmpty()) {
+            long best = dead.stream().mapToLong(c -> c.fame).max().orElse(0);
+            JLabel note = new JLabel("best fame of a fallen one: " + NUM.format(best));
+            note.setForeground(Palette.MUTED);
+            classBody.add(left(note));
+        }
+        classBody.add(Box.createVerticalStrut(12));
+
+        // best peak DPS per dungeon, over the runs where you played this class
+        Map<String, lootgobbler.DpsHistory.Run> best = new HashMap<>();
+        for (lootgobbler.DpsHistory.Run r : lootgobbler.DpsHistory.get().runs()) {
+            if (r.guildHall || r.bosses.stream().noneMatch(b -> b.me() != null && b.me().classType == cls.getId())) continue;
+            lootgobbler.DpsHistory.Run was = best.get(r.dungeon);
+            if (was == null || r.myPeakDps() > was.myPeakDps()) best.put(r.dungeon, r);
+        }
+        List<lootgobbler.DpsHistory.Run> top = best.values().stream()
+                .sorted(Comparator.comparingDouble((lootgobbler.DpsHistory.Run r) -> -r.myPeakDps())).limit(3).toList();
+        classBody.add(left(caption("Top DPS dungeons")));
+        if (top.isEmpty()) {
+            JLabel none = new JLabel("No dungeon runs with this class yet.");
+            none.setForeground(Palette.MUTED);
+            classBody.add(left(none));
+        }
+        for (int i = 0; i < top.size(); i++) {
+            lootgobbler.DpsHistory.Run r = top.get(i);
+            JLabel row = new JLabel("<html>" + r.dungeon + "<br><font color='#938B79'>" + NUM.format(Math.round(r.myPeakDps()))
+                    + " DPS</font></html>", DpsPanel.dungeonIcon(r), SwingConstants.LEFT);
+            row.setIconTextGap(10);
+            if (i == 0) row.setFont(row.getFont().deriveFont(18f));
+            row.setBorder(new EmptyBorder(4, 0, 4, 0));
+            classBody.add(left(row));
+        }
+        classBody.revalidate();
+        classBody.repaint();
+        revalidate();
+    }
+
+    private static <T extends JComponent> T left(T c) {
+        c.setAlignmentX(LEFT_ALIGNMENT);
+        return c;
     }
 
     private record ClassInfo(CharacterClass cls, int[] progress, int total, int sum, List<CharacterStore.Char> chars) {
@@ -96,9 +182,13 @@ public class ClassesView extends JPanel {
                 .thenComparing(i -> i.cls.toString()));
 
         cards.removeAll();
-        for (ClassInfo i : infos) cards.add(new Card(i));
+        for (ClassInfo i : infos) cards.add(new Card(i, id -> {
+            selected = id;
+            showClass();
+        }));
         updateColumns();
         updateSide(infos);
+        if (selected >= 0) showClass();
     }
 
     private void updateColumns() {
@@ -152,7 +242,7 @@ public class ClassesView extends JPanel {
     private static class Card extends JPanel {
         private final boolean done;
 
-        Card(ClassInfo info) {
+        Card(ClassInfo info, java.util.function.IntConsumer onSprite) {
             super(new BorderLayout(10, 0));
             done = info.total == ExaltStore.MAX_PER_CLASS;
             setOpaque(false);
@@ -161,8 +251,11 @@ public class ClassesView extends JPanel {
 
             int skin = done ? exaltedSkin(info.cls.toString()) : -1;   // fully exalted: the class's Exalted skin
             Icon look = skin > 0 ? sprite(skin, PORTRAIT - 8) : null;
-            JLabel sprite = new JLabel(portrait(look != null ? look : sprite(info.cls.getId(), PORTRAIT - 8)));
+            // the sprite on the card itself; click: deaths and best dungeons of the class, on the right
+            JLabel sprite = new JLabel(look != null ? look : sprite(info.cls.getId(), PORTRAIT - 8));
             sprite.setPreferredSize(new Dimension(PORTRAIT, PORTRAIT));
+            sprite.setToolTipText("Deaths and best dungeons of the " + info.cls);
+            int id = info.cls.getId();
             add(sprite, BorderLayout.WEST);
 
             JPanel body = new JPanel();
@@ -209,6 +302,14 @@ public class ClassesView extends JPanel {
             who.setAlignmentX(LEFT_ALIGNMENT);
             body.add(who);
             add(body, BorderLayout.CENTER);
+            clickable(this, () -> onSprite.accept(id));   // the whole card: deaths and best dungeons, on the right
+        }
+
+        /** Clicks anywhere on c (also on its labels, which would otherwise take the click) run action. */
+        private static void clickable(JComponent c, Runnable action) {
+            c.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            Clicks.onClick(c, action);
+            for (Component child : c.getComponents()) if (child instanceof JComponent j) clickable(j, action);
         }
 
         @Override
@@ -264,7 +365,7 @@ public class ClassesView extends JPanel {
         }
     }
 
-    private static Icon potion(int stat, int size) {
+    static Icon potion(int stat, int size) {
         return sprite(STAT_POTION[stat], size);
     }
 
@@ -293,34 +394,6 @@ public class ClassesView extends JPanel {
         } catch (Exception e) {
             return null;
         }
-    }
-
-    /**
-     * Dark tile behind the class sprite, as on the character cards.
-     */
-    private static Icon portrait(Icon sprite) {
-        return new Icon() {
-            @Override
-            public void paintIcon(Component c, Graphics g, int x, int y) {
-                g.setColor(new Color(0x15141A));
-                g.fillRect(x, y, PORTRAIT, PORTRAIT);
-                g.setColor(Color.BLACK);
-                g.drawRect(x, y, PORTRAIT - 1, PORTRAIT - 1);
-                if (sprite != null) {
-                    sprite.paintIcon(c, g, x + (PORTRAIT - sprite.getIconWidth()) / 2, y + (PORTRAIT - sprite.getIconHeight()) / 2);
-                }
-            }
-
-            @Override
-            public int getIconWidth() {
-                return PORTRAIT;
-            }
-
-            @Override
-            public int getIconHeight() {
-                return PORTRAIT;
-            }
-        };
     }
 
     private static JProgressBar bar(Color color) {

@@ -451,6 +451,13 @@ public class ServerPanel extends JPanel {
         moderationBody.add(moderationFeedback);
     }
 
+    /** Reloads the approval queue and scrolls to it (e.g. from the notifications bell). */
+    public void showModeration() {
+        refreshModeration();
+        SwingUtilities.invokeLater(() -> moderation.scrollRectToVisible(
+                new Rectangle(0, 0, moderation.getWidth(), moderation.getHeight())));
+    }
+
     private void refreshModeration() {
         User u = server.user();
         if (u == null || !u.atLeastModerator()) return;
@@ -465,6 +472,7 @@ public class ServerPanel extends JPanel {
                 moderationFeedback.setText(GobblerServer.message(e));
             } else {
                 pending = p.join();
+                lootgobbler.ApprovalWatcher.get().update(pending);   // the bell follows accepts and denies
                 members = m.join();
                 openTokens = t.join();
                 questPool = qp.join();

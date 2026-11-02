@@ -25,6 +25,15 @@ public class TabBar extends JPanel {
 
     private final Strip strip = new Strip();
     private final JScrollPane stripScroll;
+    private final JPanel trailing = new JPanel();
+    private final JPanel top = new JPanel(new BorderLayout()) {   // the tab strip, plus whatever setTrailing adds
+        @Override
+        public void updateUI() {
+            super.updateUI();
+            setBackground(Section.color("TabbedPane.background", Color.LIGHT_GRAY));
+            setBorder(new MatteBorder(0, 0, 1, 0, Section.color("Component.borderColor", Color.GRAY)));
+        }
+    };
     private final CardLayout cards = new CardLayout();
     private final JPanel content = new JPanel(cards);
     private final List<Tab> order = new ArrayList<>();   // visual order
@@ -40,7 +49,7 @@ public class TabBar extends JPanel {
             @Override
             public void updateUI() {
                 super.updateUI();
-                setBorder(new MatteBorder(0, 0, 1, 0, Section.color("Component.borderColor", Color.GRAY)));
+                setBorder(BorderFactory.createEmptyBorder());   // the row's border is on top
                 getViewport().setBackground(Section.color("TabbedPane.background", Color.LIGHT_GRAY));
             }
         };
@@ -52,8 +61,19 @@ public class TabBar extends JPanel {
             bar.setValue(bar.getValue() + e.getWheelRotation() * 40);
         });
         content.setOpaque(false);
-        add(stripScroll, BorderLayout.NORTH);
+        trailing.setLayout(new BoxLayout(trailing, BoxLayout.X_AXIS));
+        trailing.setOpaque(false);
+        top.add(stripScroll, BorderLayout.CENTER);
+        top.add(trailing, BorderLayout.EAST);
+        add(top, BorderLayout.NORTH);
         add(content, BorderLayout.CENTER);
+    }
+
+    /** Adds a component at the right end of the tab row (e.g. the active dungeon, the notifications bell). */
+    public void addTrailing(JComponent c) {
+        c.setAlignmentY(Component.CENTER_ALIGNMENT);
+        trailing.add(c);
+        trailing.revalidate();
     }
 
     /**

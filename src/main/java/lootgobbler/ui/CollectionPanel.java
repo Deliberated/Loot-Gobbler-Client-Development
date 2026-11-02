@@ -160,8 +160,14 @@ public class CollectionPanel extends JPanel {
             sideSection.setTitle("Recent");
             backToRecent.setVisible(false);
             if (byLast.isEmpty()) recent.add(new JLabel("Nothing collected yet."));
+            String day = null;
             for (int i = 0; i < Math.min(RECENT, byLast.size()); i++) {
-                recent.add(recentRow(byLast.get(i).getKey(), byLast.get(i).getValue()));
+                CollectionStore.Entry e = byLast.get(i).getValue();
+                if (!e.lastDate().equals(day)) {   // a line with the day where a new day starts
+                    day = e.lastDate();
+                    recent.add(dayLine(day, i == 0));
+                }
+                recent.add(recentRow(byLast.get(i).getKey(), e));
                 recent.add(Box.createVerticalStrut(4));
             }
         }
@@ -582,19 +588,61 @@ public class CollectionPanel extends JPanel {
         if (ok == JOptionPane.YES_OPTION) CollectionStore.get().clear();
     }
 
+    /**
+     * A recently found item: its icon with the enchantments of the newest copy, and its name. Click: the item in
+     * the grid (scrolled to, with the gold pulse) and its history.
+     */
     private JPanel recentRow(int id, CollectionStore.Entry e) {
-        JPanel row = new JPanel(new BorderLayout(8, 0));
+        JPanel row = new JPanel(new BorderLayout(10, 0));
         row.setOpaque(false);
         row.setAlignmentX(LEFT_ALIGNMENT);
-        Image icon = CollectionGrid.icon(id);
-        JLabel name = new JLabel(name(id), icon == null ? null : new ImageIcon(icon.getScaledInstance(22, 22, Image.SCALE_REPLICATE)), SwingConstants.LEFT);
-        name.setIconTextGap(8);
-        JLabel date = new JLabel(e.lastDate());
-        date.setForeground(Palette.MUTED);
+        int enchants = 0;
+        List<CollectionStore.Find> finds = e.history();
+        for (int i = finds.size() - 1; i >= 0; i--) {   // the newest copy you found
+            CollectionStore.Find f = finds.get(i);
+            if (CollectionStore.isRemoval(f)) continue;
+            enchants = f.enchantIds != null ? f.enchantIds.size() : Math.max(0, f.enchants);
+            break;
+        }
+        JLabel name = new JLabel(name(id), EnchantBadge.icon(CollectionGrid.icon(id), 32, enchants), SwingConstants.LEFT);
+        name.setIconTextGap(10);
         row.add(name, BorderLayout.CENTER);
-        row.add(date, BorderLayout.EAST);
-        row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 28));
+        row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 36));
+        row.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        ItemDb.Item item = ItemDb.get().item(id);
+        if (item != null) Clicks.onClick(row, () -> showHistory(item, true));
         return row;
+    }
+
+    /** The day the items below were found: "Today", "Yesterday" or "1 Nov", with a line (not above the first). */
+    private static JComponent dayLine(String isoDate, boolean first) {
+        String text = isoDate;
+        try {
+            java.time.LocalDate d = java.time.LocalDate.parse(isoDate), today = java.time.LocalDate.now();
+            text = d.equals(today) ? "Today" : d.equals(today.minusDays(1)) ? "Yesterday"
+                    : d.format(java.time.format.DateTimeFormatter.ofPattern("d MMM", Locale.ENGLISH));
+        } catch (Exception ignore) {   // no date known
+        }
+        JPanel p = new JPanel();
+        p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS));
+        p.setOpaque(false);
+        p.setAlignmentX(LEFT_ALIGNMENT);
+        if (!first) {
+            p.add(Box.createVerticalStrut(4));
+            JSeparator line = new JSeparator();
+            line.setAlignmentX(LEFT_ALIGNMENT);
+            line.setMaximumSize(new Dimension(Integer.MAX_VALUE, 2));
+            p.add(line);
+        }
+        p.add(Box.createVerticalStrut(4));
+        JLabel l = new JLabel(text.toUpperCase(Locale.ROOT));
+        l.putClientProperty("FlatLaf.styleClass", "small");
+        l.setForeground(Palette.MUTED);
+        l.setAlignmentX(LEFT_ALIGNMENT);
+        p.add(l);
+        p.add(Box.createVerticalStrut(4));
+        p.setMaximumSize(new Dimension(Integer.MAX_VALUE, p.getPreferredSize().height));
+        return p;
     }
 
     private static String name(int id) {

@@ -99,6 +99,10 @@ public class TomatoGUI {
 
         dpsPanel = new DpsGUI(data);   // Tomato's original view: not shown any more, but its packet handlers still run
         tabbedPane.addTab("DPS Logger", dps);
+        tabbedPane.addTrailing(new lootgobbler.ui.ActiveDungeonBadge(() -> {
+            dps.showRun(null);   // the live run
+            tabbedPane.show("DPS Logger");
+        }));
 
         // Key-pops, Security, the old Characters view and Statistics have no tab any more, but are still created: packet
         // handlers, key-pop sounds, the loot filter, fame tracking and font changes call into them.
@@ -133,7 +137,14 @@ public class TomatoGUI {
         // Built after the menu so the sound/filter flags are already loaded from settings.
         tabbedPane.addTab("Settings", new SettingsPanel());
         tabbedPane.addTab("Guild", guild);
-        tabbedPane.addTab("Server", new lootgobbler.ui.ServerPanel());
+        lootgobbler.ui.ServerPanel server = new lootgobbler.ui.ServerPanel();
+        tabbedPane.addTab("Server", server);
+        tabbedPane.addTrailing(new lootgobbler.ui.NotificationBell());
+        // new players waiting for approval: a notification that opens the queue in the Server tab
+        lootgobbler.ApprovalWatcher.get().start(() -> SwingUtilities.invokeLater(() -> {
+            tabbedPane.show("Server");
+            server.showModeration();
+        }));
         tabbedPane.restoreOrder("Profile", "Inventory", "Characters", "DPS Logger", "Social", "Guild", "Server", "Settings");
         makeFrame();
 

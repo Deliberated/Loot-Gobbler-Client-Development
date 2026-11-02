@@ -14,6 +14,7 @@ import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.awt.event.HierarchyEvent;
+import java.awt.geom.AffineTransform;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
@@ -379,6 +380,9 @@ public class CaravanView extends JPanel {
         private final java.util.function.Consumer<CaravanMember> onPick;   // null for a click beside the members
         long picked = -1;   // the member drawn highlighted
         private double zoom = 1;
+        private static final double MAX_FIT = 1.7;   // the caravan's size while only a few wagons drive
+        private static final int FIT_MARGIN = 120;    // free space left and right of an enlarged caravan
+        private AffineTransform view = new AffineTransform();   // caravan coordinates -> screen, as last drawn
         private boolean anyClick;
         private final javax.swing.Timer timer = new javax.swing.Timer(70, e -> {
             phase++;
@@ -433,7 +437,7 @@ public class CaravanView extends JPanel {
         }
 
         private CaravanMember at(Point p) {
-            p = new Point((int) (p.x / zoom), (int) (p.y / zoom));
+            p = toScene(p);
             for (Map.Entry<Rectangle, CaravanMember> h : hits) if (h.getKey().contains(p)) return h.getValue();
             return null;
         }
@@ -441,7 +445,7 @@ public class CaravanView extends JPanel {
         /** The pile item under p (not on the Profile's small wagon, where any click opens the caravan); null if none. */
         private Integer itemAt(Point p) {
             if (anyClick) return null;
-            Point q = new Point((int) (p.x / zoom), (int) (p.y / zoom));
+            Point q = toScene(p);
             for (Map.Entry<Rectangle, Integer> h : itemHits) if (h.getKey().contains(q)) return h.getValue();
             return null;
         }
@@ -456,11 +460,47 @@ public class CaravanView extends JPanel {
             return m.ign + cls + ": " + m.total + (m.total == 1 ? " item" : " items");
         }
 
+        /** A point on screen in the caravan's own (unzoomed) coordinates, where the hit areas are. */
+        private Point toScene(Point p) {
+            try {
+                java.awt.geom.Point2D q = view.inverseTransform(p, null);
+                return new Point((int) Math.floor(q.getX()), (int) Math.floor(q.getY()));
+            } catch (java.awt.geom.NoninvertibleTransformException e) {
+                return p;
+            }
+        }
+
+        /** Width of the ox, the wagons with their steps and the walkers, without the padding. */
+        private int contentWidth() {
+            int w = OX_W + riders.size() * (BAR + WAGON_W + STEP_W) + (walkers.isEmpty() ? 0 : 46);
+            for (CaravanMember m : walkers) w += walkerWidth(m);
+            return w;
+        }
+
+        /** How high the caravan reaches above the road: the tallest pile, or the drivers and the ox. */
+        private int contentHeight() {
+            int rows = 0;
+            for (CaravanMember m : riders) rows = Math.max(rows, (Math.min(m.items.size(), MAX_PILE) + PILE_COLS - 1) / PILE_COLS);
+            return Math.max(150, 32 + BED_H + rows * (ITEM + ITEM_GAP) + 12);
+        }
+
+        /**
+         * How much the caravan is enlarged: up to MAX_FIT while it fits the visible width (with a margin on both
+         * sides) and the sky; less as wagons are added, down to 1. Below that the scroll bar takes over. The
+         * Profile's small wagon is never enlarged.
+         */
+        private double fit() {
+            if (anyClick) return 1;
+            double width = getParent() instanceof JViewport v ? v.getWidth() : getWidth();
+            double byWidth = (width - 2 * FIT_MARGIN) / contentWidth();
+            double byHeight = (HEIGHT - 34 - 16) / (double) contentHeight();
+            return Math.max(1, Math.min(MAX_FIT, Math.min(byWidth, byHeight)));
+        }
+
         @Override
         public Dimension getPreferredSize() {
             // each wagon on a bar behind the one before (or the ox), with its step at the back
-            int w = PAD + OX_W + riders.size() * (BAR + WAGON_W + STEP_W) + (walkers.isEmpty() ? 0 : 46) + PAD;
-            for (CaravanMember m : walkers) w += walkerWidth(m);
+            int w = PAD + contentWidth() + PAD;
             if (zoom != 1) return new Dimension((int) Math.ceil(w * zoom), (int) Math.ceil(HEIGHT * zoom));
             return new Dimension(Math.max(400, w), HEIGHT);
         }
@@ -489,6 +529,16 @@ public class CaravanView extends JPanel {
                 g2.dispose();
                 return;
             }
+            // the caravan (not the sky and road) enlarged around the road line, centered while it fits
+            double f = fit();
+            double drawn = contentWidth() * f, start = anyClick || drawn + 2 * PAD > w ? PAD : (w - drawn) / 2;
+            view = AffineTransform.getScaleInstance(zoom, zoom);
+            view.translate(start, ground);
+            view.scale(f, f);
+            view.translate(-PAD, -ground);
+            g2.translate(start, ground);
+            g2.scale(f, f);
+            g2.translate(-PAD, -ground);
             int x = PAD;
             paintOx(g2, x, ground);
             x += OX_W;
@@ -569,7 +619,8 @@ public class CaravanView extends JPanel {
 
         private void paintWagon(Graphics2D g2, CaravanMember m, int index, int x, int ground, double scale) {
             int bedY = ground - 32 - BED_H;
-            int bob = (int) Math.round(2 * Math.sin(phase * 0.25 + index));
+            int bob = (int) Math.round(2 * Math.sin(phase * 0.25 + index));        // the driver
+            int lootBob = (int) Math.round(2 * Math.sin(phase * 0.06 + index));    // the pile: much slower
             boolean isPicked = m.id == picked;
 
             // the pile: rarest on top
@@ -580,11 +631,12 @@ public class CaravanView extends JPanel {
             Collections.reverse(pile);   // drawn from the bottom up
             int pileX = x + 52, pileW = PILE_COLS * (ITEM + ITEM_GAP);
             int top = bedY;
-            for (int i = 0; i < pile.size(); i++) {
+            if (lootStyle > 0) top = paintLootMockup(g2, m, pile, pileX + pileW / 2, bedY + lootBob);
+            for (int i = 0; i < (lootStyle > 0 ? 0 : pile.size()); i++) {
                 int row = i / PILE_COLS, col = i % PILE_COLS;
                 int inRow = Math.min(PILE_COLS, pile.size() - row * PILE_COLS);
                 int rowX = pileX + (pileW - inRow * (ITEM + ITEM_GAP)) / 2;
-                int ix = rowX + col * (ITEM + ITEM_GAP), iy = bedY - (row + 1) * (ITEM + ITEM_GAP) + bob;
+                int ix = rowX + col * (ITEM + ITEM_GAP), iy = bedY - (row + 1) * (ITEM + ITEM_GAP) + lootBob;
                 top = Math.min(top, iy);
                 CaravanItem it = pile.get(i);
                 itemHits.add(Map.entry(new Rectangle(ix, iy, ITEM, ITEM), it.itemId));
@@ -652,6 +704,111 @@ public class CaravanView extends JPanel {
             g2.fillRect(x + 2, y + 6, 3, 8);           // brackets under it
             g2.fillRect(x + STEP_W - 5, y + 6, 3, 8);
             paintHoard(g2, stones, m.id, x + STEP_W / 2, y);
+        }
+
+        /** MOCKUP: how the loot sits on the wagon. 0 rows (as now), 1 mound, 2 sacks per bag color, 3 showcase, 4 gentle heap. */
+        static int lootStyle = 0;
+
+        /** MOCKUP: paints the pile (bottom up, rarest last) centered on cx, standing on bed; returns its top. */
+        private int paintLootMockup(Graphics2D g2, CaravanMember m, List<CaravanItem> pile, int cx, int bed) {
+            int top = bed;
+            Random rnd = new Random(m.id * 7919L);
+            switch (lootStyle) {
+                case 1, 4 -> {   // a mound: rows narrowing upwards (4: wider and lower, items turned a little)
+                    boolean gentle = lootStyle == 4;
+                    int n0 = pile.size(), sp = gentle ? ITEM : ITEM - 2, rise = gentle ? ITEM - 8 : ITEM - 5;
+                    // the base grows with the pile: a pyramid (mound) or a wide, low heap (gentle)
+                    int width = gentle ? Math.max(3, Math.min(9, (n0 + 2) / 3))
+                            : Math.max(3, Math.min(8, (int) Math.ceil((Math.sqrt(8.0 * n0 + 1) - 1) / 2)));
+                    int row = 0, i = 0;
+                    while (i < pile.size()) {
+                        int inRow = Math.min(Math.max(1, width - (gentle ? row / 2 : row)), pile.size() - i);
+                        if (row > 0 && inRow < 2 && pile.size() - i > 1) inRow = Math.min(2, pile.size() - i);
+                        for (int k = 0; k < inRow; k++, i++) {
+                            int ix = cx - (inRow - 1) * sp / 2 + k * sp - ITEM / 2, iy = bed - ITEM - row * rise;
+                            double angle = 0;
+                            if (gentle) {
+                                ix += rnd.nextInt(5) - 2;
+                                iy += rnd.nextInt(3) - 1;
+                                angle = Math.toRadians(rnd.nextInt(31) - 15);
+                            }
+                            top = Math.min(top, iy);
+                            lootItem(g2, pile.get(i).itemId, ix, iy, angle);
+                        }
+                        row++;
+                    }
+                }
+                case 2 -> {   // one sack per bag color, its rarest items looking out at the top, the count on it
+                    Map<String, List<CaravanItem>> byBag = new LinkedHashMap<>();
+                    for (String b : BAG_ORDER) for (CaravanItem it : pile) if (b.equals(it.bag)) byBag.computeIfAbsent(b, k -> new ArrayList<>()).add(it);
+                    List<Map.Entry<String, List<CaravanItem>>> sacks = new ArrayList<>(byBag.entrySet());
+                    if (sacks.size() > 4) sacks = sacks.subList(0, 4);
+                    int sw = 34, gap = 4, total = sacks.size() * sw + (sacks.size() - 1) * gap, sx = cx + 14 - total / 2;
+                    for (Map.Entry<String, List<CaravanItem>> s : sacks) {
+                        Color c = bagColor(s.getKey());
+                        int sh = 30 + Math.min(16, s.getValue().size() * 2), sy = bed - sh;
+                        List<CaravanItem> items = s.getValue();
+                        for (int k = 0; k < Math.min(3, items.size()); k++) {   // peeking out
+                            int ix = sx + sw / 2 - ITEM / 2 + (k - 1) * 11, iy = sy - ITEM + 10 - (k == 1 ? 5 : 0);
+                            top = Math.min(top, iy);
+                            lootItem(g2, items.get(items.size() - 1 - k).itemId, ix, iy, Math.toRadians((k - 1) * 14));
+                        }
+                        g2.setColor(INK);
+                        g2.fillRoundRect(sx, sy, sw, sh, 14, 14);
+                        g2.setColor(c);
+                        g2.fillRoundRect(sx + 3, sy + 3, sw - 6, sh - 6, 10, 10);
+                        g2.setColor(c.darker());
+                        g2.fillRect(sx + 6, sy + 6, sw - 12, 3);   // the tied neck
+                        g2.setFont(FLAG_FONT);
+                        String t = String.valueOf(items.size());
+                        FontMetrics fm = g2.getFontMetrics();
+                        g2.setColor(INK);
+                        g2.drawString(t, sx + (sw - fm.stringWidth(t)) / 2, sy + sh - 7);
+                        sx += sw + gap;
+                    }
+                }
+                case 3 -> {   // a showcase rack: the six best items on two shelves, "+N" for the rest
+                    int rw = 6 * 0 + 3 * (ITEM + 8) + 8, rx = cx - rw / 2, shelf2 = bed - 6, shelf1 = shelf2 - ITEM - 12;
+                    block(g2, rx, shelf1 - ITEM - 10, 5, shelf2 - shelf1 + ITEM + 16, WOOD_DARK);        // posts
+                    block(g2, rx + rw - 5, shelf1 - ITEM - 10, 5, shelf2 - shelf1 + ITEM + 16, WOOD_DARK);
+                    block(g2, rx, shelf1, rw, 6, WOOD);
+                    block(g2, rx, shelf2, rw, 6, WOOD);
+                    top = shelf1 - ITEM - 10;
+                    int shown = Math.min(6, pile.size());
+                    for (int k = 0; k < shown; k++) {
+                        CaravanItem it = pile.get(pile.size() - 1 - k);   // rarest first, top shelf
+                        int ix = rx + 6 + (k % 3) * (ITEM + 8), iy = (k < 3 ? shelf1 : shelf2) - ITEM;
+                        lootItem(g2, it.itemId, ix, iy, 0);
+                    }
+                    if (pile.size() > shown) {
+                        String t = "+" + (pile.size() - shown);
+                        g2.setFont(FLAG_FONT);
+                        FontMetrics fm = g2.getFontMetrics();
+                        int pw = fm.stringWidth(t) + 10;
+                        block(g2, rx + rw + 4, shelf2 - 18, pw, 22, BONE);
+                        g2.setColor(INK);
+                        g2.drawString(t, rx + rw + 9, shelf2 - 2);
+                    }
+                }
+                default -> {
+                }
+            }
+            return top;
+        }
+
+        /** MOCKUP: one loot item at (x, y), turned by angle, with its hit area. */
+        private void lootItem(Graphics2D g2, int itemId, int x, int y, double angle) {
+            itemHits.add(Map.entry(new Rectangle(x, y, ITEM, ITEM), itemId));
+            Icon icon = items.computeIfAbsent(itemId, id -> CharactersView.sprite(id, ITEM));
+            if (icon == null) return;
+            Graphics2D g = (Graphics2D) g2.create();
+            g.translate(x + ITEM / 2, y + ITEM / 2);
+            if (angle != 0) {
+                g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+                g.rotate(angle);
+            }
+            icon.paintIcon(this, g, -icon.getIconWidth() / 2, -icon.getIconHeight() / 2);
+            g.dispose();
         }
 
         private static final int GEM = 11;

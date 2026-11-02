@@ -85,11 +85,12 @@ public class CharactersView extends JPanel {
             refresh();
         }, "Alive", "Graveyard");
         list.setBorder(new EmptyBorder(8, 8, 8, 8));
-        panel.setBorder(new EmptyBorder(10, 10, 10, 10));
+        panel.setBorder(new EmptyBorder(0, 0, 0, 0));   // the boxes sit right at the divider, as on the Classes page
         Section left = new Section("Characters", Palette.GOLD, wrap(scroll(list)))
                 .actions(played, rangePicker, (JComponent) Box.createHorizontalStrut(24), alivePicker);
-        Section right = new Section("Fame Gain", Palette.GREEN, wrap(scroll(panel)));
-        SideSplit characters = new SideSplit(left, right, "characters", 440, 300);   // drag the gap to resize
+        JComponent right = scroll(panel);   // a column of boxes (character, loadout, ..., fame gain)
+        // about half and half; a new name, so earlier saved widths of the narrow panel do not apply
+        SideSplit characters = new SideSplit(left, right, "characterDetail", 760, 300);   // drag the gap to resize
         characters.minMain(left.getPreferredSize().width + 24);   // keep the header readable
 
         views.add(characters, PAGES[0]);
@@ -186,6 +187,7 @@ public class CharactersView extends JPanel {
      */
     private void renderTotal(List<Char> chars) {
         panel.removeAll();
+        JPanel box = column();
         long now = System.currentTimeMillis();
         long window = RANGES[range];
         long since = window == Long.MAX_VALUE ? 0 : now - window;
@@ -200,12 +202,12 @@ public class CharactersView extends JPanel {
         JLabel who = new JLabel(graveyard ? "All fallen characters" : "All characters");
         who.setFont(who.getFont().deriveFont(20f));
         who.setAlignmentX(LEFT_ALIGNMENT);
-        panel.add(who);
+        box.add(who);
         JLabel meta = muted("★ " + NUM.format(chars.stream().mapToLong(c -> c.fame).sum()) + " fame in total   ·   "
                 + chars.size() + " characters");
         meta.setAlignmentX(LEFT_ALIGNMENT);
-        panel.add(meta);
-        panel.add(Box.createVerticalStrut(8));
+        box.add(meta);
+        box.add(Box.createVerticalStrut(8));
 
         JPanel kpis = new JPanel(new GridLayout(1, 3, 8, 0));
         kpis.setOpaque(false);
@@ -214,27 +216,28 @@ public class CharactersView extends JPanel {
         kpis.add(kpi("Fame / hour", played > 60_000 ? NUM.format(Math.round(gained / (played / (double) HOUR))) : "-"));
         kpis.add(kpi("Time played", String.format("%.1f h", played / (double) HOUR)));
         kpis.setMaximumSize(new Dimension(Integer.MAX_VALUE, kpis.getPreferredSize().height));
-        panel.add(kpis);
-        panel.add(Box.createVerticalStrut(8));
+        box.add(kpis);
+        box.add(Box.createVerticalStrut(8));
 
         FameChart chart = new FameChart(CharacterStore.get().combinedGain(chars, since), since, now);
         chart.setAlignmentX(LEFT_ALIGNMENT);
-        panel.add(chart);
-        panel.add(Box.createVerticalStrut(8));
+        box.add(chart);
+        box.add(Box.createVerticalStrut(8));
 
         JLabel title = new JLabel("CONTRIBUTION");
         title.putClientProperty("FlatLaf.styleClass", "small");
         title.setAlignmentX(LEFT_ALIGNMENT);
-        panel.add(title);
-        panel.add(Box.createVerticalStrut(4));
+        box.add(title);
+        box.add(Box.createVerticalStrut(4));
         List<Char> contributors = chars.stream().filter(c -> gains.getOrDefault(c.charId, 0L) != 0)
                 .sorted(Comparator.comparingLong((Char c) -> -gains.get(c.charId))).toList();
-        if (contributors.isEmpty()) panel.add(muted("No fame gained in this range."));
+        if (contributors.isEmpty()) box.add(muted("No fame gained in this range."));
         long max = contributors.stream().mapToLong(c -> Math.abs(gains.get(c.charId))).max().orElse(1);
         for (int i = 0; i < contributors.size(); i++) {
             Char c = contributors.get(i);
-            panel.add(contributionRow(c, gains.get(c.charId), gained, max, i));
+            box.add(contributionRow(c, gains.get(c.charId), gained, max, i));
         }
+        panel.add(box("Fame Gain", Palette.GREEN, box));
         panel.revalidate();
         panel.repaint();
     }
@@ -436,7 +439,7 @@ public class CharactersView extends JPanel {
         return ItemLinks.link(l, id);   // click: the item in Inventory
     }
 
-    private static int[] enchantIds(Char c, int slot) {
+    static int[] enchantIds(Char c, int slot) {
         if (c.enchantIds != null && slot < c.enchantIds.length && c.enchantIds[slot] != null) return c.enchantIds[slot];
         if (c.enchants != null && slot < c.enchants.length && c.enchants[slot] > 0) {   // saved before ids were kept
             int[] unknown = new int[c.enchants[slot]];
@@ -446,7 +449,7 @@ public class CharactersView extends JPanel {
         return null;
     }
 
-    private static String itemName(int id) {
+    static String itemName(int id) {
         ItemDb.Item info = id > 0 ? ItemDb.get().item(id) : null;
         return id <= 0 ? "none" : info != null ? info.name : "Item " + id;
     }
@@ -454,7 +457,7 @@ public class CharactersView extends JPanel {
     /**
      * Slot, item name and rarity, then every enchantment by name (empty slots as "empty slot").
      */
-    private static String itemTooltip(int id, int[] enchantIds, String slotName) {
+    static String itemTooltip(int id, int[] enchantIds, String slotName) {
         StringBuilder sb = new StringBuilder("<html><b>").append(escape(slotName)).append(":</b> ").append(escape(itemName(id)));
         int n = enchantIds == null ? 0 : enchantIds.length;
         if (n > 0) {
@@ -528,32 +531,11 @@ public class CharactersView extends JPanel {
         long gained = sessions.stream().mapToLong(Session::gained).sum();
         long played = sessions.stream().mapToLong(Session::durationMs).sum();
 
-        JLabel who = new JLabel(c.className + "  lvl " + c.level + (c.favorite ? "  (favourite)" : ""), skin(c, 64),
-                SwingConstants.LEFT);
-        who.setIconTextGap(12);
-        who.setFont(who.getFont().deriveFont(20f));
-        who.setAlignmentX(LEFT_ALIGNMENT);
-        panel.add(who);
-        long allGained = gains.values().stream().mapToLong(Long::longValue).sum();
-        String share = allGained > 0 && gained > 0
-                ? "   ·   " + Math.round(100.0 * gained / allGained) + "% of all fame gained" : "";
-        JLabel meta = muted("★ " + NUM.format(c.fame) + " fame   ·   " + c.statsMaxed + "/8 stats");
-        meta.setAlignmentX(LEFT_ALIGNMENT);
-        panel.add(meta);
-        JLabel meta2 = muted((c.lastPlayed == 0 ? "not played yet" : "last played " + ago(c.lastPlayed)) + share);
-        meta2.setAlignmentX(LEFT_ALIGNMENT);
-        panel.add(meta2);
-        panel.add(Box.createVerticalStrut(8));
-
-        if (c.equipment != null) {
-            JLabel loadTitle = new JLabel("LOADOUT");
-            loadTitle.putClientProperty("FlatLaf.styleClass", "small");
-            loadTitle.setAlignmentX(LEFT_ALIGNMENT);
-            panel.add(loadTitle);
-            panel.add(Box.createVerticalStrut(4));
-            for (int i = 0; i < Math.min(4, c.equipment.length); i++) panel.add(loadoutRow(c.equipment[i], enchantIds(c, i), SLOT_NAMES[i], i));
-            panel.add(Box.createVerticalStrut(8));
-        }
+        // one box per part, like the boxes on the right of the Classes page (the card on the left says who it is)
+        panel.add(box("Loadout", Palette.GOLD, CharacterDetail.loadout(c)));
+        panel.add(box("Suggested Loadout", Palette.BLUE, CharacterDetail.ideal(c, () -> renderPanel(c))));
+        panel.add(box("Inventory", Palette.PURPLE, CharacterDetail.inventory(c)));
+        JPanel fame = column();
 
         JPanel kpis = new JPanel(new GridLayout(1, 3, 8, 0));
         kpis.setOpaque(false);
@@ -562,74 +544,44 @@ public class CharactersView extends JPanel {
         kpis.add(kpi("Fame / hour", played > 60_000 ? NUM.format(Math.round(gained / (played / (double) HOUR))) : "-"));
         kpis.add(kpi("Time played", String.format("%.1f h", played / (double) HOUR)));
         kpis.setMaximumSize(new Dimension(Integer.MAX_VALUE, kpis.getPreferredSize().height));
-        panel.add(kpis);
-        panel.add(Box.createVerticalStrut(8));
+        fame.add(kpis);
+        fame.add(Box.createVerticalStrut(8));
 
         FameChart chart = new FameChart(c.samples, since, now);
         chart.setAlignmentX(LEFT_ALIGNMENT);
-        panel.add(chart);
-        panel.add(Box.createVerticalStrut(8));
+        fame.add(chart);
+        fame.add(Box.createVerticalStrut(8));
 
         JLabel sessTitle = new JLabel("SESSIONS");
         sessTitle.putClientProperty("FlatLaf.styleClass", "small");
         sessTitle.setAlignmentX(LEFT_ALIGNMENT);
-        panel.add(sessTitle);
-        panel.add(Box.createVerticalStrut(4));
-        if (sessions.isEmpty()) panel.add(muted("No sessions recorded in this range."));
-        for (int i = 0; i < sessions.size(); i++) panel.add(sessionRow(sessions.get(i), i));
+        fame.add(sessTitle);
+        fame.add(Box.createVerticalStrut(4));
+        if (sessions.isEmpty()) fame.add(muted("No sessions recorded in this range."));
+        for (int i = 0; i < sessions.size(); i++) fame.add(sessionRow(sessions.get(i), i));
+        panel.add(box("Fame Gain", Palette.GREEN, fame));
         panel.revalidate();
         panel.repaint();
     }
 
-    /**
-     * An equipped item in the side panel: icon, name in its rarity color, and one icon per enchantment.
-     */
-    private static JPanel loadoutRow(int id, int[] enchantIds, String slotName, int index) {
-        int n = enchantIds == null ? 0 : enchantIds.length;
-        JLabel name = new JLabel(itemName(id), id > 0 ? EnchantBadge.icon(iconImage(id), 32, n) : null, SwingConstants.LEFT);
-        name.setIconTextGap(8);
-        if (n > 0) name.setForeground(Palette.mix(EnchantBadge.COLORS[Math.min(4, n)], Color.BLACK, 0.35));
-        name.setToolTipText(itemTooltip(id, enchantIds, slotName));
-        ItemLinks.link(name, id);   // click: the item in Inventory
-
-        JPanel icons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 3, 0));
-        icons.setOpaque(false);
-        if (enchantIds != null) {
-            Color frame = EnchantBadge.COLORS[Math.min(4, n)];
-            for (int e : enchantIds) {
-                JLabel l;
-                if (e >= 0) {
-                    Image img = lootgobbler.EnchantIcons.icon(e, 22);
-                    l = img != null ? new JLabel(new ImageIcon(img)) : new JLabel("?");
-                    String en = lootgobbler.EnchantIcons.name(e);
-                    l.setToolTipText(en != null ? en : "Enchantment " + e);
-                } else {   // empty slot, or not known yet
-                    l = new JLabel();
-                    l.setPreferredSize(new Dimension(22, 22));
-                    l.setToolTipText(e == -1 ? "Empty enchantment slot" : "Refresh to see this enchantment");
-                }
-                l.setBorder(BorderFactory.createLineBorder(frame));
-                icons.add(l);
-            }
-        }
-        JPanel row = new JPanel(new BorderLayout(8, 0)) {
+    /** One part of the right column in its own titled box; boxes are stacked with a gap. */
+    private static JComponent box(String title, Color color, JComponent content) {
+        JPanel inner = new JPanel(new BorderLayout());
+        inner.setOpaque(false);
+        inner.setBorder(new EmptyBorder(10, 10, 10, 10));
+        inner.add(content, BorderLayout.NORTH);
+        Section s = new Section(title, color, inner);
+        JPanel gap = new JPanel(new BorderLayout()) {
             @Override
-            protected void paintComponent(Graphics g) {
-                g.setColor(Section.color(index % 2 == 0 ? "LootGobbler.header" : "LootGobbler.sand", Color.LIGHT_GRAY));
-                g.fillRect(0, 0, getWidth(), getHeight());
+            public Dimension getMaximumSize() {   // as tall as the content is now (the inventory grows with the width)
+                return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
             }
         };
-        row.setBorder(new EmptyBorder(3, 6, 3, 8));
-        row.add(name, BorderLayout.CENTER);
-        row.add(icons, BorderLayout.EAST);
-        row.setAlignmentX(LEFT_ALIGNMENT);
-        row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
-        return row;
-    }
-
-    private static Image iconImage(int id) {
-        Icon i = sprite(id, 32);
-        return i instanceof ImageIcon ii ? ii.getImage() : null;
+        gap.setOpaque(false);
+        gap.setBorder(new EmptyBorder(0, 0, 8, 0));
+        gap.add(s);
+        gap.setAlignmentX(LEFT_ALIGNMENT);
+        return gap;
     }
 
     private JPanel sessionRow(Session s, int index) {
