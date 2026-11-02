@@ -19,7 +19,11 @@ import java.util.List;
  * </ul>
  */
 public final class ItemUse {
-    private static List<Integer> forging = List.of();   // item types of the last forge request, until its result
+    /** A collectible item put into the forge or fed, and the copy it was (from the slot it came from). */
+    private record Used(int id, CollectionStore.Find copy) {
+    }
+
+    private static List<Used> forging = List.of();   // the items of the last forge request, until its result
 
     private ItemUse() {
     }
@@ -31,12 +35,12 @@ public final class ItemUse {
     }
 
     private static synchronized void forgeRequest(ForgeRequestPacket p) {
-        forging = types(p.dismantledItems);
+        forging = used(p.dismantledItems);
         AppLog.log("items", "Forge request: " + names(forging) + " -> " + name(p.resultItemType));
     }
 
     private static synchronized void forgeResult(ForgeResultPacket p) {
-        List<Integer> used = forging;
+        List<Used> used = forging;
         forging = List.of();
         if (!p.success) {
             AppLog.log("items", "Forge failed, nothing taken off");
@@ -47,31 +51,36 @@ public final class ItemUse {
 
     private static void petUpgrade(PetUpgradeRequestPacket p) {
         if (p.petTransType != PetUpgradeType.FeedPet) return;
-        remove(types(p.slotObjects), CollectionStore.FED, "Pet");
+        remove(used(p.slotObjects), CollectionStore.FED, "Pet");
     }
 
-    private static void remove(List<Integer> items, String source, String where) {
-        for (int id : items) {
-            boolean taken = CollectionStore.get().recordRemoved(id, source, where, null);
-            AppLog.log("items", (source.equals(CollectionStore.FORGED) ? "Forged " : "Fed ") + name(id)
+    private static void remove(List<Used> items, String source, String where) {
+        for (Used u : items) {
+            boolean taken = CollectionStore.get().recordRemoved(u.id(), source, where, u.copy());
+            AppLog.log("items", (source.equals(CollectionStore.FORGED) ? "Forged " : "Fed ") + name(u.id())
+                    + (u.copy() != null && u.copy().enchantIds != null ? " (" + u.copy().enchantIds.size() + " enchantments)" : "")
                     + (taken ? ", taken off the collection" : " (not in the collection)"));
         }
         if (!items.isEmpty()) ServerSync.get().uploadSoon();
     }
 
-    /** The collectible item types among the slots (others, e.g. materials, are not in the collection anyway). */
-    private static List<Integer> types(SlotObjectData[] slots) {
-        List<Integer> out = new ArrayList<>();
+    /**
+     * The collectible items among the slots (others, e.g. materials, are not in the collection anyway), each with
+     * the copy that was in its slot at the last inventory scan.
+     */
+    private static List<Used> used(SlotObjectData[] slots) {
+        List<Used> out = new ArrayList<>();
         if (slots == null) return out;
         for (SlotObjectData s : slots) {
             ItemDb.Item item = s == null ? null : ItemDb.get().item(s.objectType);
-            if (item != null && item.isCollectible()) out.add(s.objectType);
+            if (item != null && item.isCollectible()) out.add(new Used(s.objectType, LootEvents.copyInSlot(s.slotId, s.objectType)));
         }
         return out;
     }
 
-    private static String names(List<Integer> ids) {
-        return ids.isEmpty() ? "no collectible items" : String.join(", ", ids.stream().map(ItemUse::name).toList());
+    private static String names(List<Used> items) {
+        return items.isEmpty() ? "no collectible items" : String.join(", ", items.stream()
+                .map(u -> name(u.id()) + " (slot " + (u.copy() == null ? "?" : "ok") + ")").toList());
     }
 
     private static String name(int id) {

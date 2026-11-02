@@ -336,8 +336,14 @@ public class DpsPanel extends JPanel {
         return i;
     }
 
+    /** Shows a saved run (null: the live one), with its latest boss opened. */
     private void select(Run run) {
         selected = run;
+        if (run != null && !run.bosses.isEmpty()) {
+            int last = run.bosses.size() - 1;
+            Boss boss = run.bosses.get(last);
+            expanded.add(run.start + "/" + (boss.id != 0 ? boss.id : last));   // the key bossBlock uses for it
+        }
         refresh();
     }
 

@@ -295,14 +295,17 @@ public final class CollectionStore implements Syncable {
      * and taken off what you hold. Nothing happens for an item you hold no copy of.
      *
      * @param where e.g. "Forge", "Pet"
+     * @param copy  the copy that left (its enchantments and seasonal flag, from the slot it was in), or null if
+     *              unknown
      * @return True if it was recorded.
      */
-    public boolean recordRemoved(int itemId, String source, String where, Boolean seasonal) {
+    public boolean recordRemoved(int itemId, String source, String where, Find copy) {
         synchronized (this) {
             Entry e = entries.get(itemId);
             if (e == null || e.held() == 0) return false;
-            Find f = Find.of(source, -1, where, "");
-            f.seasonal = seasonal;
+            Find f = copy != null && copy.enchantIds != null ? Find.of(source, copy.enchantIds, where, "")
+                    : Find.of(source, -1, where, "");
+            if (copy != null) f.seasonal = copy.seasonal;
             addHistory(e, f);
             save();
         }

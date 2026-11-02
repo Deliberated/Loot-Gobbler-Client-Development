@@ -11,6 +11,7 @@ import tomato.realmshark.enums.LootBags;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -108,12 +109,27 @@ public final class LootEvents {
         if (added > 0) System.out.println("Inventory: " + added + " copies new to the collection");
     }
 
+    /** The collectible copy in each slot (equipment, inventory, backpack) as of the last scan, by slot index. */
+    private static volatile Map<Integer, CollectionStore.Find> slotCopies = Map.of();
+    private static volatile Map<Integer, Integer> slotItems = Map.of();
+
+    /**
+     * The copy of the item in a slot of yours as of the last inventory scan (its enchantments and whether the
+     * character is seasonal), or null if that slot held something else. For forging and feeding, which name slots.
+     */
+    public static CollectionStore.Find copyInSlot(int slot, int itemId) {
+        Integer there = slotItems.get(slot);
+        return there != null && there == itemId ? slotCopies.get(slot) : null;
+    }
+
     /**
      * Collectible items in your equipment, inventory and backpack: item id to one Find per copy.
      */
     private static Map<Integer, List<CollectionStore.Find>> inventoryFinds(Entity player) {
         ItemDb db = ItemDb.get();
         Map<Integer, List<CollectionStore.Find>> held = new LinkedHashMap<>();
+        Map<Integer, CollectionStore.Find> copies = new HashMap<>();
+        Map<Integer, Integer> items = new HashMap<>();
         // enchant codes for every slot (equipment, inventory, backpack), same per-slot list loot bags use
         StatData udata = player.stat.get(StatType.UNIQUE_DATA_STRING);
         String[] codes = udata == null || udata.stringStatValue == null ? new String[0] : udata.stringStatValue.split(",", -1);
@@ -136,7 +152,11 @@ public final class LootEvents {
                     : CollectionStore.Find.of(CollectionStore.INVENTORY, -1, "", "Inventory");
             f.seasonal = player.isSeasonal();
             held.computeIfAbsent(sd.statValue, k -> new ArrayList<>()).add(f);
+            copies.put(i, f);
+            items.put(i, sd.statValue);
         }
+        slotCopies = copies;
+        slotItems = items;
         writeInventoryDebug(player, codes.length);
         return held;
     }

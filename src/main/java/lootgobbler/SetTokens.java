@@ -12,9 +12,14 @@ import java.util.regex.Pattern;
  * and how many (usually 2 for weapon and ability, 1 for armor and ring).
  */
 public final class SetTokens {
-    /** The token a piece is crafted from, and how many it takes. */
-    public record Cost(int token, int amount) {
+    /**
+     * The token a piece is crafted from, how many it takes, and the slot of the ST item that goes in with them
+     * ("Weapon", "Ability", "Armor", "Ring"; any ST item of that slot, of any class), or null if none is needed.
+     */
+    public record Cost(int token, int amount, String stSlot) {
     }
+
+    private static final Pattern NEEDS = Pattern.compile("<RequireDismantleWithLabel[^>]*>ST_(WEAPON|ABILITY|ARMOR|RING)</RequireDismantleWithLabel>");
 
     private static final Pattern RECIPE = Pattern.compile(
             "<ForgeProperties type=\"(0x[0-9A-Fa-f]+)\"[^>]*>(.*?)</ForgeProperties>", Pattern.DOTALL);
@@ -49,7 +54,9 @@ public final class SetTokens {
                 int token = Integer.decode(r.group(2));
                 ItemDb.Item t = ItemDb.get().item(token);
                 if (t == null || !t.name.toLowerCase().contains("set token")) continue;   // other forge materials
-                out.put(Integer.decode(m.group(1)), new Cost(token, Integer.parseInt(r.group(1))));
+                Matcher n = NEEDS.matcher(m.group(2));
+                String slot = n.find() ? n.group(1).charAt(0) + n.group(1).substring(1).toLowerCase() : null;
+                out.put(Integer.decode(m.group(1)), new Cost(token, Integer.parseInt(r.group(1)), slot));
             }
         } catch (Exception e) {
             System.err.println("Could not read " + file + ": " + e.getMessage());

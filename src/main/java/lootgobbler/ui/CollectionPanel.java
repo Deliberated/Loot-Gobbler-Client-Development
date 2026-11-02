@@ -22,14 +22,13 @@ import java.util.List;
  */
 public class CollectionPanel extends JPanel {
     private static final int ALL = 0, SHINY = 1, NORMAL = 2;
-    private static final String[] VIEWS = {"grid", "st", "live", "log"};
+    private static final String[] VIEWS = {"grid", "st", "log"};
     private static final int RECENT = 8;
 
     private final CollectionGrid grid = new CollectionGrid();
-    private final CollectionGrid live = new CollectionGrid();
-    private int gridFilter = ALL, liveFilter = ALL;
-    private final JProgressBar progress = bar(null), liveProgress = bar(Palette.GREEN);
-    private final JLabel progressText = new JLabel("Loading item data..."), liveText = new JLabel(" ");
+    private int gridFilter = ALL;
+    private final JProgressBar progress = bar(null);
+    private final JLabel progressText = new JLabel("Loading item data...");
     private final JPanel recent = new JPanel();
     private final DefaultTableModel logModel = new DefaultTableModel(new Object[]{"Date", "", "Item", "Count"}, 0) {
         @Override
@@ -54,15 +53,13 @@ public class CollectionPanel extends JPanel {
         super(new BorderLayout(0, 8));
         setBorder(new EmptyBorder(8, 8, 8, 8));
 
-        viewPicker = new Segmented(false, 0, i -> cards.show(views, VIEWS[i]), "Items", "ST Sets", "Live", "Log");
+        viewPicker = new Segmented(false, 0, i -> cards.show(views, VIEWS[i]), "Items", "ST Sets", "Log");
         add(viewPicker, BorderLayout.NORTH);
         grid.onItemClick(item -> showHistory(item, false));
-        live.onItemClick(item -> showHistory(item, true));
         views.setOpaque(false);
         views.add(gridView(), VIEWS[0]);
         views.add(stView, VIEWS[1]);
-        views.add(liveView(), VIEWS[2]);
-        views.add(logView(), VIEWS[3]);
+        views.add(logView(), VIEWS[2]);
         add(views, BorderLayout.CENTER);
 
         CollectionStore.get().onChange(() -> SwingUtilities.invokeLater(this::refresh));
@@ -119,30 +116,6 @@ public class CollectionPanel extends JPanel {
         return split("collectionGrid", main, top, sideSection, grid).minMain(main.getPreferredSize().width + 24);
     }
 
-    private JPanel liveView() {
-        Section main = new Section("Collection · Live", Palette.GREEN, scroll(live))
-                .actions(new Segmented(true, 0, i -> {
-                    liveFilter = i;
-                    refresh();
-                }, "All", "Shiny", "Normal"));
-
-        JTextArea about = new JTextArea("The live view mirrors your collection, minus items lost when a "
-                + "character dies carrying them.\n\nDeath losses are not tracked yet, so for now it matches "
-                + "your lifetime Grid, which is never changed.");
-        about.setEditable(false);
-        about.setLineWrap(true);
-        about.setWrapStyleWord(true);
-        about.setOpaque(false);
-        about.setFont(UIManager.getFont("Label.font"));
-        JPanel aboutBody = new JPanel(new BorderLayout());
-        aboutBody.setBorder(new EmptyBorder(10, 10, 10, 10));
-        aboutBody.add(about, BorderLayout.NORTH);
-
-        JPanel top = column(new Section("Live Progress", Palette.GREEN, progressBody("Still held", liveProgress, liveText)),
-                new Section("About", Palette.BLUE, aboutBody));
-        return split("collectionLive", main, top, null, live);
-    }
-
     private JPanel logView() {
         JTable table = new JTable(logModel);
         table.setShowGrid(false);
@@ -172,12 +145,10 @@ public class CollectionPanel extends JPanel {
     private void refresh() {
         if (!loaded) return;
         Map<Integer, CollectionStore.Entry> owned = collected();
-        List<ItemDb.Item> g = matching(filter(gridFilter), owned), l = filter(liveFilter);
+        List<ItemDb.Item> g = matching(filter(gridFilter), owned);
         grid.setData(g, owned);
-        live.setData(l, owned);
         stView.setData(stSets, owned);
         setProgress(progress, progressText, g, owned);
-        setProgress(liveProgress, liveText, l, owned);
 
         List<Map.Entry<Integer, CollectionStore.Entry>> byLast = new ArrayList<>(owned.entrySet());
         byLast.sort((a, b) -> String.valueOf(b.getValue().last).compareTo(String.valueOf(a.getValue().last)));
@@ -236,12 +207,80 @@ public class CollectionPanel extends JPanel {
         recent.add(Box.createVerticalStrut(12));
 
         if (entry == null) return;
+        // the copies you have on top; below a line, the ones used up (forged, fed), each shown as the copy it was
+        Map<CollectionStore.Find, CollectionStore.Find> used = usedCopies(entry.history());
         List<CollectionStore.Find> finds = new ArrayList<>(entry.history());
         Collections.reverse(finds);   // latest at the top
         for (CollectionStore.Find f : finds) {
-            recent.add(findRow(item.id, f));
+            if (CollectionStore.isRemoval(f) || used.containsValue(f)) continue;
+            recent.add(findRow(item.id, f, null));
             recent.add(Box.createVerticalStrut(6));
         }
+        if (used.isEmpty()) return;
+        JSeparator line = new JSeparator();
+        line.setAlignmentX(LEFT_ALIGNMENT);
+        line.setMaximumSize(new Dimension(Integer.MAX_VALUE, 2));
+        recent.add(Box.createVerticalStrut(6));
+        recent.add(line);
+        recent.add(Box.createVerticalStrut(8));
+        JLabel title = leftAligned(new JLabel("USED"));
+        title.putClientProperty("FlatLaf.styleClass", "small");
+        title.setForeground(Palette.MUTED);
+        recent.add(title);
+        recent.add(Box.createVerticalStrut(6));
+        for (CollectionStore.Find r : finds) {
+            if (!CollectionStore.isRemoval(r)) continue;
+            CollectionStore.Find was = used.get(r);
+            recent.add(findRow(item.id, asUsed(r, was), null));
+            recent.add(Box.createVerticalStrut(6));
+        }
+    }
+
+    /**
+     * Each removal (forge, feed) with the find of the copy it used up, if it can be told:
+     * <ul>
+     * <li>enchantments recorded with the removal: the latest earlier find with the same ones (and the same seasonal
+     * flag, when both know it);</li>
+     * <li>none recorded (before the client knew the slots): the copy last seen in your inventory before it, since
+     * only items in your inventory can be forged or fed.</li>
+     * </ul>
+     *
+     * @return removal to the find it used up (removals without one are keys with value null)
+     */
+    private static Map<CollectionStore.Find, CollectionStore.Find> usedCopies(List<CollectionStore.Find> history) {
+        Map<CollectionStore.Find, CollectionStore.Find> used = new IdentityHashMap<>();
+        Set<CollectionStore.Find> taken = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (int i = 0; i < history.size(); i++) {
+            CollectionStore.Find r = history.get(i);
+            if (!CollectionStore.isRemoval(r)) continue;
+            CollectionStore.Find match = null;
+            for (int j = i - 1; j >= 0 && match == null; j--) {
+                CollectionStore.Find f = history.get(j);
+                if (CollectionStore.isRemoval(f) || taken.contains(f)) continue;
+                boolean same = r.enchantIds != null ? r.enchantIds.equals(f.enchantIds)
+                        && (r.seasonal == null || f.seasonal == null || r.seasonal.equals(f.seasonal))
+                        : CollectionStore.INVENTORY.equals(f.source);
+                if (same) match = f;
+            }
+            if (match != null) taken.add(match);
+            used.put(r, match);
+        }
+        return used;
+    }
+
+    /** A removal shown as the copy it used up: the removal's time and source, the copy's enchantments and season. */
+    private static CollectionStore.Find asUsed(CollectionStore.Find removal, CollectionStore.Find was) {
+        if (was == null) return removal;
+        CollectionStore.Find f = new CollectionStore.Find();
+        f.time = removal.time;
+        f.at = removal.at;
+        f.source = removal.source;
+        f.where = removal.where;
+        f.bag = removal.bag;
+        f.enchantIds = removal.enchantIds != null ? removal.enchantIds : was.enchantIds;
+        f.enchants = removal.enchantIds != null ? removal.enchants : was.enchants;
+        f.seasonal = removal.seasonal != null ? removal.seasonal : was.seasonal;
+        return f;
     }
 
     private static final Color UT_COLOR = new Color(0x8049A8), ST_COLOR = new Color(0xE07B2A), TIER_COLOR = new Color(0xB07D0A);
@@ -345,18 +384,30 @@ public class CollectionPanel extends JPanel {
         return c;
     }
 
-    private static JPanel findRow(int itemId, CollectionStore.Find f) {
-        String how = switch (f.source) {
+    /** Where a find came from: "Vault chest", "Inventory", "Orange bag · Lost Halls", "Forged (used in the forge)". */
+    private static String how(CollectionStore.Find f) {
+        return switch (f.source) {
             case CollectionStore.VAULT -> f.bag.isEmpty() ? "Vault" : f.bag;
             case CollectionStore.INVENTORY -> "Inventory";
             case CollectionStore.FORGED -> "Forged (used in the forge)";
             case CollectionStore.FED -> "Fed to a pet";
             default -> (f.bag.isEmpty() ? "Drop" : f.bag + " bag") + (f.where.isEmpty() ? "" : "  ·  " + f.where);
         };
+    }
+
+    /**
+     * One find of the history: icon with enchantment diamonds, where it came from, seasonal or not, its
+     * enchantments and how long ago.
+     *
+     * @param note a small grey addition after the place (e.g. "was: Inventory" for a used copy), or null
+     */
+    private static JPanel findRow(int itemId, CollectionStore.Find f, String note) {
+        String how = how(f);
         // seasonal or not, behind the place: teal like the Characters tab's seasonal tag, red for non-seasonal
         String season = f.seasonal == null ? "" : f.seasonal
                 ? "  <font color='#2BD8B0'>(seasonal)</font>" : "  <font color='#E5636E'>(non-seasonal)</font>";
-        JLabel what = leftAligned(new JLabel("<html>" + escapeHtml(how) + season + "</html>"));
+        String goneNote = note == null ? "" : "  <font color='#938B79'>· " + escapeHtml(note) + "</font>";
+        JLabel what = leftAligned(new JLabel("<html>" + escapeHtml(how) + season + goneNote + "</html>"));
         if (f.seasonal != null) what.setToolTipText(f.seasonal ? "Found on a seasonal character" : "Found on a non-seasonal character");
         JPanel text = new JPanel();
         text.setLayout(new BoxLayout(text, BoxLayout.Y_AXIS));
@@ -367,7 +418,8 @@ public class CollectionPanel extends JPanel {
             text.add(Box.createVerticalStrut(4));
             text.add(leftAligned(enchantIcons(f.enchantIds)));
         }
-        if (f.enchantIds == null && f.enchants < 0) {   // not known yet, which is not the same as "no slots"
+        // not known yet, which is not the same as "no slots" (a removal without them just shows nothing)
+        if (f.enchantIds == null && f.enchants < 0 && !CollectionStore.isRemoval(f)) {
             JLabel unknown = new JLabel("enchantments unknown");
             unknown.putClientProperty("FlatLaf.styleClass", "small");
             unknown.setForeground(Palette.MUTED);
@@ -516,7 +568,7 @@ public class CollectionPanel extends JPanel {
      * Copies the grid as one image, laid out with the same number of columns the grid shows right now.
      */
     private void copyImage() {
-        int cols = grid.getWidth() > 0 ? grid.columns() : live.getWidth() > 0 ? live.columns() : 12;
+        int cols = grid.getWidth() > 0 ? grid.columns() : 12;
         Image img = grid.renderImage(cols);
         Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new ImageSelection(img), null);
         JOptionPane.showMessageDialog(this, "Collection grid copied to the clipboard as an image.", "Copy as image",

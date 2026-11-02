@@ -315,6 +315,54 @@ public class StSetsView extends JPanel {
     }
 
     /**
+     * A piece's tooltip with its forge recipe: the tooltip text, then e.g. "2× [token] + 1× [any ST weapon]".
+     */
+    private static class RecipeTip extends JToolTip {
+        private final JLabel text = new JLabel();
+
+        RecipeTip(lootgobbler.SetTokens.Cost cost) {
+            setLayout(new BorderLayout(0, 4));
+            setBorder(BorderFactory.createCompoundBorder(getBorder(), new EmptyBorder(3, 4, 4, 4)));
+            add(text, BorderLayout.NORTH);
+            JPanel recipe = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+            recipe.setOpaque(false);
+            recipe.add(new JLabel("Forge:"));
+            ItemDb.Item token = ItemDb.get().item(cost.token());
+            JLabel tokens = new JLabel(cost.amount() + "×", CharactersView.sprite(cost.token(), 28), SwingConstants.LEFT);
+            tokens.setHorizontalTextPosition(SwingConstants.LEFT);   // "2×" then the token
+            recipe.add(tokens);
+            if (cost.stSlot() != null) {
+                recipe.add(new JLabel("+"));
+                JLabel any = new JLabel("1×", SlotIcons.anySt(cost.stSlot(), 28), SwingConstants.LEFT);
+                any.setHorizontalTextPosition(SwingConstants.LEFT);
+                recipe.add(any);
+                recipe.add(muted("(" + (token == null ? "set token" : token.name) + " and any ST "
+                        + cost.stSlot().toLowerCase(Locale.ROOT) + ")"));
+            } else {
+                recipe.add(muted("(" + (token == null ? "set token" : token.name) + ")"));
+            }
+            add(recipe, BorderLayout.CENTER);
+        }
+
+        @Override
+        public void setTipText(String tip) {
+            super.setTipText(tip);
+            text.setText(tip);
+        }
+
+        @Override
+        public Dimension getPreferredSize() {
+            return getLayout().preferredLayoutSize(this);
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {   // the background only: the text is the label's
+            g.setColor(getBackground());
+            g.fillRect(0, 0, getWidth(), getHeight());
+        }
+    }
+
+    /**
      * A piece: the item with its outline (like the Characters view's equipment) and best enchantments in a box,
      * golden when you have it, dark with the item faded when missing; a gold frame on hover.
      */
@@ -345,6 +393,16 @@ public class StSetsView extends JPanel {
             Clicks.onClick(this, () -> {
                 if (item != null) onPieceClick.accept(item);
             });
+        }
+
+        /** Pieces the forge crafts from set tokens show the recipe in their tooltip, with icons. */
+        @Override
+        public JToolTip createToolTip() {
+            lootgobbler.SetTokens.Cost cost = lootgobbler.SetTokens.of(id);
+            if (cost == null) return super.createToolTip();
+            JToolTip tip = new RecipeTip(cost);
+            tip.setComponent(this);
+            return tip;
         }
 
         @Override
