@@ -327,7 +327,6 @@ public class StSetsView extends JPanel {
             JPanel recipe = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
             recipe.setOpaque(false);
             recipe.add(new JLabel("Forge:"));
-            ItemDb.Item token = ItemDb.get().item(cost.token());
             JLabel tokens = new JLabel(cost.amount() + "×", CharactersView.sprite(cost.token(), 28), SwingConstants.LEFT);
             tokens.setHorizontalTextPosition(SwingConstants.LEFT);   // "2×" then the token
             recipe.add(tokens);
@@ -336,10 +335,6 @@ public class StSetsView extends JPanel {
                 JLabel any = new JLabel("1×", SlotIcons.anySt(cost.stSlot(), 28), SwingConstants.LEFT);
                 any.setHorizontalTextPosition(SwingConstants.LEFT);
                 recipe.add(any);
-                recipe.add(muted("(" + (token == null ? "set token" : token.name) + " and any ST "
-                        + cost.stSlot().toLowerCase(Locale.ROOT) + ")"));
-            } else {
-                recipe.add(muted("(" + (token == null ? "set token" : token.name) + ")"));
             }
             add(recipe, BorderLayout.CENTER);
         }

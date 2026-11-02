@@ -73,7 +73,7 @@ public class WhatsNewDialog extends JDialog {
         scroll.setBorder(null);
         scroll.setOpaque(false);
         scroll.getViewport().setOpaque(false);
-        scroll.setPreferredSize(new Dimension(560, 300));
+        scroll.setPreferredSize(new Dimension(1050, 330));   // wide enough that most notes fit on one line
         scroll.getVerticalScrollBar().setUnitIncrement(16);
         box.add(scroll, BorderLayout.CENTER);
 

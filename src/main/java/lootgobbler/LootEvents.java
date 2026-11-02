@@ -104,10 +104,46 @@ public final class LootEvents {
     }
 
     private static void scanInventory(Entity player) {
+        Map<Integer, Integer> chestsBefore = chestSlots;
+        int charBefore = chestChar;
         Map<Integer, List<CollectionStore.Find>> held = inventoryFinds(player);
+        if (charBefore == player.charId()) openedChests(chestsBefore);   // first, so the copy is not counted twice
         int added = held.isEmpty() ? 0 : CollectionStore.get().recordHeld(held);
         if (added > 0) System.out.println("Inventory: " + added + " copies new to the collection");
     }
+
+    /**
+     * A chest item (Eerie Music Box, mystery ST chests...) turns into the item it grants, in the same slot. Such an
+     * item is a new copy, counted like a drop ("Drop · Eerie Music Box"); without this, a second copy of an item
+     * you already have would only be counted once both are seen at the vault.
+     */
+    private static void openedChests(Map<Integer, Integer> chestsBefore) {
+        // only as many as chests of that kind went away: moving a chest and putting an item in its slot is no opening
+        Map<Integer, Integer> gone = new HashMap<>();
+        for (int chest : chestsBefore.values()) gone.merge(chest, 1, Integer::sum);
+        for (int chest : chestSlots.values()) gone.merge(chest, -1, Integer::sum);
+        boolean any = false;
+        for (Map.Entry<Integer, Integer> c : chestsBefore.entrySet()) {
+            Integer now = slotItems.get(c.getKey());
+            CollectionStore.Find copy = slotCopies.get(c.getKey());
+            if (now == null || copy == null) continue;   // still the chest, emptied, or not a collectible
+            if (gone.getOrDefault(c.getValue(), 0) <= 0) continue;
+            gone.merge(c.getValue(), -1, Integer::sum);
+            ItemDb.Item chest = ItemDb.get().item(c.getValue());
+            String from = chest == null ? "Chest" : chest.name;
+            CollectionStore.Find f = copy.enchantIds != null
+                    ? CollectionStore.Find.of(CollectionStore.DROP, copy.enchantIds, from, "")
+                    : CollectionStore.Find.of(CollectionStore.DROP, -1, from, "");
+            f.seasonal = copy.seasonal;
+            CollectionStore.get().record(now, f);
+            AppLog.log("items", "Opened " + from + ": " + ItemDb.get().item(now).name);
+            any = true;
+        }
+        if (any) ServerSync.get().uploadSoon();
+    }
+
+    private static volatile Map<Integer, Integer> chestSlots = Map.of();   // slot -> chest item, as of the last scan
+    private static volatile int chestChar;                                 // the character those slots belong to
 
     /** The collectible copy in each slot (equipment, inventory, backpack) as of the last scan, by slot index. */
     private static volatile Map<Integer, CollectionStore.Find> slotCopies = Map.of();
@@ -130,6 +166,7 @@ public final class LootEvents {
         Map<Integer, List<CollectionStore.Find>> held = new LinkedHashMap<>();
         Map<Integer, CollectionStore.Find> copies = new HashMap<>();
         Map<Integer, Integer> items = new HashMap<>();
+        Map<Integer, Integer> chests = new HashMap<>();
         // enchant codes for every slot (equipment, inventory, backpack), same per-slot list loot bags use
         StatData udata = player.stat.get(StatType.UNIQUE_DATA_STRING);
         String[] codes = udata == null || udata.stringStatValue == null ? new String[0] : udata.stringStatValue.split(",", -1);
@@ -139,6 +176,7 @@ public final class LootEvents {
             StatData sd = player.stat.get(stat);
             if (sd == null || sd.statValue < 1) continue;
             ItemDb.Item item = db.item(sd.statValue);
+            if (item != null && item.chest) chests.put(i, sd.statValue);
             if (item == null || !item.isCollectible()) continue;
             // live enchant codes: one per slot, equipment, inventory and backpack alike; when they are missing, use
             // the character list's data for that slot, if the same item is still there
@@ -157,6 +195,8 @@ public final class LootEvents {
         }
         slotCopies = copies;
         slotItems = items;
+        chestSlots = chests;
+        chestChar = player.charId();
         writeInventoryDebug(player, codes.length);
         return held;
     }

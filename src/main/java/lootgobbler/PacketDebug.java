@@ -53,6 +53,7 @@ public final class PacketDebug {
      * Called by the packet processor for packets with an unknown id or that failed to decode.
      */
     public static synchronized void problem(int type, int size, byte[] data, String what) {
+        if (type == ItemUse.USE_REQUEST || type == ItemUse.USE_RESULT) ItemUse.raw(type, data);   // unknown to RealmShark
         if (what.startsWith("VAULT_UPDATE")) {   // keep the whole packet so the new layout can be decoded
             try {
                 Files.writeString(Path.of("vault-packet.txt"), what + "\n" + Arrays.toString(data) + "\n");

@@ -25,6 +25,7 @@ public final class ItemDb {
         public String description = "";
         public int minDamage = -1, maxDamage = -1, mpCost = -1, feedPower = -1;
         public boolean soulbound;
+        public boolean chest;   // opens into an item when used (Eerie Music Box, mystery ST chests...)
         public final List<Stat> onEquip = new ArrayList<>();
         public Set<String> labels = Set.of();
         public int collectionIcon = Integer.MAX_VALUE;
@@ -202,6 +203,7 @@ public final class ItemDb {
                     switch (n) {
                         case "Projectile" -> inProjectile = true;
                         case "Soulbound" -> cur.soulbound = true;
+                        case "Chest" -> cur.chest = true;
                         case "ActivateOnEquip" -> {
                             String stat = r.getAttributeValue(null, "stat");
                             int amount = parseInt(r.getAttributeValue(null, "amount"), 0);

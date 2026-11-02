@@ -311,18 +311,17 @@ public class CollectionPanel extends JPanel {
         text.add(leftAligned(kind));
         text.add(Box.createVerticalStrut(6));
 
-        String found = entry == null ? "Not found yet" : entry.count == 1 ? "Found 1 time" : "Found " + entry.count + " times";
-        if (entry != null && entry.removed() > 0) found += "  ·  " + entry.held() + " left";
-        JLabel count = new JLabel(found);
+        int held = entry == null ? 0 : entry.held();   // the copies you have now (used up ones are below, under USED)
+        JLabel count = new JLabel("Count: " + held);
         count.setFont(count.getFont().deriveFont(20f));   // smaller, the pixel font draws a 6 that looks like an 8
-        count.setForeground(entry == null ? Palette.MUTED : new Color(0xF5C542));
+        count.setForeground(held == 0 ? Palette.MUTED : new Color(0xF5C542));
         text.add(leftAligned(count));
 
+        // where it drops: from the game data, else the dungeons your own drops of it came from
         String origin = item.origin();
-        if (origin != null) text.add(leftAligned(fact("Drops in", origin)));
-        String places = foundIn(entry);
-        if (!places.isEmpty()) text.add(leftAligned(fact("You found it in", places)));
-        if (origin == null && places.isEmpty()) {
+        String places = origin != null ? origin : foundIn(entry);
+        if (!places.isEmpty()) text.add(leftAligned(fact("Drops in", places)));
+        else {
             JLabel unknown = new JLabel("Drop location not known yet");
             unknown.setForeground(Palette.MUTED);
             text.add(leftAligned(unknown));
@@ -391,6 +390,8 @@ public class CollectionPanel extends JPanel {
             case CollectionStore.INVENTORY -> "Inventory";
             case CollectionStore.FORGED -> "Forged (used in the forge)";
             case CollectionStore.FED -> "Fed to a pet";
+            case CollectionStore.DROPPED -> "Dropped on the ground";
+            case CollectionStore.CONSUMED -> "Used up (forge or pet)";
             default -> (f.bag.isEmpty() ? "Drop" : f.bag + " bag") + (f.where.isEmpty() ? "" : "  ·  " + f.where);
         };
     }

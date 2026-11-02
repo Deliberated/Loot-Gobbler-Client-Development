@@ -359,7 +359,7 @@ public class CaravanView extends JPanel {
      */
     static class Scene extends JComponent implements Scrollable {
         static final int HEIGHT = 440;
-        private static final int PAD = 28, OX_W = 120, HITCH = 26, WAGON_W = 186, BED_H = 34, WALKER_W = 80, DRIVER = 64;
+        private static final int PAD = 28, OX_W = 120, BAR = 28, STEP_W = 46, WAGON_W = 186, BED_H = 34, WALKER_W = 80, DRIVER = 64;
         private static final int ITEM = 24, ITEM_GAP = 2, PILE_COLS = 5, MAX_PILE = 40;
         private static final Color SKY = new Color(0x141B2B), STAR = new Color(0xF4E6C6), HILL_FAR = new Color(0x1E2A2A),
                 HILL_NEAR = new Color(0x24301F), ROAD = new Color(0x4A3522), ROAD_EDGE = new Color(0x6B4E2E),
@@ -458,7 +458,8 @@ public class CaravanView extends JPanel {
 
         @Override
         public Dimension getPreferredSize() {
-            int w = PAD + OX_W + riders.size() * (HITCH + WAGON_W) + (walkers.isEmpty() ? 0 : 46) + PAD;
+            // each wagon on a bar behind the one before (or the ox), with its step at the back
+            int w = PAD + OX_W + riders.size() * (BAR + WAGON_W + STEP_W) + (walkers.isEmpty() ? 0 : 46) + PAD;
             for (CaravanMember m : walkers) w += walkerWidth(m);
             if (zoom != 1) return new Dimension((int) Math.ceil(w * zoom), (int) Math.ceil(HEIGHT * zoom));
             return new Dimension(Math.max(400, w), HEIGHT);
@@ -495,8 +496,9 @@ public class CaravanView extends JPanel {
             double scale = Math.max(1, leader / (double) MAX_PILE);   // the leader's pile fills a wagon
             for (int i = 0; i < riders.size(); i++) {
                 g2.setColor(INK);
-                g2.fillRect(x, ground - 40, HITCH, 4);
-                x += HITCH;
+                int bar = i == 0 ? BAR : STEP_W + BAR;   // the bar runs under the step of the wagon in front
+                g2.fillRect(x, ground - 40, bar, 4);
+                x += bar;
                 paintWagon(g2, riders.get(i), i, x, ground, scale);
                 x += WAGON_W;
             }
@@ -590,8 +592,8 @@ public class CaravanView extends JPanel {
                 if (icon != null) icon.paintIcon(this, g2, ix + (ITEM - icon.getIconWidth()) / 2, iy + (ITEM - icon.getIconHeight()) / 2);
             }
 
-            // rank flag at the back, sticking out above the pile (not on the Profile's single wagon)
-            if (!anyClick) top = rankFlag(g2, index, x, bedY, top);
+            // the step at the back with the stones of the enchanted items
+            paintStep(g2, m, x + WAGON_W, bedY + BED_H - 4);
 
             // the driver up front, facing the way the caravan goes; the bed hides their legs
             Image driver = driver(m);
@@ -606,7 +608,22 @@ public class CaravanView extends JPanel {
             String name = m.ign;
             while (fm.stringWidth(name) > WAGON_W - 20 && name.length() > 3) name = name.substring(0, name.length() - 1);
             g2.setColor(new Color(0x1A120A));
-            g2.drawString(name, x + (WAGON_W - fm.stringWidth(name)) / 2, bedY + 22);
+            if (!anyClick) {   // the place, painted on the body left of the name (not on the Profile's single wagon)
+                String rank = "#" + (index + 1);
+                Color plate = index == 0 ? Section.color("LootGobbler.gold", Palette.GOLD) : index == 1 ? FLAG_2 : index == 2 ? FLAG_3 : BONE;
+                int rw = fm.stringWidth(rank) + 10;
+                g2.setColor(plate);
+                g2.fillRect(x + 6, bedY + 5, rw, 21);
+                g2.setColor(INK);
+                g2.drawRect(x + 6, bedY + 5, rw - 1, 20);
+                g2.setColor(new Color(0x1A120A));
+                g2.drawString(rank, x + 11, bedY + 22);
+                int free = WAGON_W - rw - 20;
+                while (fm.stringWidth(name) > free && name.length() > 3) name = name.substring(0, name.length() - 1);
+                g2.drawString(name, x + rw + 10 + (free - fm.stringWidth(name)) / 2, bedY + 22);
+            } else {
+                g2.drawString(name, x + (WAGON_W - fm.stringWidth(name)) / 2, bedY + 22);
+            }
             if (isPicked) {
                 g2.setColor(Section.color("LootGobbler.goldHover", Palette.GOLD));
                 g2.setStroke(new BasicStroke(3));
@@ -619,20 +636,100 @@ public class CaravanView extends JPanel {
             hits.add(Map.entry(new Rectangle(x, top, WAGON_W, ground - top), m));
         }
 
-        /** The member's place on a flag at the back of the wagon; returns the flag's top. */
-        private int rankFlag(Graphics2D g2, int index, int x, int bedY, int top) {
-            int poleX = x + WAGON_W - 8, poleTop = Math.min(bedY - 46, top - 26);
+        private static final Color[] STONE = {null, new Color(0x4CD15A), new Color(0x3FB6F2), new Color(0xB05CF0), new Color(0xF2C232)};
+
+        /**
+         * A wooden step at the back of the wagon with one stone per enchanted item, in its rarity's color (green
+         * uncommon, blue rare, purple legendary, gold divine), rarest on top; many go into a chest (see paintHoard).
+         * Nothing on it while the server does not send the items' enchantments.
+         */
+        private void paintStep(Graphics2D g2, CaravanMember m, int x, int y) {
+            List<Integer> stones = new ArrayList<>();
+            for (CaravanItem it : m.items) if (it.enchants > 0) stones.add(Math.min(4, it.enchants));
+            stones.sort(Comparator.naturalOrder());   // common at the bottom, rarest on top
+            block(g2, x, y, STEP_W, 7, WOOD);          // the step
             g2.setColor(INK);
-            g2.fillRect(poleX, poleTop, 4, bedY - poleTop);
-            Color flag = index == 0 ? Section.color("LootGobbler.gold", Palette.GOLD) : index == 1 ? FLAG_2 : index == 2 ? FLAG_3 : Palette.MUTED;
-            String rank = "#" + (index + 1);
-            g2.setFont(FLAG_FONT);
-            int fw = g2.getFontMetrics().stringWidth(rank) + 14;
-            g2.setColor(flag);
-            g2.fillRect(poleX - fw, poleTop, fw, 20);
-            g2.setColor(new Color(0x1A120A));
-            g2.drawString(rank, poleX - fw + 7, poleTop + 15);
-            return poleTop;
+            g2.fillRect(x + 2, y + 6, 3, 8);           // brackets under it
+            g2.fillRect(x + STEP_W - 5, y + 6, 3, 8);
+            paintHoard(g2, stones, m.id, x + STEP_W / 2, y);
+        }
+
+        private static final int GEM = 11;
+        /**
+         * The enchanted items' stones on the step, standing on (cx, y): up to 16 as a loose pile; 17 to 50 in a chest
+         * with a smaller pile looking out (one stone per 4 of a rarity); more in an open golden chest (one per 10).
+         */
+        private void paintHoard(Graphics2D g2, List<Integer> stones, long seed, int cx, int y) {
+            if (stones.isEmpty()) return;
+            int per = stones.size() <= 16 ? 1 : stones.size() <= 50 ? 4 : 10;
+            List<Integer> shown = new ArrayList<>();
+            int[] count = new int[5];
+            for (int s : stones) count[s]++;
+            for (int r = 1; r <= 4; r++) for (int i = 0; i < (count[r] + per - 1) / per; i++) shown.add(r);
+            if (per == 1) {
+                paintPile(g2, shown, seed, cx, y, 40);
+                return;
+            }
+            // an open chest: lid and inside behind, the gems in it, the front over the bottom of the pile
+            boolean gold = per == 10;
+            Color body = gold ? GOLD_BODY : WOOD, band = gold ? GOLD_BAND : INK, lock = gold ? BONE : GOLD_BODY;
+            int w = 38, h = 20, x = cx - w / 2, rim = y - h;
+            block(g2, x + 2, rim - 15, w - 4, 15, gold ? GOLD_BAND : WOOD_DARK);   // the lid, tipped back
+            g2.setColor(band);
+            g2.fillRect(x + 8, rim - 12, 3, 12);
+            g2.fillRect(x + w - 11, rim - 12, 3, 12);
+            g2.setColor(new Color(0x1E140A));                                  // the dark inside
+            g2.fillRect(x + 3, rim - 2, w - 6, 6);
+            paintPile(g2, shown, seed, cx, rim + 3, 30);   // the first row a third in the chest, the rest above
+            block(g2, x, rim, w, h, body);                                     // the front
+            g2.setColor(band);
+            g2.fillRect(x + 8, rim + 3, 3, h - 6);                              // bands
+            g2.fillRect(x + w - 11, rim + 3, 3, h - 6);
+            g2.fillRect(x + 3, rim + 3, w - 6, 2);                              // rim edge
+            g2.setColor(INK);
+            g2.fillRect(cx - 4, rim + 4, 8, 9);                                 // the lock
+            g2.setColor(lock);
+            g2.fillRect(cx - 2, rim + 6, 4, 5);
+        }
+
+        private static final Color GOLD_BODY = new Color(0xE5B23A), GOLD_BAND = new Color(0xB0306E);
+
+        /** Gems heaped on (cx, bottom): rows narrowing upwards, each gem turned and nudged a little, overlapping. */
+        private void paintPile(Graphics2D g2, List<Integer> gems, long seed, int cx, int bottom, int width) {
+            Random rnd = new Random(seed * 31 + gems.size());
+            int step = GEM - 4;   // closer than a gem is wide: they overlap
+            int perRow = Math.max(1, width / step), row = 0, i = 0;
+            List<int[]> placed = new ArrayList<>();   // x, y, rarity, angle in degrees
+            while (i < gems.size()) {
+                int inRow = Math.min(Math.max(1, perRow - row), gems.size() - i);
+                int rowW = (inRow - 1) * step;
+                for (int k = 0; k < inRow; k++, i++) {
+                    int gx = cx - rowW / 2 + k * step + rnd.nextInt(3) - 1;
+                    int gy = bottom - GEM / 2 - row * (GEM - 5) + rnd.nextInt(3) - 1;
+                    placed.add(new int[]{gx, gy, gems.get(i), rnd.nextInt(360)});
+                }
+                row++;
+            }
+            for (int[] p : placed) gem(g2, p[0], p[1], STONE[p[2]], Math.toRadians(p[3]));
+        }
+
+        /** A faceted gem around (cx, cy), turned by angle. */
+        private static void gem(Graphics2D g2, int cx, int cy, Color c, double angle) {
+            Graphics2D g = (Graphics2D) g2.create();
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
+            g.translate(cx, cy);
+            g.rotate(angle);
+            int r = GEM / 2;
+            Polygon d = new Polygon(new int[]{0, r, 0, -r}, new int[]{-r, 0, r, 0}, 4);
+            g.setColor(c);
+            g.fillPolygon(d);
+            g.setColor(c.darker());
+            g.fillPolygon(new int[]{0, r, 0}, new int[]{0, 0, r}, 3);   // shaded facet
+            g.setColor(INK);
+            g.drawPolygon(d);
+            g.setColor(c.brighter().brighter());
+            g.fillRect(-2, -3, 2, 2);   // shine
+            g.dispose();
         }
 
         private void wheel(Graphics2D g2, int cx, int cy) {

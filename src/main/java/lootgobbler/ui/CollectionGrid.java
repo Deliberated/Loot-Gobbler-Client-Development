@@ -425,7 +425,7 @@ public class CollectionGrid extends JComponent implements Scrollable {
         ItemDb.Item item = items.get(tipIndex);
         CollectionStore.Entry entry = owned.get(item.id);
         String name = item.name + (item.isShiny() && !item.name.contains("Shiny") ? " (Shiny)" : "");
-        String sub = entry == null ? "Not found yet" : entry.count == 1 ? "Found 1 time" : "Found " + entry.count + " times";
+        String sub = entry == null ? "Not found yet" : "Count: " + entry.held();
         Font base = UIManager.getFont("Label.font");
         if (base == null) base = getFont();
         FontMetrics fm = g.getFontMetrics(base);

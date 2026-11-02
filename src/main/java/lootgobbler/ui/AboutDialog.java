@@ -47,7 +47,7 @@ public class AboutDialog extends JDialog {
         JLabel title = new JLabel("Loot Gobbler");
         title.setFont(new Font(Themes.HEAD_FONT, Font.PLAIN, 54));
         title.setForeground(ui("gold"));
-        JLabel by = new JLabel("by the Pluribus Guild");
+        JLabel by = new JLabel("by Gunshit");
         by.setFont(new Font(Themes.BODY_FONT, Font.PLAIN, 30));
         by.setForeground(ui("ink"));
         JLabel version = new JLabel(Version.VERSION);
@@ -69,7 +69,7 @@ public class AboutDialog extends JDialog {
         tagline.setFont(new Font(Themes.BODY_FONT, Font.PLAIN, 27));
         tagline.setForeground(ui("ink"));
         info.add(tagline);
-        JLabel author = new JLabel("designed and developed by Gunshit");
+        JLabel author = new JLabel("designed and developed for the Pluribus Guild");
         author.setFont(new Font(Themes.BODY_FONT, Font.PLAIN, 21));
         author.setForeground(ui("ink"));
         info.add(author);

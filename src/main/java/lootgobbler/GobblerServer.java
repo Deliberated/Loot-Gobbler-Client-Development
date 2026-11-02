@@ -152,6 +152,7 @@ public final class GobblerServer {
     /** One item in a caravan member's loot. bag is the bag's color ("White", "Orange", ..., "Other"). */
     public static final class CaravanItem {
         public int itemId;
+        public int enchants = -1;   // -1 = unknown (servers that do not send it yet)
         public String bag = "";
         public String time = "";
         public String where = "";

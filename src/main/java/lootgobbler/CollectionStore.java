@@ -19,17 +19,19 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * Lifetime collection: for each item id, when it was first and last obtained, how often, and a history of
  * every find (drop, vault, inventory) with its enchantment count. Saved to collection.json after every change.
  * <p>
- * Copies that leave you (forged into something else, fed to a pet) stay in the history as removal events and are
+ * Copies that leave you (forged into something else, fed to a pet, dropped on the ground) stay in the history as
+ * removal events and are
  * taken off what you hold: count is every copy ever obtained, held() what is left. An item with nothing held shows
  * as not collected. Removals are events like drops, so syncing keeps them instead of bringing the copy back.
  */
 public final class CollectionStore implements Syncable {
     public static final String DROP = "drop", VAULT = "vault", INVENTORY = "inventory";
-    public static final String FORGED = "forged", FED = "fed";   // removal events
+    public static final String FORGED = "forged", FED = "fed", DROPPED = "dropped";   // removal events
+    public static final String CONSUMED = "consumed";   // used up in the forge or by a pet (the game does not say which)
 
-    /** A copy that left you (forged, fed), not one you found. */
+    /** A copy that left you (forged, fed, dropped on the ground), not one you found. */
     public static boolean isRemoval(Find f) {
-        return FORGED.equals(f.source) || FED.equals(f.source);
+        return FORGED.equals(f.source) || FED.equals(f.source) || DROPPED.equals(f.source) || CONSUMED.equals(f.source);
     }
 
     /**
