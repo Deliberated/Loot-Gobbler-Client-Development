@@ -151,6 +151,12 @@ public final class DpsHistory implements Syncable {
             }
         }
         fire();
+        if (run != null && !run.guildHall) ServerSync.get().uploadSoon();   // the guild's quest map may move on
+    }
+
+    /** The newest saved run, or null. */
+    public synchronized Run latest() {
+        return runs.isEmpty() ? null : runs.get(0);
     }
 
     /**

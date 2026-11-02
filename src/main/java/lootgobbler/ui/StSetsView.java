@@ -35,7 +35,7 @@ public class StSetsView extends JPanel {
     private List<StSets.Set> sets = List.of();
     private Set<Integer> owned = Set.of();
     private Map<Integer, CollectionStore.Entry> entries = Map.of();
-    private int filter = 0;   // 0 all, 1 complete, 2 in progress, 3 missing
+    private int filter = 0;   // 0 all, 1 complete, 2 in progress (not complete), 3 craftable from set tokens
 
     public StSetsView(Consumer<ItemDb.Item> onPieceClick) {
         super(new BorderLayout(GAP, 0));
@@ -58,7 +58,7 @@ public class StSetsView extends JPanel {
                 .actions(classBox, new Segmented(true, 0, i -> {
                     filter = i;
                     rebuild();
-                }, "All", "Complete", "In progress", "Missing"));
+                }, "All", "Complete", "In progress", "Tokens"));
 
         JPanel progress = column();
         progress.setBorder(new EmptyBorder(10, 10, 10, 10));
@@ -112,8 +112,8 @@ public class StSetsView extends JPanel {
             int n = s.owned(owned);
             boolean match = switch (filter) {
                 case 1 -> n == 4;
-                case 2 -> n > 0 && n < 4;
-                case 3 -> n == 0;
+                case 2 -> n < 4;
+                case 3 -> token(s) != 0;
                 default -> true;
             };
             if (match && (cls.equals(ALL_CLASSES) || s.className().equals(cls))) shown.add(s);
@@ -192,69 +192,61 @@ public class StSetsView extends JPanel {
         repaint();
     }
 
+    /** The set's token (crafts its pieces in the forge), or 0 if it has none. */
+    private static int token(StSets.Set s) {
+        for (int id : s.pieces()) {
+            lootgobbler.SetTokens.Cost c = lootgobbler.SetTokens.of(id);
+            if (c != null) return c.token();
+        }
+        return 0;
+    }
+
     /**
-     * One set: skin on the left, then title, the four piece tiles and class / progress.
+     * One set: skin on the left, then title, the four pieces and class / progress. A set the forge crafts from a
+     * set token has that token in its top-right corner. A complete set is drawn in gold.
      */
     private class Card extends JPanel {
         private final boolean done;
+        private final int token;
 
         Card(StSets.Set s) {
-            super(new BorderLayout(10, 0));
+            super(new BorderLayout(10, 2));
             int n = s.owned(owned);
             done = n == 4;
+            token = token(s);
             setOpaque(false);
             setBorder(new EmptyBorder(6, 6, 6, 10));
-            setToolTipText("<html><b>" + escape(s.name()) + "</b><br>" + escape(s.bonus()) + "</html>");
+            ItemDb.Item t = token == 0 ? null : ItemDb.get().item(token);
+            setToolTipText("<html><b>" + escape(s.name()) + "</b><br>" + escape(s.bonus())
+                    + (t == null ? "" : "<br><i>Craftable in the forge with the " + escape(t.name) + "</i>") + "</html>");
 
             JLabel skin = new JLabel(skinIcon(s.skin()));
             skin.setPreferredSize(new Dimension(72, 72));
             skin.setHorizontalAlignment(SwingConstants.CENTER);
             add(skin, BorderLayout.WEST);
 
-            JPanel body = column();
-            JLabel title = new JLabel("<html><u>" + escape(s.title()) + "</u></html>", SwingConstants.CENTER);
-            title.setFont(title.getFont().deriveFont(18f));
-            title.setMaximumSize(new Dimension(Integer.MAX_VALUE, title.getPreferredSize().height));
-            title.setAlignmentX(LEFT_ALIGNMENT);
-            body.add(title);
-
-            JPanel labels = new JPanel(new GridLayout(1, 4, 6, 0));
+            // the pieces beside the skin, vertically centered on it
             JPanel tiles = new JPanel(new GridLayout(1, 4, 6, 0));
-            for (JPanel row : new JPanel[]{labels, tiles}) {
-                row.setOpaque(false);
-                row.setAlignmentX(LEFT_ALIGNMENT);
-            }
-            for (int i = 0; i < 4; i++) {
-                JLabel l = new JLabel(StSets.SLOTS[i], SwingConstants.CENTER);
-                l.setFont(l.getFont().deriveFont(14f));
-                labels.add(l);
-                tiles.add(new Tile(s.pieces()[i], StSets.SLOTS[i]));
-            }
-            labels.setMaximumSize(new Dimension(tiles.getPreferredSize().width, labels.getPreferredSize().height));
-            tiles.setMaximumSize(tiles.getPreferredSize());
-            body.add(labels);
-            body.add(tiles);
-            body.add(Box.createVerticalStrut(4));
+            tiles.setOpaque(false);
+            for (int i = 0; i < 4; i++) tiles.add(new Tile(s.pieces()[i], StSets.SLOTS[i]));   // slot in the tooltip
+            JPanel middle = new JPanel(new GridBagLayout());
+            middle.setOpaque(false);
+            GridBagConstraints c = new GridBagConstraints();
+            c.weightx = 1;
+            c.anchor = GridBagConstraints.WEST;
+            middle.add(tiles, c);
+            add(middle, BorderLayout.CENTER);
 
-            JPanel meta = new JPanel(new BorderLayout());
-            meta.setOpaque(false);
-            meta.setAlignmentX(LEFT_ALIGNMENT);
-            JLabel cls = new JLabel(s.className(), new Section.Square(Palette.CLASS_COLORS.getOrDefault(s.className(), Palette.STONE), 8),
-                    SwingConstants.LEFT);
+            // along the bottom: the set name from under the skin (long names shrink to fit), the class and count
+            // on the right (complete sets have no count: the gold card says it)
+            JPanel bottom = new JPanel(new BorderLayout(10, 0));
+            bottom.setOpaque(false);
+            bottom.add(new FitTitle(s.title()), BorderLayout.CENTER);
+            JLabel cls = new JLabel(s.className() + (done ? "" : "   " + n + " / 4"),
+                    new Section.Square(Palette.CLASS_COLORS.getOrDefault(s.className(), Palette.STONE), 8), SwingConstants.LEFT);
             cls.setIconTextGap(6);
-            meta.add(cls, BorderLayout.WEST);
-            JLabel count = new JLabel(done ? "COMPLETE" : n + " / 4");
-            if (done) {
-                count.putClientProperty("FlatLaf.styleClass", "small");
-                count.setOpaque(true);
-                count.setBackground(Section.color("LootGobbler.gold", Palette.GOLD));
-                count.setForeground(Section.color("LootGobbler.onAccent", Color.BLACK));
-                count.setBorder(new EmptyBorder(1, 5, 1, 5));
-            }
-            meta.add(count, BorderLayout.EAST);
-            meta.setMaximumSize(new Dimension(Integer.MAX_VALUE, meta.getPreferredSize().height));
-            body.add(meta);
-            add(body, BorderLayout.CENTER);
+            bottom.add(cls, BorderLayout.EAST);
+            add(bottom, BorderLayout.SOUTH);
         }
 
         @Override
@@ -268,10 +260,63 @@ public class StSetsView extends JPanel {
             g.drawRect(0, 0, getWidth() - 1, getHeight() - 1);
             if (done) g.drawRect(1, 1, getWidth() - 3, getHeight() - 3);
         }
+
+        @Override
+        protected void paintChildren(Graphics g) {
+            super.paintChildren(g);
+            if (token != 0) {   // the set token near the top-right corner, on the card itself
+                Icon icon = CharactersView.sprite(token, 30);
+                if (icon != null) icon.paintIcon(this, g, getWidth() - icon.getIconWidth() - 10, 8);
+            }
+        }
     }
 
     /**
-     * A piece slot: accent-tinted when owned, dark and dimmed when missing.
+     * A set's name, underlined, from the left; the font gets smaller (down to 12) until the name fits the width, and
+     * only beyond that is it cut with "...".
+     */
+    private static class FitTitle extends JComponent {
+        private static final float MAX = 18f, MIN = 12f;
+        private final String text;
+
+        FitTitle(String text) {
+            this.text = text;
+            setFont(UIManager.getFont("Label.font").deriveFont(MAX));
+            setForeground(UIManager.getColor("Label.foreground"));
+            setToolTipText(text);
+        }
+
+        @Override
+        public Dimension getPreferredSize() {
+            FontMetrics fm = getFontMetrics(getFont());
+            return new Dimension(40, fm.getHeight() + 2);   // as wide as it gets, sized to the full font
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            Font f = getFont();
+            FontMetrics fm = g2.getFontMetrics(f);
+            while (fm.stringWidth(text) > getWidth() && f.getSize2D() > MIN) {
+                f = f.deriveFont(f.getSize2D() - 1f);
+                fm = g2.getFontMetrics(f);
+            }
+            String shown = text;
+            while (fm.stringWidth(shown) > getWidth() && shown.length() > 3) shown = shown.substring(0, shown.length() - 4) + "...";
+            int w = fm.stringWidth(shown), x = 0;   // from the left edge
+            int y = (getHeight() - fm.getHeight()) / 2 + fm.getAscent();
+            g2.setFont(f);
+            g2.setColor(getForeground());
+            g2.drawString(shown, x, y);
+            g2.fillRect(x, y + 2, w, 1);   // underline
+            g2.dispose();
+        }
+    }
+
+    /**
+     * A piece: the item with its outline (like the Characters view's equipment) and best enchantments in a box,
+     * golden when you have it, dark with the item faded when missing; a gold frame on hover.
      */
     private class Tile extends JComponent {
         private final int id;
@@ -308,13 +353,12 @@ public class StSetsView extends JPanel {
             boolean have = owned.contains(id);
             int x = (getWidth() - TILE) / 2;
             Color accent = Section.color("LootGobbler.gold", Palette.GOLD);
-            g2.setColor(have ? Palette.mix(accent, OWNED_TINT, 0.7) : EMPTY_TILE);
+            g2.setColor(have ? Palette.mix(accent, OWNED_TINT, 0.7) : EMPTY_TILE);   // golden box: you have it
             g2.fillRect(x, 0, TILE, TILE);
-            Image icon = CollectionGrid.icon(id);
+            Icon icon = CharactersView.sprite(id, TILE - 10);   // outlined, like the character equipment
             if (icon != null) {
                 if (!have) g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.25f));
-                int s = CollectionGrid.ICON;
-                g2.drawImage(icon, x + (TILE - s) / 2, (TILE - s) / 2, s, s, null);
+                icon.paintIcon(this, g2, x + (TILE - icon.getIconWidth()) / 2, (TILE - icon.getIconHeight()) / 2);
                 g2.setComposite(AlphaComposite.SrcOver);
             }
             if (have && entries.get(id) != null) {

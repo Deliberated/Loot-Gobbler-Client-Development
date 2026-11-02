@@ -23,10 +23,12 @@ import java.util.List;
 
 /**
  * DPS Logger tab: live or logged run on the left (one collapsible damage table per boss),
- * past dungeons on the right. "Detail" opens Tomato's original DPS view.
+ * past dungeons on the right.
  */
 public class DpsPanel extends JPanel {
     private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("d MMM, HH:mm", Locale.ENGLISH);
+    private static final int DUNGEON_ICON = 34;
+    private static final Map<String, Icon> DUNGEON_ICONS = new HashMap<>();   // dungeon name ("" = guild hall) -> portal
     private static final NumberFormat NUM = NumberFormat.getIntegerInstance();
     private static final Map<String, Color> CLASS_COLORS = Map.ofEntries(
             Map.entry("Rogue", new Color(0x6E7B8B)), Map.entry("Archer", new Color(0x5FA343)),
@@ -40,7 +42,6 @@ public class DpsPanel extends JPanel {
             Map.entry("Summoner", new Color(0x57B894)), Map.entry("Kensei", new Color(0xB5543A)),
             Map.entry("Druid", new Color(0x6B6B48)));
 
-    private final Runnable openDetail;
     private final JLabel title = new JLabel("NO DUNGEON");
     private final JLabel yourDps = big("0"), rank = big("-");
     private final JToggleButton liveButton = new JToggleButton("LIVE", true);
@@ -50,9 +51,8 @@ public class DpsPanel extends JPanel {
     private Run selected;   // null = live
     private static final String[] SLOT_NAMES = {"Weapon", "Ability", "Armor", "Ring"};
 
-    public DpsPanel(Runnable openDetail) {
+    public DpsPanel() {
         super(new BorderLayout(0, 8));
-        this.openDetail = openDetail;
         setBorder(new EmptyBorder(8, 8, 8, 8));
 
         liveButton.setFocusable(false);
@@ -64,10 +64,10 @@ public class DpsPanel extends JPanel {
         add(header(), BorderLayout.NORTH);
 
         Section bossSection = new Section("Boss Damage", Palette.GOLD, scroll(bosses))
-                .actions(button("Detail", null, openDetail), button("Copy all", null, this::copyAll));
+                .actions(button("Copy all", null, this::copyAll));
         Section pastSection = new Section("Run History", Palette.BLUE, scroll(past))
                 .actions(button("Clear all", "danger", this::clearAll));
-        add(new SideSplit(bossSection, pastSection, "dps", 320, 220), BorderLayout.CENTER);   // drag the gap to resize
+        add(new SideSplit(bossSection, pastSection, "dps", 400, 220), BorderLayout.CENTER);   // drag the gap to resize
 
         DpsHistory.get().onChange(() -> SwingUtilities.invokeLater(this::refresh));
         refresh();
@@ -122,7 +122,7 @@ public class DpsPanel extends JPanel {
             PlayerRow me = main == null ? null : main.me();
             yourDps.setText(me == null ? "0" : NUM.format(Math.round(main.dps(me))));
             rank.setText(me == null ? "-" : String.valueOf(run.guildHall ? loadoutRank(run, main) : main.rankOf(me)));
-            for (int i = 0; i < run.bosses.size(); i++) {
+            for (int i = run.bosses.size() - 1; i >= 0; i--) {   // the latest boss on top
                 bosses.add(bossBlock(run, run.bosses.get(i), i));
                 bosses.add(Box.createVerticalStrut(6));
             }
@@ -169,7 +169,15 @@ public class DpsPanel extends JPanel {
         } else {
             head.add(name, BorderLayout.CENTER);
         }
-        head.add(button("Copy log", null, () -> copy(bossText(run, boss))), BorderLayout.EAST);
+        JPanel right = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+        right.setOpaque(false);
+        JLabel place = placeLabel(run, boss);
+        if (place != null) {
+            right.add(place);
+            right.add(Box.createHorizontalStrut(16));
+        }
+        right.add(button("Copy log", null, () -> copy(bossText(run, boss))));
+        head.add(right, BorderLayout.EAST);
 
         JPanel block = new JPanel(new BorderLayout());
         block.setOpaque(false);
@@ -233,6 +241,22 @@ public class DpsPanel extends JPanel {
     }
 
     /**
+     * "#x of y": your damage rank on this boss among its players (guild hall: this loadout among your loadouts).
+     * null if you did no damage to it.
+     */
+    private static JLabel placeLabel(Run run, Boss boss) {
+        PlayerRow me = boss.me();
+        if (me == null) return null;
+        int place = run.guildHall ? loadoutRank(run, boss) : boss.rankOf(me);
+        int of = run.guildHall ? (int) run.bosses.stream().filter(b -> b.me() != null).count() : boss.players.size();
+        JLabel l = new JLabel("#" + place + " of " + of);
+        l.setFont(l.getFont().deriveFont(18f));
+        l.setForeground(place == 1 ? Palette.GOLD : Section.color("LootGobbler.inkSoft", Palette.MUTED));
+        l.setToolTipText(run.guildHall ? "This loadout's place among your loadouts, by DPS" : "Your place by damage on this boss");
+        return l;
+    }
+
+    /**
      * Place of this loadout among the run's loadouts by your DPS.
      */
     private static int loadoutRank(Run run, Boss block) {
@@ -283,6 +307,9 @@ public class DpsPanel extends JPanel {
         if (isSelected) {
             row.setBorder(BorderFactory.createCompoundBorder(new LineBorder(Palette.GOLD, 2), new EmptyBorder(4, 8, 4, 6)));
         }
+        JLabel icon = new JLabel(dungeonIcon(r));
+        icon.setPreferredSize(new Dimension(DUNGEON_ICON, DUNGEON_ICON));
+        row.add(icon, BorderLayout.WEST);
         row.add(text, BorderLayout.CENTER);
         if (!current) {   // Detail and delete only once the run is finished and saved
             JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
@@ -297,9 +324,26 @@ public class DpsPanel extends JPanel {
         return row;
     }
 
+    /**
+     * The dungeon's portal (the weapon rack for the guild hall). Cached: the list is rebuilt every second during a
+     * run. null (an empty space) for dungeons without a known portal.
+     */
+    static Icon dungeonIcon(Run r) {
+        String key = r.guildHall ? "" : r.dungeon;
+        if (DUNGEON_ICONS.containsKey(key)) return DUNGEON_ICONS.get(key);
+        Icon i = r.guildHall ? icon(DpsHistory.WEAPON_RACK, DUNGEON_ICON) : ProfileView.dungeonIcon(r.dungeon, DUNGEON_ICON);
+        DUNGEON_ICONS.put(key, i);
+        return i;
+    }
+
     private void select(Run run) {
         selected = run;
         refresh();
+    }
+
+    /** Shows a saved run, as if picked in the Run History (e.g. from the Profile's recent runs). */
+    public void showRun(Run run) {
+        select(run);
     }
 
     private void clearAll() {

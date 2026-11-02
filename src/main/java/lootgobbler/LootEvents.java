@@ -40,6 +40,7 @@ public final class LootEvents {
             if (drops.isEmpty()) return;
             ItemDb db = ItemDb.get();
             String where = mapName(map), bagName = bagName(bag.objectType);
+            boolean recorded = false;
             for (Drop d : drops) {
                 ItemDb.Item item = db.item(d.id());
                 if (item != null && item.isCollectible()) {
@@ -48,8 +49,10 @@ public final class LootEvents {
                             : CollectionStore.Find.of(CollectionStore.DROP, d.enchants(), where, bagName);
                     f.seasonal = seasonal(player);
                     CollectionStore.get().record(d.id(), f);
+                    recorded = true;
                 }
             }
+            if (recorded) ServerSync.get().uploadSoon();   // shows up in the guild's caravan
             DiscordAlerts.bagDropped(map, bag, player, drops);
         } catch (Exception e) {
             e.printStackTrace();

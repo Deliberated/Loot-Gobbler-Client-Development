@@ -65,9 +65,17 @@ public class TomatoGUI {
 
         myDmg = new MyInfoGUI(data);
         lootgobbler.ui.CharactersView characters = new lootgobbler.ui.CharactersView();
+        lootgobbler.ui.GuildPanel guild = new lootgobbler.ui.GuildPanel();
+        DpsPanel dps = new DpsPanel();
         tabbedPane.addTab("Profile", new lootgobbler.ui.ProfileView(new lootgobbler.ui.DungeonStatsPanel(), id -> {
             characters.showCharacter(id);   // clicking your character on the profile opens it in Characters
             tabbedPane.show("Characters");
+        }, page -> {
+            guild.show(page);   // the guild row on the profile opens the caravan or the quest map
+            tabbedPane.show("Guild");
+        }, run -> {
+            dps.showRun(run);   // a recent run on the profile opens it in the DPS Logger
+            tabbedPane.show("DPS Logger");
         }));
         chatPanel = new ChatGUI(data);
         questPanel = new QuestGUI();
@@ -81,11 +89,16 @@ public class TomatoGUI {
                 .page("Daily Quests", lootgobbler.ui.UnderConstruction.wrap(questPanel,
                         "Daily quests are under construction - they will come from the Loot Gobbler server."))
                 .page("Discord", discord).done());
-        tabbedPane.addTab("Inventory", new CollectionPanel());
+        CollectionPanel inventory = new CollectionPanel();
+        tabbedPane.addTab("Inventory", inventory);
+        lootgobbler.ui.ItemLinks.setOpener(id -> {   // item icons in other tabs jump to the item in Inventory
+            tabbedPane.show("Inventory");
+            inventory.showItem(id);
+        });
         tabbedPane.addTab("Characters", characters);
 
-        dpsPanel = new DpsGUI(data);   // Tomato's original view, opened from the DPS tab's "Detail" button
-        tabbedPane.addTab("DPS Logger", new DpsPanel(this::openDpsDetail));
+        dpsPanel = new DpsGUI(data);   // Tomato's original view: not shown any more, but its packet handlers still run
+        tabbedPane.addTab("DPS Logger", dps);
 
         // Key-pops, Security, the old Characters view and Statistics have no tab any more, but are still created: packet
         // handlers, key-pop sounds, the loot filter, fame tracking and font changes call into them.
@@ -111,6 +124,7 @@ public class TomatoGUI {
         DpsGUI.loadFilterPreset();
         DpsDisplayOptions.loadProfileFilter();
         lootgobbler.PacketDebug.install();
+        lootgobbler.ItemUse.install();   // forged and fed items leave the collection
         jMenuBar = menuBar.make();
         // top-level menus sit in the title bar, so they use its text color (matters for dark title bars)
         for (Component c : jMenuBar.getComponents()) {
@@ -118,7 +132,7 @@ public class TomatoGUI {
         }
         // Built after the menu so the sound/filter flags are already loaded from settings.
         tabbedPane.addTab("Settings", new SettingsPanel());
-        tabbedPane.addTab("Guild", new lootgobbler.ui.GuildPanel());
+        tabbedPane.addTab("Guild", guild);
         tabbedPane.addTab("Server", new lootgobbler.ui.ServerPanel());
         tabbedPane.restoreOrder("Profile", "Inventory", "Characters", "DPS Logger", "Social", "Guild", "Server", "Settings");
         makeFrame();
@@ -216,25 +230,6 @@ public class TomatoGUI {
         menuBar.setFrame(frame);
         frame.setContentPane(mainPanel);
         frame.setVisible(true);
-    }
-
-    private JFrame dpsDetailFrame;
-
-    /**
-     * Shows Tomato's original DPS view (equipment, filters, per-dungeon browsing) in its own window.
-     */
-    private void openDpsDetail() {
-        if (dpsDetailFrame == null) {
-            dpsDetailFrame = new JFrame("DPS Detail");
-            dpsDetailFrame.setIconImages(lootgobbler.AppIcon.images());
-            dpsDetailFrame.setContentPane(dpsPanel);
-            dpsDetailFrame.setSize(760, 560);
-            dpsDetailFrame.setLocationRelativeTo(frame);
-            dpsDetailFrame.setDefaultCloseOperation(WindowConstants.HIDE_ON_CLOSE);
-        }
-        DpsGUI.update();
-        dpsDetailFrame.setVisible(true);
-        dpsDetailFrame.toFront();
     }
 
     public static String getFontName() {

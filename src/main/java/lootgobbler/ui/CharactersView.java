@@ -433,7 +433,7 @@ public class CharactersView extends JPanel {
             }
         });
         l.setToolTipText(itemTooltip(id, enchantIds, slotName));
-        return l;
+        return ItemLinks.link(l, id);   // click: the item in Inventory
     }
 
     private static int[] enchantIds(Char c, int slot) {
@@ -590,6 +590,7 @@ public class CharactersView extends JPanel {
         name.setIconTextGap(8);
         if (n > 0) name.setForeground(Palette.mix(EnchantBadge.COLORS[Math.min(4, n)], Color.BLACK, 0.35));
         name.setToolTipText(itemTooltip(id, enchantIds, slotName));
+        ItemLinks.link(name, id);   // click: the item in Inventory
 
         JPanel icons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 3, 0));
         icons.setOpaque(false);

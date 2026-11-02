@@ -6,8 +6,12 @@ import lootgobbler.CharacterStore.Sample;
 import lootgobbler.CollectionStore;
 import lootgobbler.DpsHistory;
 import lootgobbler.ExaltStore;
+import lootgobbler.GobblerServer;
+import lootgobbler.GobblerServer.CaravanMember;
+import lootgobbler.GobblerServer.QuestMap;
 import lootgobbler.ItemDb;
 import lootgobbler.PetStore;
+import lootgobbler.ServerSync;
 import lootgobbler.Themes;
 import tomato.realmshark.enums.CharacterClass;
 import tomato.realmshark.enums.LootBags;
@@ -15,16 +19,19 @@ import tomato.realmshark.enums.LootBags;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
+import java.awt.event.HierarchyEvent;
 import java.text.NumberFormat;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.*;
 import java.util.List;
+import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 
 /**
- * Profile tab. Overview: your player name and account summary, your recently most played character, the last
- * 24 hours, recent drops and runs, top dungeons, exaltation and (later, from the server) daily quests. Plus the
+ * Profile tab. Overview: your player name and account summary, your recently most played character with its fame
+ * graph, your guild (your caravan wagon and the next quest map dungeon, both opening the Guild tab), the last 24
+ * hours, recent drops and runs, top dungeons, exaltation and (later, from the server) daily quests. Plus the
  * Dungeon Stats page passed in.
  */
 public class ProfileView extends SubTabs {
@@ -41,9 +48,25 @@ public class ProfileView extends SubTabs {
     private String shown;   // what is on screen, so the frequent store updates only rebuild on a real change
 
     private final IntConsumer openCharacter;   // shows a character in the Characters tab
+    private final Consumer<String> openGuild;  // shows a page of the Guild tab
+    private final Consumer<DpsHistory.Run> openRun;   // shows a run in the DPS Logger tab
 
-    public ProfileView(JComponent dungeonStats, IntConsumer openCharacter) {
+    // the guild row, from the server
+    private final GobblerServer server = GobblerServer.get();
+    private final CaravanView.Scene wagon;
+    private String guildName, guildNote = "";   // guildNote: why there is nothing to show; "" while loading
+    private CaravanMember myWagon;
+    private QuestMap questMap;
+    private int guildVersion;
+    private boolean guildLoading, guildAgain, guildStale;
+
+    public ProfileView(JComponent dungeonStats, IntConsumer openCharacter, Consumer<String> openGuild,
+                       Consumer<DpsHistory.Run> openRun) {
         this.openCharacter = openCharacter;
+        this.openGuild = openGuild;
+        this.openRun = openRun;
+        wagon = new CaravanView.Scene(m -> openGuild.accept(GuildPanel.CARAVAN)).small(0.5);
+        wagon.setToolTipText("To the caravan");
         body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
         body.setOpaque(false);
         body.setBorder(new EmptyBorder(16, 20, 20, 20));
@@ -62,7 +85,75 @@ public class ProfileView extends SubTabs {
         PetStore.get().onChange(later);
         DungeonStatsPanel.onUpdate(later);
         new javax.swing.Timer(60_000, e -> refresh()).start();   // "x min ago" and the 24 hour window move on by themselves
+
+        server.onChange(() -> SwingUtilities.invokeLater(this::loadGuild));
+        ServerSync.get().onUploaded(kind -> {   // your run or drops reached the server
+            if (kind.equals("dps_history") || kind.equals("collection")) SwingUtilities.invokeLater(() -> {
+                if (isShowing()) loadGuild();
+                else guildStale = true;
+            });
+        });
+        new javax.swing.Timer(QuestMapView.POLL_MS, e -> {   // guildies' clears
+            if (isShowing()) loadGuild();
+        }).start();
+        addHierarchyListener(e -> {
+            if ((e.getChangeFlags() & HierarchyEvent.SHOWING_CHANGED) != 0 && isShowing() && guildStale) loadGuild();
+        });
         refresh();
+        loadGuild();
+    }
+
+    /**
+     * Your wagon of this week's caravan and the guild's current quest map.
+     */
+    private void loadGuild() {
+        if (guildLoading) {
+            guildAgain = true;
+            return;
+        }
+        guildStale = false;
+        GobblerServer.User me = server.user();
+        if (me == null || server.state() != GobblerServer.State.ONLINE) {
+            setGuild(null, null, null, "Log in to a server in the Server tab to see your guild here.");
+            return;
+        }
+        guildLoading = true;
+        server.caravan("week").thenCombine(server.questMaps(1), (c, q) -> {
+            CaravanMember mine = c.members.stream().filter(m -> m.id == me.id).findFirst().orElseGet(() -> {
+                CaravanMember m = new CaravanMember();   // nothing found this week yet
+                m.id = me.id;
+                m.ign = me.ign;
+                return m;
+            });
+            return new Object[]{c.guild, mine, q.current};
+        }).whenComplete((r, e) -> SwingUtilities.invokeLater(() -> {
+            guildLoading = false;
+            if (e != null) setGuild(null, null, null, GuildPanel.loadError(e));
+            else setGuild((String) r[0], (CaravanMember) r[1], (QuestMap) r[2], null);
+            if (guildAgain) {
+                guildAgain = false;
+                loadGuild();
+            }
+        }));
+    }
+
+    private void setGuild(String name, CaravanMember mine, QuestMap map, String note) {
+        String before = guildName + "|" + guildNote + "|" + key(myWagon) + "|" + key(questMap);
+        guildName = name;
+        myWagon = mine;
+        questMap = map;
+        guildNote = note;
+        if (before.equals(guildName + "|" + guildNote + "|" + key(myWagon) + "|" + key(questMap))) return;
+        guildVersion++;
+        refresh();
+    }
+
+    private static String key(CaravanMember m) {
+        return m == null ? "-" : m.id + ":" + m.total + ":" + m.lastDrop + ":" + (m.character == null ? 0 : m.character.classType);
+    }
+
+    private static String key(QuestMap m) {
+        return m == null ? "-" : m.id + ":" + m.clears.size() + ":" + m.completedAt;
     }
 
     @Override
@@ -84,7 +175,7 @@ public class ProfileView extends SubTabs {
         List<Map.Entry<String, Integer>> dungeons = DungeonStatsPanel.topDungeons(RECENT);
         int pets = PetStore.get().all().size();
 
-        List<Object> parts = new ArrayList<>(List.of(name == null ? "" : name, pets, drops, dungeons, now / 60_000));
+        List<Object> parts = new ArrayList<>(List.of(name == null ? "" : name, pets, drops, dungeons, now / 60_000, guildVersion));
         for (Char c : chars) parts.add(List.of(c.charId, c.alive, c.fame, c.level, c.skin, c.samples.size()));
         for (int i = 0; i < Math.min(RECENT, runs.size()); i++) parts.add(runs.get(i).start);
         for (CharacterClass cls : CharacterClass.CHAR_CLASS_LIST)
@@ -94,7 +185,9 @@ public class ProfileView extends SubTabs {
         shown = state;
 
         body.removeAll();
-        body.add(row(2, playerCard(name, chars, pets), mostPlayedCard(store, most, since)));
+        body.add(row(2, playerCard(name, chars, pets), mostPlayedCard(store, most, chars, since)));
+        body.add(Box.createVerticalStrut(20));
+        body.add(row(1, guildCard()));
         body.add(Box.createVerticalStrut(20));
         body.add(left(heading("Last 24 hours")));
         body.add(Box.createVerticalStrut(8));
@@ -133,9 +226,10 @@ public class ProfileView extends SubTabs {
 
     /**
      * The character's skin, class and progress, why it was picked (fame gained today, or played most recently),
-     * and its fame over the last 24 hours. Clicking it opens the character in the Characters tab.
+     * and the fame it gained over the last 24 hours as a graph, with (tinted) the two other characters that gained
+     * the most. Clicking it opens the character in the Characters tab.
      */
-    private JComponent mostPlayedCard(CharacterStore store, Char c, long since) {
+    private JComponent mostPlayedCard(CharacterStore store, Char c, List<Char> chars, long since) {
         if (c == null) {
             JPanel p = column();
             p.add(left(caption("MOST PLAYED · 24H")));
@@ -146,23 +240,66 @@ public class ProfileView extends SubTabs {
         JLabel sprite = new JLabel(CharactersView.skin(c, 96));
         sprite.setVerticalAlignment(SwingConstants.TOP);
 
-        JPanel text = column();
-        text.add(left(caption("MOST PLAYED · 24H")));
+        JPanel about = column();
+        about.add(left(caption("MOST PLAYED · 24H")));
         JLabel cls = new JLabel(c.className + "   " + c.statsMaxed + "/8");
         cls.setFont(cls.getFont().deriveFont(30f));
-        text.add(left(cls));
+        about.add(left(cls));
         JLabel progress = new JLabel(c.level < 20 ? "Level " + c.level : NUM.format(c.fame) + " Fame");
         progress.setFont(progress.getFont().deriveFont(22f));
         progress.setForeground(gold());
-        text.add(left(progress));
-        JLabel why = gain > 0 ? new JLabel("+" + NUM.format(gain) + " fame in the last 24h")
-                : muted(c.lastPlayed == 0 ? "not played yet" : "last played " + CharactersView.ago(c.lastPlayed));
-        if (gain > 0) why.setForeground(Palette.GREEN);
-        text.add(left(why));
-        List<Sample> samples = c.samples.stream().filter(s -> s.t >= since).toList();
-        if (samples.size() > 1) {
+        about.add(left(progress));
+        if (gain == 0) about.add(left(muted(c.lastPlayed == 0 ? "Not played yet" : "Last played " + CharactersView.ago(c.lastPlayed))));
+
+        // beside it, a bit in from the right: the fame gained in the last 24h (always, also +0) and, below in
+        // gold, in the last hour (only when there is some)
+        JPanel gains = column();
+        JLabel gained = new JLabel("+" + NUM.format(gain) + " fame");
+        gained.setFont(gained.getFont().deriveFont(20f));
+        gained.setForeground(gain > 0 ? Palette.GREEN : Palette.MUTED);
+        gained.setToolTipText("Fame gained in the last 24 hours");
+        gains.add(right(gained));
+        long hour = store.sessions(c, System.currentTimeMillis() - 3_600_000L).stream()
+                .mapToLong(CharacterStore.Session::gained).sum();
+        if (hour > 0) {
+            JLabel lastHour = new JLabel("+" + NUM.format(hour) + " last hour");
+            lastHour.setForeground(gold());
+            lastHour.setToolTipText("Fame gained in the last hour");
+            gains.add(right(lastHour));
+        }
+        JPanel gainsAtBottom = new JPanel(new BorderLayout());
+        gainsAtBottom.setOpaque(false);
+        gainsAtBottom.setBorder(new EmptyBorder(0, 12, 0, 24));
+        gainsAtBottom.add(gains, BorderLayout.SOUTH);
+
+        JPanel head = new JPanel(new BorderLayout());
+        head.setOpaque(false);
+        head.add(about, BorderLayout.CENTER);
+        head.add(gainsAtBottom, BorderLayout.EAST);
+        JPanel text = column();
+        text.add(left(head));
+
+        List<Char> others = chars.stream().filter(o -> o.charId != c.charId && store.gainedToday(o) > 0)
+                .sorted(Comparator.comparingLong((Char o) -> -store.gainedToday(o))).limit(FameGraph.TINTS.length).toList();
+        List<FameGraph.Series> series = new ArrayList<>();
+        series.add(new FameGraph.Series(window(c, since), gold(), 3f));
+        for (int i = 0; i < others.size(); i++) {
+            series.add(new FameGraph.Series(window(others.get(i), since), FameGraph.TINTS[i], 2f));
+        }
+        if (series.stream().anyMatch(sr -> sr.samples().size() > 1)) {
             text.add(Box.createVerticalStrut(6));
-            text.add(left(new Sparkline(samples)));
+            text.add(left(new FameGraph(series)));
+            if (!others.isEmpty()) {
+                JPanel legend = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+                legend.setOpaque(false);
+                legend.add(legendLabel(c.className + " +" + NUM.format(gain), gold()));
+                for (int i = 0; i < others.size(); i++) {
+                    Char o = others.get(i);
+                    legend.add(legendLabel("     " + o.className + " +" + NUM.format(store.gainedToday(o)),
+                            FameGraph.solid(FameGraph.TINTS[i])));
+                }
+                text.add(left(legend));
+            }
         }
 
         JPanel inner = new JPanel(new BorderLayout(18, 0));
@@ -177,16 +314,103 @@ public class ProfileView extends SubTabs {
         return card;
     }
 
+    private static List<Sample> window(Char c, long since) {
+        return c.samples.stream().filter(s -> s.t >= since).toList();
+    }
+
+    private static JLabel legendLabel(String text, Color color) {
+        JLabel l = new JLabel(text);
+        l.putClientProperty("FlatLaf.styleClass", "small");
+        l.setForeground(color);
+        return l;
+    }
+
+    /**
+     * Your guild at a glance: your wagon of this week's loot caravan, and the next dungeon of the quest map with how
+     * far the guild got. Each opens its page in the Guild tab.
+     */
+    private JComponent guildCard() {
+        JPanel p = column();
+        p.add(left(heading(guildName == null ? "Guild" : "Guild - " + guildName)));
+        p.add(Box.createVerticalStrut(8));
+        if (guildNote != null || myWagon == null) {
+            p.add(left(muted(guildNote == null || guildNote.isEmpty() ? "Loading..." : guildNote)));
+            return card(p);
+        }
+        wagon.setMembers(List.of(myWagon));
+        JPanel caravan = column();
+        caravan.add(center(caption("YOUR WAGON · THIS WEEK")));
+        caravan.add(Box.createVerticalStrut(4));
+        caravan.add(center(wagon));
+        caravan.add(Box.createVerticalStrut(6));
+        caravan.add(center(link("To the caravan")));
+        clickable(caravan, () -> openGuild.accept(GuildPanel.CARAVAN));
+
+        JPanel quest = column();
+        quest.add(center(caption("QUEST MAP")));
+        quest.add(Box.createVerticalStrut(10));
+        if (questMap == null || questMap.dungeons.isEmpty()) {
+            quest.add(center(muted("No quest map yet")));
+        } else {
+            int n = questMap.dungeons.size(), done = Math.min(questMap.clears.size(), n);
+            boolean complete = questMap.completedAt != null || done == n;
+            String next = questMap.dungeons.get(complete ? n - 1 : done);
+            quest.add(center(new JLabel(dungeonIcon(next, 80))));
+            quest.add(Box.createVerticalStrut(6));
+            quest.add(center(new JLabel(complete ? "All done!" : "Next: " + next)));
+            JLabel progress = new JLabel(done + "/" + n + " dungeons completed");
+            progress.setFont(progress.getFont().deriveFont(20f));
+            progress.setForeground(complete ? Palette.GREEN : gold());
+            quest.add(center(progress));
+            quest.add(Box.createVerticalStrut(6));
+            quest.add(center(link("To the quest map")));
+        }
+        clickable(quest, () -> openGuild.accept(GuildPanel.QUEST_MAP));
+
+        JPanel items = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        items.setOpaque(false);
+        items.add(caravan);
+        items.add(Box.createHorizontalStrut(64));
+        items.add(quest);
+        p.add(left(items));
+        return card(p);
+    }
+
+    private static JLabel link(String text) {
+        JLabel l = new JLabel(text + "  ›");
+        l.setForeground(gold());
+        return l;
+    }
+
+    /** Clicks anywhere on it (also on its labels, which would otherwise take the click) run action. */
+    private static void clickable(JComponent c, Runnable action) {
+        c.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        if (!(c instanceof CaravanView.Scene)) Clicks.onClick(c, action);   // the wagon handles its own clicks
+        for (Component child : c.getComponents()) {
+            if (child instanceof JComponent j) clickable(j, action);
+        }
+    }
+
+    private static <T extends JComponent> T center(T c) {
+        c.setAlignmentX(CENTER_ALIGNMENT);
+        return c;
+    }
+
+    /** A dungeon's portal sprite, by its name as the Run History records it. */
+    static Icon dungeonIcon(String name, int size) {
+        int id = tomato.realmshark.ParseDungeon.getPortalId(name);
+        if (id == -1) {
+            tomato.realmshark.enums.CharacterStatistics cs = tomato.realmshark.enums.CharacterStatistics.statByName(name);
+            if (cs != null) id = cs.getSpriteId();
+        }
+        return CharactersView.sprite(id, size);
+    }
+
     private JComponent todayTiles(CharacterStore store, List<Char> chars, List<DpsHistory.Run> runs,
                                   List<DropRow> drops, long since) {
-        long fame = 0, playMs = 0;
-        int gainers = 0, sessions = 0;
+        long playMs = 0;
+        int sessions = 0;
         for (Char c : chars) {
-            long g = store.gainedToday(c);
-            if (g > 0) {
-                fame += g;
-                gainers++;
-            }
             for (CharacterStore.Session s : store.sessions(c, since)) {
                 playMs += s.durationMs();
                 sessions++;
@@ -195,10 +419,8 @@ public class ProfileView extends SubTabs {
         List<DpsHistory.Run> today = runs.stream().filter(r -> r.start >= since && !r.guildHall).toList();
         long kinds = today.stream().map(r -> r.dungeon).distinct().count();
 
-        JPanel tiles = new JPanel(new GridLayout(1, 5, 12, 0));
+        JPanel tiles = new JPanel(new GridLayout(1, 4, 12, 0));   // fame gained is on the most played card
         tiles.setOpaque(false);
-        tiles.add(tile("FAME GAINED", (fame > 0 ? "+" : "") + NUM.format(fame),
-                gainers == 0 ? "no fame yet" : "on " + gainers + (gainers == 1 ? " character" : " characters")));
         tiles.add(tile("DUNGEONS", NUM.format(today.size()), kinds == 0 ? "none yet" : kinds + " different"));
         tiles.add(bagTile("WHITE BAGS", "White", drops, since));
         tiles.add(bagTile("ORANGE BAGS", "Orange", drops, since));
@@ -242,7 +464,7 @@ public class ProfileView extends SubTabs {
             line.add(icon, BorderLayout.WEST);
             line.add(text, BorderLayout.CENTER);
             line.add(ago, BorderLayout.EAST);
-            p.add(left(line));
+            p.add(left(ItemLinks.link(line, d.item())));   // click: the item in Inventory
         }
         return card(p);
     }
@@ -277,7 +499,12 @@ public class ProfileView extends SubTabs {
             g.gridx = 0;
             g.weightx = 1;
             g.fill = GridBagConstraints.HORIZONTAL;
-            table.add(new JLabel(run.dungeon), g);
+            JLabel dungeon = new JLabel(run.dungeon, DpsPanel.dungeonIcon(run), SwingConstants.LEFT);
+            dungeon.setIconTextGap(8);
+            dungeon.setToolTipText("Open this run in the DPS Logger");
+            dungeon.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            Clicks.onClick(dungeon, () -> openRun.accept(run));
+            table.add(dungeon, g);
             g.weightx = 0;
             g.fill = GridBagConstraints.NONE;
             g.gridx = 1;
@@ -533,41 +760,71 @@ public class ProfileView extends SubTabs {
         return c;
     }
 
-    /**
-     * Fame of a character over the samples given, as a stepped line.
-     */
-    private static class Sparkline extends JComponent {
-        private final List<Sample> samples;
+    private static <T extends JComponent> T right(T c) {
+        c.setAlignmentX(RIGHT_ALIGNMENT);
+        return c;
+    }
 
-        Sparkline(List<Sample> samples) {
-            this.samples = samples;
-            setPreferredSize(new Dimension(240, 40));
-            setMaximumSize(new Dimension(Integer.MAX_VALUE, 40));
-            setToolTipText("Fame over the last 24 hours");
+    /**
+     * Fame gained over the last 24 hours, as stepped lines on one time axis: the most played character in gold on
+     * top, up to two others behind it in see-through tints. Each line starts at 0 (its fame at its first sample in
+     * the window), so characters with very different fame compare.
+     */
+    private static class FameGraph extends JComponent {
+        static final Color[] TINTS = {new Color(0x6F, 0xA8, 0xDC, 150), new Color(0xC2, 0x7B, 0xE0, 150)};
+
+        record Series(List<Sample> samples, Color color, float width) {
+        }
+
+        private final List<Series> series;   // the main one first
+
+        FameGraph(List<Series> series) {
+            this.series = series.stream().filter(s -> s.samples().size() > 1).toList();
+            setPreferredSize(new Dimension(240, 64));
+            setMaximumSize(new Dimension(Integer.MAX_VALUE, 64));
+            setToolTipText("Fame gained over the last 24 hours");
+        }
+
+        /** The tint without its transparency, for text. */
+        static Color solid(Color c) {
+            return new Color(c.getRed(), c.getGreen(), c.getBlue());
         }
 
         @Override
         protected void paintComponent(Graphics g) {
+            if (series.isEmpty()) return;
             Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             int w = getWidth(), h = getHeight() - 4;
-            long t0 = samples.get(0).t, t1 = Math.max(t0 + 1, samples.get(samples.size() - 1).t);
-            long lo = samples.stream().mapToLong(s -> s.fame).min().orElse(0);
-            long hi = Math.max(lo + 1, samples.stream().mapToLong(s -> s.fame).max().orElse(1));
+            long t0 = Long.MAX_VALUE, t1 = Long.MIN_VALUE, hi = 1;
+            for (Series s : series) {
+                List<Sample> ss = s.samples();
+                t0 = Math.min(t0, ss.get(0).t);
+                t1 = Math.max(t1, ss.get(ss.size() - 1).t);
+                long base = ss.get(0).fame;
+                for (Sample x : ss) hi = Math.max(hi, x.fame - base);
+            }
+            t1 = Math.max(t0 + 1, t1);
             g2.setColor(Section.color("LootGobbler.line", Color.GRAY));
             g2.fillRect(0, h + 2, w, 2);
-            g2.setColor(gold());
-            g2.setStroke(new BasicStroke(3));
-            int px = 0, py = 0;
-            for (int i = 0; i < samples.size(); i++) {
-                Sample s = samples.get(i);
-                int x = (int) ((s.t - t0) * (w - 2) / (t1 - t0)) + 1;
-                int y = h - (int) ((s.fame - lo) * (h - 2) / (hi - lo)) - 1;
-                if (i > 0) {
-                    g2.drawLine(px, py, x, py);   // stepped: fame stays until the next sample
-                    g2.drawLine(x, py, x, y);
+            for (int k = series.size() - 1; k >= 0; k--) {   // the main line last, on top
+                Series s = series.get(k);
+                List<Sample> ss = s.samples();
+                long base = ss.get(0).fame;
+                g2.setColor(s.color());
+                g2.setStroke(new BasicStroke(s.width(), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                int px = 0, py = 0;
+                for (int i = 0; i < ss.size(); i++) {
+                    Sample x = ss.get(i);
+                    int sx = (int) ((x.t - t0) * (w - 4) / (t1 - t0)) + 2;
+                    int sy = h - (int) (Math.max(0, x.fame - base) * (h - 4) / hi) - 2;
+                    if (i > 0) {
+                        g2.drawLine(px, py, sx, py);   // stepped: fame stays until the next sample
+                        g2.drawLine(sx, py, sx, sy);
+                    }
+                    px = sx;
+                    py = sy;
                 }
-                px = x;
-                py = y;
             }
             g2.dispose();
         }

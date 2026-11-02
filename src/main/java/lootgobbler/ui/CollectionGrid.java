@@ -20,7 +20,7 @@ import java.util.function.Consumer;
  */
 public class CollectionGrid extends JComponent implements Scrollable {
     public static final int CELL = 34, ICON = 28, PAD = 6;
-    private static final Color BG = new Color(0x050505), OWNED = new Color(0x19191D);
+    private static final Color BG = new Color(0x050505);
     private static final Map<Integer, Image> ICONS = new HashMap<>();   // EDT only
     private static final Image NO_ICON = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
 
@@ -321,11 +321,7 @@ public class CollectionGrid extends JComponent implements Scrollable {
                 if (index >= items.size()) return;
                 ItemDb.Item item = items.get(index);
                 int x = PAD + c * CELL, y = PAD + r * CELL;
-                boolean have = owned.containsKey(item.id);
-                if (have) {
-                    g.setColor(OWNED);
-                    g.fillRect(x + 1, y + 1, CELL - 2, CELL - 2);
-                }
+                boolean have = owned.containsKey(item.id);   // owned: full color; missing: faded (no box behind)
                 Image icon = icon(item.id);
                 if (icon != null) {
                     g.setComposite(have ? normal : dim);
@@ -335,7 +331,7 @@ public class CollectionGrid extends JComponent implements Scrollable {
                 if (have) {
                     CollectionStore.Entry entry = owned.get(item.id);
                     EnchantBadge.draw(g, x + CELL - 3, y + CELL - 3, entry.maxEnchants(), 5);   // best copy
-                    drawCount(g, x + 2, y + CELL - 3, entry.count);
+                    drawCount(g, x + 2, y + CELL - 3, entry.held());   // copies you still have
                 }
             }
         }

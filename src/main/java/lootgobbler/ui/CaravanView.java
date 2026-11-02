@@ -1,11 +1,13 @@
 package lootgobbler.ui;
 
 import lootgobbler.CharacterStore;
+import lootgobbler.CollectionStore;
 import lootgobbler.GobblerServer;
 import lootgobbler.GobblerServer.Caravan;
 import lootgobbler.GobblerServer.CaravanItem;
 import lootgobbler.GobblerServer.CaravanMember;
 import lootgobbler.ItemDb;
+import lootgobbler.ServerSync;
 import lootgobbler.Themes;
 
 import javax.swing.*;
@@ -26,8 +28,12 @@ import java.util.List;
  * the chosen range, sitting up front as their most played character. The member who found the most items leads, right
  * behind the pack ox; members with fewer than five items walk behind the caravan with a backpack. Clicking a member
  * shows their items per bag color and best finds below the picture.
+ * <p>
+ * Your own drops land on your wagon the moment they drop and are uploaded within seconds; guildies' drops show up
+ * with the check every minute while the caravan is on screen.
  */
 public class CaravanView extends JPanel {
+    private static final com.google.gson.Gson GSON = new com.google.gson.Gson();
     private static final NumberFormat NUM = NumberFormat.getIntegerInstance();
     private static final String[] RANGES = {"week", "month", "all"}, RANGE_LABELS = {"This week", "This month", "All time"};
     private static final int WALK_BELOW = 5;   // fewer items than this: on foot
@@ -42,13 +48,14 @@ public class CaravanView extends JPanel {
 
     private final GobblerServer server = GobblerServer.get();
     private final Section section;
-    private final Scene scene = new Scene();
+    private final Scene scene = new Scene(this::pick);
     private final JPanel detail = new JPanel(new GridLayout(1, 2, 16, 0));
     private final JLabel status = new JLabel();
     private String range = RANGES[0];
     private Caravan caravan;
     private long picked = -1;   // user id of the member shown below
-    private boolean loading;
+    private boolean loading, again, stale;   // again: reload once the current one is done; stale: reload when shown
+    private String shown;   // the caravan as last drawn, to skip redrawing when unchanged
 
     public CaravanView() {
         super(new BorderLayout());
@@ -87,13 +94,70 @@ public class CaravanView extends JPanel {
         section = new Section("Loot Caravan", Palette.GOLD, FitWidthPanel.scroll(holder, 24)).actions(ranges, refresh);
         add(section);
         message("Open this tab while logged in to a server to see your guild.");
+
+        CollectionStore.get().onDrop((id, find) -> SwingUtilities.invokeLater(() -> dropped(id, find)));
+        ServerSync.get().onUploaded(kind -> {   // your drops reached the server
+            if (kind.equals("collection")) SwingUtilities.invokeLater(this::changed);
+        });
+        new javax.swing.Timer(QuestMapView.POLL_MS, e -> {   // guildies' drops
+            if (isShowing()) load();
+        }).start();
+        addHierarchyListener(e -> {
+            if ((e.getChangeFlags() & HierarchyEvent.SHOWING_CHANGED) != 0 && isShowing() && stale) load();
+        });
+    }
+
+    /** Your data on the server changed: reload now if visible, else when shown. */
+    private void changed() {
+        if (isShowing()) load();
+        else stale = true;
+    }
+
+    /** One of your drops: onto your wagon right away (the server counts it once the upload is in). */
+    private void dropped(int itemId, CollectionStore.Find find) {
+        GobblerServer.User me = server.user();
+        if (caravan == null || me == null) return;
+        List<CaravanMember> members = new ArrayList<>(caravan.members);
+        CaravanMember m = members.stream().filter(x -> x.id == me.id).findFirst().orElse(null);
+        if (m == null) {
+            m = new CaravanMember();
+            m.id = me.id;
+            m.ign = me.ign;
+            members.add(m);
+        }
+        CaravanItem item = new CaravanItem();
+        item.itemId = itemId;
+        item.bag = bagName(find.bag);
+        item.time = find.time;
+        item.where = find.where;
+        m.items = new ArrayList<>(m.items);
+        m.items.add(0, item);
+        if (m.items.size() > 120) m.items.remove(m.items.size() - 1);
+        m.byBag = new HashMap<>(m.byBag);
+        m.byBag.merge(item.bag, 1, Integer::sum);
+        m.total++;
+        m.lastDrop = find.time;
+        members.sort(Comparator.comparingInt((CaravanMember x) -> -x.total).thenComparing(x -> x.ign.toLowerCase(Locale.ROOT)));
+        caravan.members = members;
+        show(caravan);
+    }
+
+    /** The bag color the server files a drop under: "Boosted Orange" is Orange, unknown is Other. */
+    private static String bagName(String bag) {
+        String b = bag == null ? "" : bag.trim();
+        if (b.startsWith("Boosted ")) b = b.substring("Boosted ".length()).trim();
+        return b.isEmpty() ? "Other" : Character.toUpperCase(b.charAt(0)) + b.substring(1);
     }
 
     /**
      * Loads the caravan for the chosen range (the Guild tab calls this whenever it refreshes).
      */
     public void load() {
-        if (loading) return;
+        if (loading) {
+            again = true;
+            return;
+        }
+        stale = false;
         if (server.user() == null || server.state() != GobblerServer.State.ONLINE) {
             message("Log in to a server in the Server tab to see your guild.");
             return;
@@ -102,20 +166,18 @@ public class CaravanView extends JPanel {
         String asked = range;
         server.caravan(asked).whenComplete((c, e) -> SwingUtilities.invokeLater(() -> {
             loading = false;
-            if (e != null) {
-                message(GuildPanel.loadError(e));
-                return;
-            }
-            if (!asked.equals(range)) {   // the range changed while loading
+            if (e != null) message(GuildPanel.loadError(e));
+            else if (asked.equals(range)) show(c);
+            if (again || !asked.equals(range)) {   // asked again, or the range changed while loading
+                again = false;
                 load();
-                return;
             }
-            show(c);
         }));
     }
 
     private void message(String text) {
         caravan = null;
+        shown = null;
         scene.setMembers(List.of());
         status.setText(text);
         detail.removeAll();
@@ -125,18 +187,23 @@ public class CaravanView extends JPanel {
 
     private void show(Caravan c) {
         caravan = c;
+        String json = GSON.toJson(c);
+        if (json.equals(shown)) return;
+        shown = json;
         section.setTitle("Loot Caravan - " + c.guild);
         int found = c.members.stream().mapToInt(m -> m.total).sum();
         GobblerServer.User me = server.user();
         int mine = me == null ? 0 : c.members.stream().filter(m -> m.id == me.id).mapToInt(m -> m.total).sum();
         status.setText(NUM.format(found) + " items  ·  you: " + NUM.format(mine) + "  ·  click a member for details");
         if (c.members.stream().noneMatch(m -> m.id == picked)) picked = c.members.isEmpty() ? -1 : c.members.get(0).id;
+        scene.picked = picked;
         scene.setMembers(c.members);
         showDetail();
     }
 
     private void pick(CaravanMember m) {
         picked = m.id;
+        scene.picked = picked;
         scene.repaint();
         showDetail();
     }
@@ -207,8 +274,8 @@ public class CaravanView extends JPanel {
             JLabel sub = muted(it.bag + " bag" + (it.where == null || it.where.isBlank() ? "" : "  ·  " + it.where)
                     + "  ·  " + ago(it.time));
             sub.setBorder(new EmptyBorder(0, 48, 0, 0));
-            p.add(left(name));
-            p.add(left(sub));
+            p.add(left(ItemLinks.link(name, it.itemId)));   // click: the item in Inventory
+            p.add(left(ItemLinks.link(sub, it.itemId)));
             p.add(Box.createVerticalStrut(6));
         }
         return card(p);
@@ -287,9 +354,10 @@ public class CaravanView extends JPanel {
 
     /**
      * The painted road: sky, hills, the ox, one wagon per member with enough items, then the members on foot.
-     * Animates (wheels, bobbing loot, walking) while it is on screen.
+     * Animates (wheels, bobbing loot, walking) while it is on screen. Also used small on the Profile, with just
+     * your own wagon (zoomed out, any click opens the caravan).
      */
-    private class Scene extends JComponent implements Scrollable {
+    static class Scene extends JComponent implements Scrollable {
         static final int HEIGHT = 440;
         private static final int PAD = 28, OX_W = 120, HITCH = 26, WAGON_W = 186, BED_H = 34, WALKER_W = 80, DRIVER = 64;
         private static final int ITEM = 24, ITEM_GAP = 2, PILE_COLS = 5, MAX_PILE = 40;
@@ -305,14 +373,20 @@ public class CaravanView extends JPanel {
         private final Map<Long, Image> drivers = new HashMap<>();   // flipped character sprite per member
         private final Map<Integer, Icon> items = new HashMap<>();
         private final List<Map.Entry<Rectangle, CaravanMember>> hits = new ArrayList<>();
+        private final List<Map.Entry<Rectangle, Integer>> itemHits = new ArrayList<>();   // pile items -> item id
         private final long[][] stars = new long[40][2];
         private int phase;
+        private final java.util.function.Consumer<CaravanMember> onPick;   // null for a click beside the members
+        long picked = -1;   // the member drawn highlighted
+        private double zoom = 1;
+        private boolean anyClick;
         private final javax.swing.Timer timer = new javax.swing.Timer(70, e -> {
             phase++;
             repaint();
         });
 
-        Scene() {
+        Scene(java.util.function.Consumer<CaravanMember> onPick) {
+            this.onPick = onPick;
             Random r = new Random(7);
             for (long[] s : stars) {
                 s[0] = r.nextInt(10_000);   // x in 1/10000 of the width
@@ -325,32 +399,57 @@ public class CaravanView extends JPanel {
                 else timer.stop();
             });
             Clicks.onClick(this, e -> {
+                Integer item = itemAt(e.getPoint());
+                if (item != null) {   // an item on a pile: show it in Inventory
+                    ItemLinks.open(item);
+                    return;
+                }
                 CaravanMember m = at(e.getPoint());
-                if (m != null) pick(m);
+                if (m != null || anyClick) onPick.accept(m);
             });
             addMouseMotionListener(new MouseAdapter() {
                 @Override
                 public void mouseMoved(MouseEvent e) {
-                    setCursor(Cursor.getPredefinedCursor(at(e.getPoint()) != null ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
+                    setCursor(Cursor.getPredefinedCursor(anyClick || itemAt(e.getPoint()) != null || at(e.getPoint()) != null
+                            ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
                 }
             });
         }
 
+        /** Drawn at this scale; a click anywhere calls onPick (with null beside the members). */
+        Scene small(double zoom) {
+            this.zoom = zoom;
+            anyClick = true;
+            return this;
+        }
+
         void setMembers(List<CaravanMember> members) {
-            riders = members.stream().filter(m -> m.total >= WALK_BELOW).toList();
-            walkers = members.stream().filter(m -> m.total < WALK_BELOW).toList();
+            // small (the Profile's own wagon): always on the wagon right behind the ox, even with few items
+            riders = members.stream().filter(m -> anyClick || m.total >= WALK_BELOW).toList();
+            walkers = members.stream().filter(m -> !anyClick && m.total < WALK_BELOW).toList();
             drivers.clear();
             revalidate();
             repaint();
         }
 
         private CaravanMember at(Point p) {
+            p = new Point((int) (p.x / zoom), (int) (p.y / zoom));
             for (Map.Entry<Rectangle, CaravanMember> h : hits) if (h.getKey().contains(p)) return h.getValue();
+            return null;
+        }
+
+        /** The pile item under p (not on the Profile's small wagon, where any click opens the caravan); null if none. */
+        private Integer itemAt(Point p) {
+            if (anyClick) return null;
+            Point q = new Point((int) (p.x / zoom), (int) (p.y / zoom));
+            for (Map.Entry<Rectangle, Integer> h : itemHits) if (h.getKey().contains(q)) return h.getValue();
             return null;
         }
 
         @Override
         public String getToolTipText(MouseEvent e) {
+            Integer item = itemAt(e.getPoint());
+            if (item != null) return itemName(item) + "  (click: show in Inventory)";
             CaravanMember m = at(e.getPoint());
             if (m == null) return null;
             String cls = m.character == null ? "" : " (" + m.character.className + ")";
@@ -361,6 +460,7 @@ public class CaravanView extends JPanel {
         public Dimension getPreferredSize() {
             int w = PAD + OX_W + riders.size() * (HITCH + WAGON_W) + (walkers.isEmpty() ? 0 : 46) + PAD;
             for (CaravanMember m : walkers) w += walkerWidth(m);
+            if (zoom != 1) return new Dimension((int) Math.ceil(w * zoom), (int) Math.ceil(HEIGHT * zoom));
             return new Dimension(Math.max(400, w), HEIGHT);
         }
 
@@ -379,9 +479,11 @@ public class CaravanView extends JPanel {
         protected void paintComponent(Graphics g) {
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-            int w = getWidth(), ground = HEIGHT - 34;
+            g2.scale(zoom, zoom);
+            int w = (int) Math.ceil(getWidth() / zoom), ground = HEIGHT - 34;
             paintBackdrop(g2, w);
             hits.clear();
+            itemHits.clear();
             if (riders.isEmpty() && walkers.isEmpty()) {
                 g2.dispose();
                 return;
@@ -466,7 +568,7 @@ public class CaravanView extends JPanel {
         private void paintWagon(Graphics2D g2, CaravanMember m, int index, int x, int ground, double scale) {
             int bedY = ground - 32 - BED_H;
             int bob = (int) Math.round(2 * Math.sin(phase * 0.25 + index));
-            boolean picked = m.id == CaravanView.this.picked;
+            boolean isPicked = m.id == picked;
 
             // the pile: rarest on top
             List<CaravanItem> loot = new ArrayList<>(m.items);
@@ -483,26 +585,13 @@ public class CaravanView extends JPanel {
                 int ix = rowX + col * (ITEM + ITEM_GAP), iy = bedY - (row + 1) * (ITEM + ITEM_GAP) + bob;
                 top = Math.min(top, iy);
                 CaravanItem it = pile.get(i);
-                Color glow = bagColor(it.bag);
-                g2.setColor(new Color(glow.getRed(), glow.getGreen(), glow.getBlue(), 90));
-                g2.fillRect(ix + 2, iy + 2, ITEM - 4, ITEM - 4);
+                itemHits.add(Map.entry(new Rectangle(ix, iy, ITEM, ITEM), it.itemId));
                 Icon icon = items.computeIfAbsent(it.itemId, id -> CharactersView.sprite(id, ITEM));
                 if (icon != null) icon.paintIcon(this, g2, ix + (ITEM - icon.getIconWidth()) / 2, iy + (ITEM - icon.getIconHeight()) / 2);
             }
 
-            // rank flag at the back, sticking out above the pile
-            int poleX = x + WAGON_W - 8, poleTop = Math.min(bedY - 46, top - 26);
-            g2.setColor(INK);
-            g2.fillRect(poleX, poleTop, 4, bedY - poleTop);
-            Color flag = index == 0 ? Section.color("LootGobbler.gold", Palette.GOLD) : index == 1 ? FLAG_2 : index == 2 ? FLAG_3 : Palette.MUTED;
-            String rank = "#" + (index + 1);
-            g2.setFont(FLAG_FONT);
-            int fw = g2.getFontMetrics().stringWidth(rank) + 14;
-            g2.setColor(flag);
-            g2.fillRect(poleX - fw, poleTop, fw, 20);
-            g2.setColor(new Color(0x1A120A));
-            g2.drawString(rank, poleX - fw + 7, poleTop + 15);
-            top = poleTop;
+            // rank flag at the back, sticking out above the pile (not on the Profile's single wagon)
+            if (!anyClick) top = rankFlag(g2, index, x, bedY, top);
 
             // the driver up front, facing the way the caravan goes; the bed hides their legs
             Image driver = driver(m);
@@ -518,7 +607,7 @@ public class CaravanView extends JPanel {
             while (fm.stringWidth(name) > WAGON_W - 20 && name.length() > 3) name = name.substring(0, name.length() - 1);
             g2.setColor(new Color(0x1A120A));
             g2.drawString(name, x + (WAGON_W - fm.stringWidth(name)) / 2, bedY + 22);
-            if (picked) {
+            if (isPicked) {
                 g2.setColor(Section.color("LootGobbler.goldHover", Palette.GOLD));
                 g2.setStroke(new BasicStroke(3));
                 g2.drawRect(x - 3, bedY - 3, WAGON_W + 5, BED_H + 5);
@@ -528,6 +617,22 @@ public class CaravanView extends JPanel {
             wheel(g2, x + 15 + 19, ground - 19);
             wheel(g2, x + WAGON_W - 15 - 19, ground - 19);
             hits.add(Map.entry(new Rectangle(x, top, WAGON_W, ground - top), m));
+        }
+
+        /** The member's place on a flag at the back of the wagon; returns the flag's top. */
+        private int rankFlag(Graphics2D g2, int index, int x, int bedY, int top) {
+            int poleX = x + WAGON_W - 8, poleTop = Math.min(bedY - 46, top - 26);
+            g2.setColor(INK);
+            g2.fillRect(poleX, poleTop, 4, bedY - poleTop);
+            Color flag = index == 0 ? Section.color("LootGobbler.gold", Palette.GOLD) : index == 1 ? FLAG_2 : index == 2 ? FLAG_3 : Palette.MUTED;
+            String rank = "#" + (index + 1);
+            g2.setFont(FLAG_FONT);
+            int fw = g2.getFontMetrics().stringWidth(rank) + 14;
+            g2.setColor(flag);
+            g2.fillRect(poleX - fw, poleTop, fw, 20);
+            g2.setColor(new Color(0x1A120A));
+            g2.drawString(rank, poleX - fw + 7, poleTop + 15);
+            return poleTop;
         }
 
         private void wheel(Graphics2D g2, int cx, int cy) {
@@ -562,7 +667,7 @@ public class CaravanView extends JPanel {
             int tw = fm.stringWidth(tag) + 10, tx = x + (slot - tw) / 2, ty = ground - 2;
             g2.setColor(TAG);
             g2.fillRect(tx, ty, tw, 20);
-            g2.setColor(m.id == CaravanView.this.picked ? Section.color("LootGobbler.goldHover", Palette.GOLD) : ROAD_EDGE);
+            g2.setColor(m.id == picked ? Section.color("LootGobbler.goldHover", Palette.GOLD) : ROAD_EDGE);
             g2.drawRect(tx, ty, tw - 1, 19);
             g2.setColor(FLAG_2);
             g2.drawString(tag, tx + 5, ty + 15);

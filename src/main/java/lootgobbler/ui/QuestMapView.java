@@ -1,9 +1,12 @@
 package lootgobbler.ui;
 
+import lootgobbler.AppLog;
+import lootgobbler.DpsHistory;
 import lootgobbler.GobblerServer;
 import lootgobbler.GobblerServer.QuestMap;
 import lootgobbler.GobblerServer.QuestMapClear;
 import lootgobbler.GobblerServer.QuestMaps;
+import lootgobbler.ServerSync;
 import lootgobbler.Themes;
 
 import javax.swing.*;
@@ -27,17 +30,30 @@ import java.util.Random;
  * after the last stage the guild earns a medal (not there yet). The current map is on top, past maps below it.
  * Each map is drawn in its own style (parchment, hex board, overworld, Oryx's tower, constellation) and one of four
  * color variations, all chosen by the server.
+ * <p>
+ * It stays current by itself: your own clear of the current stage moves the map on the moment the run ends and is
+ * uploaded within seconds; the server then confirms it, or corrects it when a guildie cleared the stage earlier.
+ * Guildies' clears show up with the check every minute while the map is on screen.
  */
 public class QuestMapView extends JPanel {
     private static final int PAST = 20;
+    static final int POLL_MS = 60_000;   // how often the guild views check the server while on screen
+    private static final com.google.gson.Gson GSON = new com.google.gson.Gson();
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("d MMM", Locale.ENGLISH);
     private static final DateTimeFormatter DAY_TIME = DateTimeFormatter.ofPattern("d MMM, HH:mm", Locale.ENGLISH);
 
     private final GobblerServer server = GobblerServer.get();
     private final Section section;
     private final JPanel body = new JPanel();
-    private boolean loading;
+    private boolean loading, again, stale;   // again: reload once the current one is done; stale: reload when shown
     private long skew;   // server clock minus ours
+    private QuestMaps maps;
+    private String shown;   // the maps as last drawn, to skip redrawing (and losing the selected stage) when unchanged
+    private volatile DpsHistory.Run seenRun = DpsHistory.get().latest();
+    private QuestMapClear pending;   // your clear, kept until the server has it (the upload takes a moment)
+    private long pendingMap, pendingUntil;
+    private int pendingStage;
+    private boolean pendingUploaded;
 
     public QuestMapView() {
         super(new BorderLayout());
@@ -52,13 +68,103 @@ public class QuestMapView extends JPanel {
         section = new Section("Quest Map", Palette.GOLD, FitWidthPanel.scroll(holder, 24)).actions(refresh);
         add(section);
         message("Open this tab while logged in to a server to see your guild's quest map.");
+
+        DpsHistory.get().onChange(() -> {
+            DpsHistory.Run run = DpsHistory.get().latest();
+            if (run == seenRun) return;   // it also fires every second during a fight
+            seenRun = run;
+            SwingUtilities.invokeLater(() -> cleared(run));
+        });
+        // your run reached the server: show what the server made of it (it corrects a clear a guildie made first)
+        ServerSync.get().onUploaded(kind -> {
+            if (kind.equals("dps_history")) SwingUtilities.invokeLater(() -> {
+                pendingUploaded = true;
+                changed();
+            });
+        });
+        new javax.swing.Timer(POLL_MS, e -> {   // guildies' clears
+            if (isShowing()) load();
+        }).start();
+        addHierarchyListener(e -> {
+            if ((e.getChangeFlags() & HierarchyEvent.SHOWING_CHANGED) != 0 && isShowing() && stale) load();
+        });
+    }
+
+    /** Your data on the server changed: reload now if visible, else when shown. */
+    private void changed() {
+        if (isShowing()) load();
+        else stale = true;
+    }
+
+    /**
+     * A run of yours just ended: if it clears the current stage (same rules as the server: its dungeon, after the
+     * last stage was cleared, with your boss damage), the map moves on right away. The upload that follows makes
+     * it official for the guild.
+     */
+    private void cleared(DpsHistory.Run run) {
+        QuestMap m = maps == null ? null : maps.current;
+        GobblerServer.User me = server.user();
+        if (run == null || m == null || me == null || run.guildHall || m.completedAt != null) return;
+        int n = m.clears.size();
+        if (n >= m.dungeons.size() || now() >= m.endsAt) return;
+        long unlock = n == 0 ? m.startsAt : m.clears.get(n - 1).at;
+        if (run.start < unlock || !run.dungeon.equalsIgnoreCase(m.dungeons.get(n)) || !bossDamage(run)) return;
+        QuestMapClear c = new QuestMapClear();
+        c.userId = me.id;
+        c.ign = me.ign;
+        c.at = run.start;
+        pending = c;
+        pendingMap = m.id;
+        pendingStage = n;
+        pendingUntil = System.currentTimeMillis() + 3 * 60_000;
+        pendingUploaded = false;
+        addClear(m, c);
+        AppLog.log("guild", "Quest map: stage " + (n + 1) + " (" + run.dungeon + ") cleared");
+        show(maps);
+    }
+
+    private static void addClear(QuestMap m, QuestMapClear c) {
+        m.clears = new ArrayList<>(m.clears);
+        m.clears.add(c);
+        if (m.clears.size() == m.dungeons.size()) m.completedAt = c.at;
+    }
+
+    /**
+     * A reload before your run reached the server would take your clear back: keep it on the map until then. After
+     * that the server's answer counts; if a guildie cleared the stage earlier (their upload just hadn't been seen
+     * yet), it shows them instead.
+     */
+    private void keepPending(QuestMap m) {
+        if (pending == null || m == null) return;
+        boolean theirs = m.clears.size() > pendingStage && m.clears.get(pendingStage).userId != pending.userId;
+        if (theirs && m.id == pendingMap) {
+            AppLog.log("guild", "Quest map: stage " + (pendingStage + 1) + " was cleared earlier by " + m.clears.get(pendingStage).ign);
+        }
+        if (pendingUploaded || theirs || m.id != pendingMap || System.currentTimeMillis() > pendingUntil
+                || m.clears.size() > pendingStage) {
+            pending = null;   // the server has the final say now
+        } else if (m.completedAt == null && m.clears.size() == pendingStage) {
+            addClear(m, pending);
+        }
+    }
+
+    private static boolean bossDamage(DpsHistory.Run run) {
+        for (DpsHistory.Boss b : run.bosses) {
+            DpsHistory.PlayerRow p = b.me();
+            if (p != null && p.damage > 0) return true;
+        }
+        return false;
     }
 
     /**
      * Loads the maps (the Guild tab calls this whenever it refreshes).
      */
     public void load() {
-        if (loading) return;
+        if (loading) {
+            again = true;
+            return;
+        }
+        stale = false;
         if (server.user() == null || server.state() != GobblerServer.State.ONLINE) {
             message("Log in to a server in the Server tab to see your guild's quest map.");
             return;
@@ -67,11 +173,20 @@ public class QuestMapView extends JPanel {
         server.questMaps(PAST).whenComplete((maps, e) -> SwingUtilities.invokeLater(() -> {
             loading = false;
             if (e != null) message(GuildPanel.loadError(e));
-            else show(maps);
+            else {
+                keepPending(maps.current);
+                show(maps);
+            }
+            if (again) {
+                again = false;
+                load();
+            }
         }));
     }
 
     private void message(String text) {
+        maps = null;
+        shown = null;
         body.removeAll();
         JLabel l = new JLabel(text);
         l.setForeground(Palette.MUTED);
@@ -82,6 +197,10 @@ public class QuestMapView extends JPanel {
 
     private void show(QuestMaps maps) {
         skew = maps.now - System.currentTimeMillis();
+        this.maps = maps;
+        String json = GSON.toJson(new Object[]{maps.guild, maps.current, maps.past});
+        if (json.equals(shown)) return;
+        shown = json;
         section.setTitle("Quest Map - " + maps.guild);
         body.removeAll();
         if (maps.current != null) body.add(card(maps.current, true));

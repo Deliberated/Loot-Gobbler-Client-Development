@@ -35,7 +35,8 @@ import java.util.concurrent.CompletableFuture;
 public class GuildPanel extends SubTabs {
     private static final NumberFormat NUM = NumberFormat.getIntegerInstance();
     private static final DateTimeFormatter DROP_TIME = DateTimeFormatter.ofPattern("d MMM, HH:mm", Locale.ENGLISH);
-    private static final String QUESTS = "Quests", CARAVAN = "Loot Caravan", LEADERBOARD = "Leaderboard", DROPS = "Recent Drops", MEMBER = "Member";
+    static final String CARAVAN = "Loot Caravan", QUEST_MAP = "Quest Map";
+    private static final String QUESTS = "Quests", LEADERBOARD = "Leaderboard", DROPS = "Recent Drops", MEMBER = "Member";
     private static final int DROP_LIMIT = 100;
 
     private final GobblerServer server = GobblerServer.get();
@@ -54,7 +55,7 @@ public class GuildPanel extends SubTabs {
                 .actions(button("Refresh", this::refresh));
         memberSection = new Section("Member", Palette.BLUE, wrap(FitWidthPanel.scroll(memberBody, 24)));
         page(CARAVAN, caravan);
-        page("Quest Map", questMap);
+        page(QUEST_MAP, questMap);
         page(LEADERBOARD, leaderboardSection);
         page(DROPS, new Section("Recent Drops", Palette.PURPLE, wrap(FitWidthPanel.scroll(dropsBody, 24)))
                 .actions(button("Refresh", this::refresh)));

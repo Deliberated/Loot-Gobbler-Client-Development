@@ -19,8 +19,9 @@ import java.util.concurrent.TimeUnit;
  * which is the main store.
  * <ul>
  * <li>After logging in: download everything, merge it into the local data, upload the merged result.</li>
- * <li>Local changes are uploaded at most once a minute. If the server is not reachable, they stay in the local
- * files and are uploaded on the next retry.</li>
+ * <li>Local changes are uploaded at most once a minute; a cleared dungeon or a drop within seconds (uploadSoon), so
+ * the guild sees it right away. If the server is not reachable, they stay in the local files and are uploaded on
+ * the next retry.</li>
  * <li>If another PC uploaded in between (revision conflict), the server's version is merged in and uploaded again.</li>
  * </ul>
  * The local files belong to one account: logging in to a different one pauses syncing until the player confirms,
@@ -70,6 +71,7 @@ public final class ServerSync {
     }
 
     private static final long UPLOAD_DELAY_MS = 60_000;   // changes come in bursts while playing
+    private static final long SOON_MS = 2_000;            // a few bags drop at once
     private static final long RETRY_MS = 60_000;
     private static final int MAX_CONFLICT_RETRIES = 3;
     private static final String KEY_OWNER = "serverSyncOwner";   // "<server url>|<user id>|<ign>" the files belong to
@@ -80,6 +82,7 @@ public final class ServerSync {
             new Kind(ExaltStore.get()), new Kind(PetStore.get()), new Kind(DpsHistory.get()),
             new Kind(PlayerProfile.get()));
     private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
+    private final List<java.util.function.Consumer<String>> uploadListeners = new CopyOnWriteArrayList<>();
     private final ScheduledExecutorService exec = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "server-sync");
         t.setDaemon(true);
@@ -90,6 +93,7 @@ public final class ServerSync {
     private volatile Phase phase = Phase.OFF;
     private volatile String message = "";
     private volatile long lastSync;
+    private volatile boolean soon;   // a change the guild should see right away is waiting
     private boolean started;
 
     public static ServerSync get() {
@@ -128,6 +132,14 @@ public final class ServerSync {
 
     public void onChange(Runnable listener) {
         listeners.add(listener);
+    }
+
+    /**
+     * Called (on the sync thread) with the kind, e.g. "dps_history", after local data of that kind reached the
+     * server. The guild views reload then, so they show what the server made of it.
+     */
+    public void onUploaded(java.util.function.Consumer<String> listener) {
+        uploadListeners.add(listener);
     }
 
     /** Downloads, merges and uploads everything now. */
@@ -172,6 +184,20 @@ public final class ServerSync {
         schedule(UPLOAD_DELAY_MS);
     }
 
+    /**
+     * Uploads within seconds instead of within a minute: for changes the guild views show (a cleared dungeon for the
+     * quest map, a drop for the caravan). Call it after the change was saved.
+     */
+    public synchronized void uploadSoon() {
+        soon = true;
+        if (account.isEmpty() || phase == Phase.OTHER_ACCOUNT || phase == Phase.SYNCING) return;   // picked up after
+        if (scheduled != null && !scheduled.isDone() && scheduled.getDelay(TimeUnit.MILLISECONDS) > SOON_MS) {
+            scheduled.cancel(false);
+            scheduled = null;
+        }
+        schedule(SOON_MS);
+    }
+
     private synchronized void schedule(long delayMs) {
         if (scheduled != null && !scheduled.isDone()) return;
         scheduled = exec.schedule((Runnable) this::upload, delayMs, TimeUnit.MILLISECONDS);
@@ -183,6 +209,7 @@ public final class ServerSync {
     /** Called first by every run, so a change during the run can schedule the next one. */
     private synchronized void running() {
         scheduled = null;
+        soon = false;
     }
 
     private void fullSync() {
@@ -239,7 +266,7 @@ public final class ServerSync {
             }
             lastSync = System.currentTimeMillis();
             set(kinds.stream().anyMatch(k -> k.dirty) ? Phase.WAITING : Phase.UP_TO_DATE, "");
-            if (phase == Phase.WAITING) schedule(UPLOAD_DELAY_MS);   // changed again while uploading
+            if (phase == Phase.WAITING) schedule(soon ? SOON_MS : UPLOAD_DELAY_MS);   // changed again while uploading
         } catch (Exception e) {
             failed(e);
         }
@@ -257,6 +284,7 @@ public final class ServerSync {
             k.synced = data;
             k.syncedAt = System.currentTimeMillis();
             k.lastUp = k.syncedAt;
+            for (java.util.function.Consumer<String> l : uploadListeners) l.accept(k.store.syncKind());
         } catch (Exception e) {
             Throwable cause = GobblerServer.unwrap(e);
             if (cause instanceof ServerException se && "revision_conflict".equals(se.code) && se.current != null

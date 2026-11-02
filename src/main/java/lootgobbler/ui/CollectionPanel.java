@@ -184,7 +184,7 @@ public class CollectionPanel extends JPanel {
 
         recent.removeAll();
         if (historyItem != null) {
-            renderHistory(historyItem, owned.get(historyItem.id));
+            renderHistory(historyItem, CollectionStore.get().snapshot().get(historyItem.id));   // also when all are gone
         } else {
             sideSection.setTitle("Recent");
             backToRecent.setVisible(false);
@@ -201,6 +201,14 @@ public class CollectionPanel extends JPanel {
         for (Map.Entry<Integer, CollectionStore.Entry> e : byLast) {
             logModel.addRow(new Object[]{e.getValue().firstDate(), e.getKey(), name(e.getKey()), e.getValue().count});
         }
+    }
+
+    /**
+     * Shows an item clicked in another tab (see ItemLinks): scrolled to and pulsing in the grid, its finds beside it.
+     */
+    public void showItem(int itemId) {
+        ItemDb.Item item = ItemDb.get().item(itemId);
+        if (item != null) showHistory(item, true);
     }
 
     /**
@@ -265,6 +273,7 @@ public class CollectionPanel extends JPanel {
         text.add(Box.createVerticalStrut(6));
 
         String found = entry == null ? "Not found yet" : entry.count == 1 ? "Found 1 time" : "Found " + entry.count + " times";
+        if (entry != null && entry.removed() > 0) found += "  ·  " + entry.held() + " left";
         JLabel count = new JLabel(found);
         count.setFont(count.getFont().deriveFont(20f));   // smaller, the pixel font draws a 6 that looks like an 8
         count.setForeground(entry == null ? Palette.MUTED : new Color(0xF5C542));
@@ -340,11 +349,13 @@ public class CollectionPanel extends JPanel {
         String how = switch (f.source) {
             case CollectionStore.VAULT -> f.bag.isEmpty() ? "Vault" : f.bag;
             case CollectionStore.INVENTORY -> "Inventory";
+            case CollectionStore.FORGED -> "Forged (used in the forge)";
+            case CollectionStore.FED -> "Fed to a pet";
             default -> (f.bag.isEmpty() ? "Drop" : f.bag + " bag") + (f.where.isEmpty() ? "" : "  ·  " + f.where);
         };
         // seasonal or not, behind the place: teal like the Characters tab's seasonal tag, red for non-seasonal
         String season = f.seasonal == null ? "" : f.seasonal
-                ? "  <font color='#2BD8B0'>(ssnl)</font>" : "  <font color='#E5636E'>(nssnl)</font>";
+                ? "  <font color='#2BD8B0'>(seasonal)</font>" : "  <font color='#E5636E'>(non-seasonal)</font>";
         JLabel what = leftAligned(new JLabel("<html>" + escapeHtml(how) + season + "</html>"));
         if (f.seasonal != null) what.setToolTipText(f.seasonal ? "Found on a seasonal character" : "Found on a non-seasonal character");
         JPanel text = new JPanel();
@@ -473,11 +484,12 @@ public class CollectionPanel extends JPanel {
     /**
      * The collection without entries that are not collectible gear (e.g. consumables recorded by older versions).
      */
+    /** The collectible items you hold a copy of (all forged or fed away = not collected). */
     private static Map<Integer, CollectionStore.Entry> collected() {
         Map<Integer, CollectionStore.Entry> all = CollectionStore.get().snapshot();
-        all.keySet().removeIf(id -> {
-            ItemDb.Item item = ItemDb.get().item(id);
-            return item == null || !item.isCollectible();
+        all.entrySet().removeIf(e -> {
+            ItemDb.Item item = ItemDb.get().item(e.getKey());
+            return item == null || !item.isCollectible() || e.getValue().held() == 0;
         });
         return all;
     }
@@ -489,7 +501,7 @@ public class CollectionPanel extends JPanel {
             ItemDb.Item item = ItemDb.get().item(e.getKey());
             String line = name(e.getKey());
             if (item != null && item.isShiny() && !line.contains("Shiny")) line += " (Shiny)";
-            if (e.getValue().count > 1) line += " x" + e.getValue().count;
+            if (e.getValue().held() > 1) line += " x" + e.getValue().held();
             lines.add(line);
         }
         lines.sort(String.CASE_INSENSITIVE_ORDER);

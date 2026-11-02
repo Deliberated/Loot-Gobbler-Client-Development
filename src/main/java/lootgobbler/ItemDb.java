@@ -51,10 +51,12 @@ public final class ItemDb {
          * from the game's UT and ST collection tabs, plus the top tiers (T14 weapons and armor, T7 and T8 abilities,
          * T7 rings). Consumables and craftables in the UT/ST tabs (shards, orbs, potions...) are left out.
          * Newer items (the Druid's sigils, event weapons, some shinies) lack the tab label, so a named UT or ST
-         * item counts too.
+         * item counts too, and so does an unnamed UT with a dungeon of origin (ORG_ label, e.g. Swarmlord's Sigil,
+         * Corsair Ring); unnamed UTs without one are test entries and event reskins.
          */
         public boolean isCollectible() {
-            boolean utSt = labels.contains("TAB_UT") || labels.contains("TAB_ST") || (named && (isUT() || isST()));
+            boolean dungeonUt = isUT() && !labels.contains("RESKIN") && labels.stream().anyMatch(l -> l.startsWith("ORG_"));
+            boolean utSt = labels.contains("TAB_UT") || labels.contains("TAB_ST") || (named && (isUT() || isST())) || dungeonUt;
             return (utSt && slotType != 0 && slotType != 10) || isTopTier();
         }
 

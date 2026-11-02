@@ -18,9 +18,19 @@ import java.util.concurrent.CopyOnWriteArrayList;
 /**
  * Lifetime collection: for each item id, when it was first and last obtained, how often, and a history of
  * every find (drop, vault, inventory) with its enchantment count. Saved to collection.json after every change.
+ * <p>
+ * Copies that leave you (forged into something else, fed to a pet) stay in the history as removal events and are
+ * taken off what you hold: count is every copy ever obtained, held() what is left. An item with nothing held shows
+ * as not collected. Removals are events like drops, so syncing keeps them instead of bringing the copy back.
  */
 public final class CollectionStore implements Syncable {
     public static final String DROP = "drop", VAULT = "vault", INVENTORY = "inventory";
+    public static final String FORGED = "forged", FED = "fed";   // removal events
+
+    /** A copy that left you (forged, fed), not one you found. */
+    public static boolean isRemoval(Find f) {
+        return FORGED.equals(f.source) || FED.equals(f.source);
+    }
 
     /**
      * One time an item was found.
@@ -71,12 +81,24 @@ public final class CollectionStore implements Syncable {
             return history == null ? List.of() : history;
         }
 
+        /** Copies forged or fed away. */
+        public int removed() {
+            return (int) history().stream().filter(CollectionStore::isRemoval).count();
+        }
+
+        /** Copies you still hold: every copy obtained minus those forged or fed away. */
+        public int held() {
+            return Math.max(0, count - removed());
+        }
+
         /**
          * Most enchantments any recorded copy had (0 if none or unknown).
          */
         public int maxEnchants() {
             int max = 0;
-            for (Find f : history()) max = Math.max(max, f.enchantIds != null ? f.enchantIds.size() : f.enchants);
+            for (Find f : history()) {
+                if (!isRemoval(f)) max = Math.max(max, f.enchantIds != null ? f.enchantIds.size() : f.enchants);
+            }
             return max;
         }
     }
@@ -88,6 +110,7 @@ public final class CollectionStore implements Syncable {
 
     private final LinkedHashMap<Integer, Entry> entries = new LinkedHashMap<>();
     private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
+    private final List<java.util.function.BiConsumer<Integer, Find>> dropListeners = new CopyOnWriteArrayList<>();
 
     public static CollectionStore get() {
         return INSTANCE;
@@ -120,6 +143,12 @@ public final class CollectionStore implements Syncable {
             save();
         }
         fire();
+        for (java.util.function.BiConsumer<Integer, Find> l : dropListeners) l.accept(itemId, find);
+    }
+
+    /** Called (on the packet thread) with each drop right after it was recorded. */
+    public void onDrop(java.util.function.BiConsumer<Integer, Find> listener) {
+        dropListeners.add(listener);
     }
 
     /**
@@ -136,7 +165,7 @@ public final class CollectionStore implements Syncable {
             for (Map.Entry<Integer, List<Find>> h : held.entrySet()) {
                 List<Find> copies = h.getValue();
                 Entry e = entries.get(h.getKey());
-                int known = e == null ? 0 : e.count;
+                int known = e == null ? 0 : e.held();   // copies forged or fed away are not in the vault any more
                 if (e != null && fillEnchants(e, copies)) changed = true;
                 if (e != null && fillSeasonal(e, copies)) changed = true;
                 if (copies.size() <= known) continue;
@@ -151,7 +180,7 @@ public final class CollectionStore implements Syncable {
                 for (int i = 0; i < n; i++) addHistory(e, i < fresh.size() ? fresh.get(i) : copies.get(copies.size() - n + i));
                 e.last = copies.get(copies.size() - 1).time;
                 added += n;
-                e.count = copies.size();
+                e.count += n;
             }
             if (added > 0 || changed) save();
         }
@@ -167,6 +196,7 @@ public final class CollectionStore implements Syncable {
         List<Find> rest = new ArrayList<>(copies);
         List<Find> unknown = new ArrayList<>();
         for (Find f : e.history()) {
+            if (isRemoval(f)) continue;
             if (f.enchantIds == null) {
                 unknown.add(f);
                 continue;
@@ -190,6 +220,7 @@ public final class CollectionStore implements Syncable {
         List<Find> unknown = new ArrayList<>();
         List<List<Integer>> shown = new ArrayList<>();   // enchantment sets already in the history, one per find
         for (Find f : e.history()) {
+            if (isRemoval(f)) continue;
             if (f.enchantIds == null && !DROP.equals(f.source)) unknown.add(f);
             if (f.enchantIds != null) shown.add(f.enchantIds);
         }
@@ -198,7 +229,7 @@ public final class CollectionStore implements Syncable {
             // older versions did not count empty slots: upgrade a find with the same enchantments but fewer slots
             Find upgrade = null;
             for (Find f : e.history()) {
-                if (f.enchantIds != null && !DROP.equals(f.source) && f.enchantIds.size() < s.enchantIds.size()
+                if (f.enchantIds != null && !DROP.equals(f.source) && !isRemoval(f) && f.enchantIds.size() < s.enchantIds.size()
                         && s.enchantIds.containsAll(f.enchantIds)) {
                     upgrade = f;
                     break;
@@ -228,7 +259,7 @@ public final class CollectionStore implements Syncable {
         boolean changed = false;
         List<Find> rest = new ArrayList<>(seen);
         for (Find f : e.history()) {
-            if (f.seasonal != null || f.enchantIds == null || DROP.equals(f.source)) continue;
+            if (f.seasonal != null || f.enchantIds == null || DROP.equals(f.source) || isRemoval(f)) continue;
             Find s = rest.stream().filter(c -> c.seasonal != null && f.enchantIds.equals(c.enchantIds)).findFirst().orElse(null);
             if (s == null) continue;
             rest.remove(s);
@@ -253,8 +284,30 @@ public final class CollectionStore implements Syncable {
         return new LinkedHashMap<>(entries);
     }
 
+    /** True if you hold at least one copy (found, and not all forged or fed away). */
     public synchronized boolean contains(int itemId) {
-        return entries.containsKey(itemId);
+        Entry e = entries.get(itemId);
+        return e != null && e.held() > 0;
+    }
+
+    /**
+     * A copy left you: forged into something else or fed to a pet (source FORGED or FED). Recorded in the history,
+     * and taken off what you hold. Nothing happens for an item you hold no copy of.
+     *
+     * @param where e.g. "Forge", "Pet"
+     * @return True if it was recorded.
+     */
+    public boolean recordRemoved(int itemId, String source, String where, Boolean seasonal) {
+        synchronized (this) {
+            Entry e = entries.get(itemId);
+            if (e == null || e.held() == 0) return false;
+            Find f = Find.of(source, -1, where, "");
+            f.seasonal = seasonal;
+            addHistory(e, f);
+            save();
+        }
+        fire();
+        return true;
     }
 
     public void onChange(Runnable listener) {
@@ -321,8 +374,19 @@ public final class CollectionStore implements Syncable {
     private static boolean mergeEntry(Entry mine, Entry theirs) {
         List<Find> myDrops = new ArrayList<>(), myHeld = new ArrayList<>();
         List<Find> theirDrops = new ArrayList<>(), theirHeld = new ArrayList<>();
-        for (Find f : mine.history()) (DROP.equals(f.source) ? myDrops : myHeld).add(f);
-        for (Find f : theirs.history()) (DROP.equals(f.source) ? theirDrops : theirHeld).add(f);
+        for (Find f : mine.history()) if (!isRemoval(f)) (DROP.equals(f.source) ? myDrops : myHeld).add(f);
+        for (Find f : theirs.history()) if (!isRemoval(f)) (DROP.equals(f.source) ? theirDrops : theirHeld).add(f);
+        // removals are events: one only the other side saw is added (the count of obtained copies stays as is)
+        // (counted per key: two copies fed at once are two events with the same time and place)
+        Map<String, Integer> myRemovals = new HashMap<>();
+        for (Find f : mine.history()) if (isRemoval(f)) myRemovals.merge(removalKey(f), 1, Integer::sum);
+        List<Find> theirRemovalsOnly = new ArrayList<>();
+        for (Find f : theirs.history()) {
+            if (!isRemoval(f)) continue;
+            String key = removalKey(f);
+            if (myRemovals.getOrDefault(key, 0) > 0) myRemovals.merge(key, -1, Integer::sum);
+            else theirRemovalsOnly.add(f);
+        }
 
         // match drops by time and place, pair sightings by enchantments
         Map<String, List<Find>> myDropsByKey = new HashMap<>();
@@ -371,6 +435,7 @@ public final class CollectionStore implements Syncable {
         }
         List<Find> added = new ArrayList<>(theirDropsOnly);
         added.addAll(theirHeldOnly);
+        added.addAll(theirRemovalsOnly);
         String first = earlier(mine.first, theirs.first);
         String last = later(mine.last, theirs.last);
         changed |= !added.isEmpty() || count != mine.count
@@ -379,7 +444,7 @@ public final class CollectionStore implements Syncable {
             List<Find> history = new ArrayList<>(mine.history());
             history.addAll(added);
             history.sort(Comparator.comparing(f -> f.time == null ? "" : f.time));
-            while (history.size() > MAX_HISTORY) history.remove(0);
+            trim(history);
             mine.history = history.isEmpty() && mine.history == null ? null : history;
         }
         mine.count = count;
@@ -415,6 +480,11 @@ public final class CollectionStore implements Syncable {
         m.enchantIds = f.enchantIds;
         m.enchants = f.enchants;
         return true;
+    }
+
+    /** Identifies a removal (forge, feed) across PCs. */
+    private static String removalKey(Find f) {
+        return f.source + "|" + f.time + "|" + f.where;
     }
 
     /**
@@ -454,7 +524,18 @@ public final class CollectionStore implements Syncable {
     private static void addHistory(Entry e, Find f) {
         if (e.history == null) e.history = new ArrayList<>();
         e.history.add(f);
-        while (e.history.size() > MAX_HISTORY) e.history.remove(0);
+        trim(e.history);
+    }
+
+    /**
+     * Cuts a too long history, oldest finds first. Removals stay: without them, forged or fed copies would count
+     * as held again.
+     */
+    private static void trim(List<Find> history) {
+        for (int i = 0; history.size() > MAX_HISTORY && i < history.size(); ) {
+            if (isRemoval(history.get(i))) i++;
+            else history.remove(i);
+        }
     }
 
     private static String now() {
