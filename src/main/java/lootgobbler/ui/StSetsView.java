@@ -296,11 +296,9 @@ public class StSetsView extends JPanel {
                     hover = false;
                     repaint();
                 }
-
-                @Override
-                public void mouseClicked(MouseEvent e) {
-                    if (item != null) onPieceClick.accept(item);
-                }
+            });
+            Clicks.onClick(this, () -> {
+                if (item != null) onPieceClick.accept(item);
             });
         }
 

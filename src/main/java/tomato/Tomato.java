@@ -42,6 +42,7 @@ public class Tomato {
 
     public static void main(String[] args) {
         if (lootgobbler.Launcher.relaunchedNextToExe(args)) return;
+        lootgobbler.AppLog.install();   // log files, if turned on in Settings
         System.out.println(
             "Java Version: " +
                 System.getProperty("java.version") +
@@ -194,6 +195,7 @@ public class Tomato {
      * @param dump     Log dump string
      */
     private static void errorMessageHandler(String errorMsg, String dump) {
+        lootgobbler.AppLog.log("sniffer", "Error: " + errorMsg);
         ChatGUI.appendTextAreaChat(errorMsg);
         Util.printLogs(dump);
     }
@@ -280,6 +282,7 @@ public class Tomato {
      * Start the packet sniffer.
      */
     public static void startPacketSniffer() {
+        lootgobbler.AppLog.log("sniffer", "Start" + (packetProcessor != null ? " (already running)" : ""));
         if (packetProcessor == null) {
             packetProcessor = new PacketProcessor();
             packetProcessor.start();
@@ -290,6 +293,7 @@ public class Tomato {
      * Stop the packet sniffer.
      */
     public static void stopPacketSniffer() {
+        lootgobbler.AppLog.log("sniffer", "Stop");
         if (packetProcessor != null) {
             packetProcessor.stopSniffer();
             packetProcessor = null;

@@ -315,15 +315,12 @@ public class QuestMapView extends JPanel {
                 if (isShowing()) timer.start();
                 else timer.stop();
             });
-            addMouseListener(new MouseAdapter() {
-                @Override
-                public void mouseClicked(MouseEvent e) {
-                    int i = hit(e.getPoint());
-                    if (i < 0) return;
-                    selected = i;
-                    onPick.accept(i);
-                    repaint();
-                }
+            Clicks.onClick(this, e -> {
+                int i = hit(e.getPoint());
+                if (i < 0) return;
+                selected = i;
+                onPick.accept(i);
+                repaint();
             });
             addMouseMotionListener(new MouseAdapter() {
                 @Override

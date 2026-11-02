@@ -396,6 +396,7 @@ public final class Updater {
     }
 
     private static void set(State s, String text) {
+        if (s != state || !text.equals(message)) AppLog.log("update", s + ": " + text);
         state = s;
         message = text;
         if (s != State.DOWNLOADING) progress = 0;

@@ -14,8 +14,6 @@ import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.awt.datatransfer.StringSelection;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
 import java.text.NumberFormat;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -147,12 +145,9 @@ public class DpsPanel extends JPanel {
         name.setIconTextGap(10);
         name.setFont(name.getFont().deriveFont(18f));
         name.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        name.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                if (!expanded.remove(key)) expanded.add(key);
-                refresh();
-            }
+        Clicks.onClick(name, () -> {
+            if (!expanded.remove(key)) expanded.add(key);
+            refresh();
         });
 
         JPanel head = row(true);
@@ -297,12 +292,7 @@ public class DpsPanel extends JPanel {
             row.add(buttons, BorderLayout.EAST);
         }
         row.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        row.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                select(target);
-            }
-        });
+        Clicks.onClick(row, () -> select(target));
         row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
         return row;
     }

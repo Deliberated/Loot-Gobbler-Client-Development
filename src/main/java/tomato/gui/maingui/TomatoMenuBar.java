@@ -284,6 +284,10 @@ public class TomatoMenuBar implements ActionListener {
         javav = new JMenuItem("Java version");
         javav.addActionListener(this);
         info = new JMenu("Info");
+        JMenuItem logs = new JMenuItem("Logs");
+        logs.addActionListener(e -> lootgobbler.ui.LogsDialog.open(frame));
+        info.add(logs);
+        info.add(new JSeparator(SwingConstants.HORIZONTAL));
         info.add(about);
         info.add(javav);
         info.add(bandwidth);

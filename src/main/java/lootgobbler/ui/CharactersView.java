@@ -12,8 +12,6 @@ import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.border.LineBorder;
 import java.awt.*;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
 import java.awt.geom.Path2D;
 import java.text.NumberFormat;
 import java.time.Instant;
@@ -280,12 +278,9 @@ public class CharactersView extends JPanel {
         row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
         row.setToolTipText("Open " + c.className + " " + c.level);
         row.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        row.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                selected = c.charId;
-                refresh();
-            }
+        Clicks.onClick(row, () -> {
+            selected = c.charId;
+            refresh();
         });
         return row;
     }
@@ -511,12 +506,9 @@ public class CharactersView extends JPanel {
         card.setAlignmentX(LEFT_ALIGNMENT);
         card.setMaximumSize(new Dimension(Integer.MAX_VALUE, card.getPreferredSize().height));
         card.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        card.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                selected = id;
-                refresh();
-            }
+        Clicks.onClick(card, () -> {
+            selected = id;
+            refresh();
         });
         return card;
     }
@@ -787,7 +779,7 @@ public class CharactersView extends JPanel {
     }
 
     /**
-     * In-game style banner (SEASONAL / CRUCIBLE): colored with white text when set, faded when not. Click toggles.
+     * In-game style banner (SEASONAL / CRUCIBLE): colored with white text when set, faded when not. Display only.
      */
     private static class Banner extends JComponent {
         private final String text;
@@ -912,12 +904,7 @@ public class CharactersView extends JPanel {
         JLabel l = new JLabel(on ? icon : faded(icon));
         l.setToolTipText(tip);
         l.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        l.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                onClick.run();
-            }
-        });
+        Clicks.onClick(l, onClick);
         return l;
     }
 

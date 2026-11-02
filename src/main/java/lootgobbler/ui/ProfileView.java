@@ -173,12 +173,7 @@ public class ProfileView extends SubTabs {
         card.setToolTipText("Open in Characters");
         card.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         int id = c.charId;
-        card.addMouseListener(new java.awt.event.MouseAdapter() {
-            @Override
-            public void mouseClicked(java.awt.event.MouseEvent e) {
-                openCharacter.accept(id);
-            }
-        });
+        Clicks.onClick(card, () -> openCharacter.accept(id));
         return card;
     }
 

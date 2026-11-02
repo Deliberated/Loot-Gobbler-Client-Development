@@ -10,8 +10,6 @@ import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.table.TableRowSorter;
 import java.awt.*;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
 import java.util.EnumSet;
 import java.util.Locale;
 
@@ -164,12 +162,7 @@ public class ChatLogPanel extends JPanel {
         row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
         row.setPreferredSize(new Dimension(190, row.getPreferredSize().height));
         row.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        row.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                box.doClick();
-            }
-        });
+        Clicks.onClick(row, () -> box.doClick());
         return row;
     }
 

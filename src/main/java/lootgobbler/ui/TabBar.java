@@ -128,6 +128,7 @@ public class TabBar extends JPanel {
     }
 
     private void select(Tab tab) {
+        if (tab != selected) lootgobbler.AppLog.log("ui", "Tab " + tab.title);
         selected = tab;
         cards.show(content, tab.title);
         strip.repaint();

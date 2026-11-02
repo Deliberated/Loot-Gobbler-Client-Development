@@ -18,8 +18,6 @@ import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.awt.event.HierarchyEvent;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
 import java.text.NumberFormat;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -43,7 +41,6 @@ public class GuildPanel extends SubTabs {
     private final GobblerServer server = GobblerServer.get();
     private final CaravanView caravan = new CaravanView();
     private final QuestMapView questMap = new QuestMapView();
-    private final QuestsView quests = new QuestsView();
     private final Section leaderboardSection;
     private final JPanel leaderboardBody = column();
     private final JPanel dropsBody = column();
@@ -56,13 +53,14 @@ public class GuildPanel extends SubTabs {
         leaderboardSection = new Section("Leaderboard", Palette.GOLD, wrap(FitWidthPanel.scroll(leaderboardBody, 24)))
                 .actions(button("Refresh", this::refresh));
         memberSection = new Section("Member", Palette.BLUE, wrap(FitWidthPanel.scroll(memberBody, 24)));
-        page(QUESTS, quests);
         page(CARAVAN, caravan);
         page("Quest Map", questMap);
         page(LEADERBOARD, leaderboardSection);
         page(DROPS, new Section("Recent Drops", Palette.PURPLE, wrap(FitWidthPanel.scroll(dropsBody, 24)))
                 .actions(button("Refresh", this::refresh)));
         page(MEMBER, memberSection);
+        page(QUESTS, UnderConstruction.wrap(new Section("Quests", Palette.GOLD, new JPanel()),
+                "Guild quests are under construction."));
         done();
         memberBody.add(muted("Click a player in the leaderboard or in the recent drops."));
 
@@ -79,7 +77,6 @@ public class GuildPanel extends SubTabs {
     private void refresh() {
         caravan.load();
         questMap.load();
-        quests.load();
         if (loading) return;
         if (server.user() == null || server.state() != GobblerServer.State.ONLINE) {
             leaderboardSection.setTitle("Leaderboard");
@@ -154,12 +151,9 @@ public class GuildPanel extends SubTabs {
         table.getColumnModel().getColumn(0).setMaxWidth(44);
         table.setToolTipText("Click a player to open their profile. Click a column title to sort.");
         table.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        table.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                int row = table.rowAtPoint(e.getPoint());
-                if (row >= 0) openMember(members.get(table.convertRowIndexToModel(row)).id, true);
-            }
+        Clicks.onClick(table, e -> {
+            int row = table.rowAtPoint(e.getPoint());
+            if (row >= 0) openMember(members.get(table.convertRowIndexToModel(row)).id, true);
         });
         JPanel holder = new JPanel(new BorderLayout());
         holder.setOpaque(false);
@@ -232,12 +226,7 @@ public class GuildPanel extends SubTabs {
         JComponent row = card(text);
         row.setToolTipText("Open " + d.ign + "'s profile");
         row.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        row.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                openMember(d.userId, true);
-            }
-        });
+        Clicks.onClick(row, () -> openMember(d.userId, true));
         return row;
     }
 

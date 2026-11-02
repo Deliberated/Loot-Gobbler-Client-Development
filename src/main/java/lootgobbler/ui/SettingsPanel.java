@@ -36,6 +36,8 @@ public class SettingsPanel extends JPanel {
         sections.add(new Section("Loot Filter", Palette.GOLD, filterBody()));
         sections.add(Box.createVerticalStrut(8));
         sections.add(new Section("Theme", Palette.GOLD, themeBody()));
+        sections.add(Box.createVerticalStrut(8));
+        sections.add(new Section("Logging", Palette.GOLD, loggingBody()));
 
         JPanel holder = new JPanel(new BorderLayout());   // keeps sections at their natural height
         holder.add(sections, BorderLayout.NORTH);
@@ -151,6 +153,56 @@ public class SettingsPanel extends JPanel {
         return body;
     }
 
+    /**
+     * Log files (off by default) and the folder they go to. Viewed and exported under Info > Logs.
+     */
+    private JPanel loggingBody() {
+        JPanel body = body();
+        JPanel hint = row();
+        hint.add(new JLabel("Writes what the app reports, errors included, to one file per day. View and export them under Info > Logs."));
+        body.add(hint);
+
+        JCheckBox on = checkBox("Write log files", lootgobbler.AppLog.enabled());
+        on.addActionListener(e -> lootgobbler.AppLog.setEnabled(on.isSelected()));
+        JPanel onRow = row();
+        onRow.add(on);
+        body.add(onRow);
+
+        JLabel folder = new JLabel(lootgobbler.AppLog.dir().toString());
+        JPanel dirRow = row();
+        dirRow.add(new JLabel("Folder"));
+        dirRow.add(Box.createHorizontalStrut(12));
+        dirRow.add(folder);
+        dirRow.add(Box.createHorizontalStrut(8));
+        dirRow.add(button("Change...", () -> {
+            JFileChooser chooser = new JFileChooser(lootgobbler.AppLog.dir().toFile());
+            chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+            chooser.setDialogTitle("Folder for log files");
+            if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) return;
+            lootgobbler.AppLog.setDir(chooser.getSelectedFile().toPath());
+            folder.setText(lootgobbler.AppLog.dir().toString());
+        }));
+        dirRow.add(button("Default", () -> {
+            lootgobbler.AppLog.setDir(lootgobbler.AppLog.defaultDir());
+            folder.setText(lootgobbler.AppLog.dir().toString());
+        }));
+        body.add(dirRow);
+
+        JSpinner keep = new JSpinner(new SpinnerNumberModel(lootgobbler.AppLog.keepDays(), 0, 3650, 1));
+        keep.addChangeListener(e -> lootgobbler.AppLog.setKeepDays((Integer) keep.getValue()));
+        JLabel keepHint = new JLabel("days   (0 = keep all logs)");
+        keepHint.setForeground(Palette.MUTED);
+        JPanel keepRow = row();
+        keepRow.add(new JLabel("Keep logs for"));
+        keepRow.add(Box.createHorizontalStrut(12));
+        keepRow.add(keep);
+        keepRow.add(keepHint);
+        keepRow.setToolTipText("Older log files are deleted when the app starts and at midnight. Default: "
+                + lootgobbler.AppLog.DEFAULT_KEEP_DAYS + " days.");
+        body.add(keepRow);
+        return body;
+    }
+
     private JCheckBox toggle(String text, String key, boolean byDefault, Consumer<Boolean> apply, Sound preview) {
         JCheckBox box = checkBox(text, boolProperty(key, byDefault));
         box.addActionListener(e -> {
@@ -175,12 +227,7 @@ public class SettingsPanel extends JPanel {
         JLabel label = new JLabel(text, bagIcon(bag), SwingConstants.LEFT);
         label.setIconTextGap(6);
         label.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        label.addMouseListener(new java.awt.event.MouseAdapter() {
-            @Override
-            public void mouseClicked(java.awt.event.MouseEvent e) {
-                box.doClick();
-            }
-        });
+        Clicks.onClick(label, () -> box.doClick());
         JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));
         row.setOpaque(false);
         row.add(box);

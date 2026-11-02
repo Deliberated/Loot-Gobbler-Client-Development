@@ -275,6 +275,10 @@ public final class ServerSync {
 
     private void failed(Exception e) {
         Throwable cause = GobblerServer.unwrap(e);
+        if (!(cause instanceof ServerException)) {   // not the server's answer: a bug or a connection problem
+            AppLog.log("sync", "Failed:");
+            cause.printStackTrace();
+        }
         if (cause instanceof ServerException se && se.status == 401) {
             set(Phase.OFF, "");   // logged out; GobblerServer already reported it
             return;
@@ -288,6 +292,7 @@ public final class ServerSync {
     }
 
     private void set(Phase p, String msg) {
+        if (p != phase || !msg.equals(message)) AppLog.log("sync", p + (msg.isEmpty() ? "" : ": " + msg));
         phase = p;
         message = msg;
         for (Runnable r : listeners) r.run();

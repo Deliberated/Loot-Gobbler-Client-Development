@@ -33,6 +33,7 @@ public final class CollectionStore implements Syncable {
         public String where = "";
         public String bag = "";
         public List<Integer> enchantIds;   // null if unknown (older finds, inventory)
+        public Boolean seasonal;   // found on a seasonal character; null if unknown (older finds)
 
         public static Find of(String source, int enchants, String where, String bag) {
             Find f = new Find();
@@ -137,6 +138,7 @@ public final class CollectionStore implements Syncable {
                 Entry e = entries.get(h.getKey());
                 int known = e == null ? 0 : e.count;
                 if (e != null && fillEnchants(e, copies)) changed = true;
+                if (e != null && fillSeasonal(e, copies)) changed = true;
                 if (copies.size() <= known) continue;
                 if (e == null) {
                     e = new Entry();
@@ -211,6 +213,26 @@ public final class CollectionStore implements Syncable {
             if (f == null) continue;
             f.enchantIds = s.enchantIds;
             f.enchants = s.enchantIds.size();
+            changed = true;
+        }
+        return changed;
+    }
+
+    /**
+     * Older vault/inventory finds did not record whether the character was seasonal: a copy seen again with the
+     * same enchantments fills it in.
+     *
+     * @return True if any find was updated.
+     */
+    private static boolean fillSeasonal(Entry e, List<Find> seen) {
+        boolean changed = false;
+        List<Find> rest = new ArrayList<>(seen);
+        for (Find f : e.history()) {
+            if (f.seasonal != null || f.enchantIds == null || DROP.equals(f.source)) continue;
+            Find s = rest.stream().filter(c -> c.seasonal != null && f.enchantIds.equals(c.enchantIds)).findFirst().orElse(null);
+            if (s == null) continue;
+            rest.remove(s);
+            f.seasonal = s.seasonal;
             changed = true;
         }
         return changed;

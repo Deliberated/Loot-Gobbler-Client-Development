@@ -43,9 +43,11 @@ public final class LootEvents {
             for (Drop d : drops) {
                 ItemDb.Item item = db.item(d.id());
                 if (item != null && item.isCollectible()) {
-                    CollectionStore.get().record(d.id(), d.enchantIds() != null
+                    CollectionStore.Find f = d.enchantIds() != null
                             ? CollectionStore.Find.of(CollectionStore.DROP, d.enchantIds(), where, bagName)
-                            : CollectionStore.Find.of(CollectionStore.DROP, d.enchants(), where, bagName));
+                            : CollectionStore.Find.of(CollectionStore.DROP, d.enchants(), where, bagName);
+                    f.seasonal = seasonal(player);
+                    CollectionStore.get().record(d.id(), f);
                 }
             }
             DiscordAlerts.bagDropped(map, bag, player, drops);
@@ -62,8 +64,9 @@ public final class LootEvents {
         try {
             writeVaultDebug(p);
             // a vault can arrive as several packets; collect copies until the one marked last, then record once
-            int vault = addContainer(vaultVisit, p.vaultContents, p.vaultChestEnchants, "Vault chest");
-            int gift = addContainer(vaultVisit, p.giftContents, p.giftChestEnchants, "Gift chest");
+            Boolean seasonal = seasonal(player);
+            int vault = addContainer(vaultVisit, p.vaultContents, p.vaultChestEnchants, "Vault chest", seasonal);
+            int gift = addContainer(vaultVisit, p.giftContents, p.giftChestEnchants, "Gift chest", seasonal);
             System.out.println("Vault: " + vault + " vault + " + gift + " gift items"
                     + (p.partial ? "  (packet only partly decoded)" : ""));
             if (p.lastVaultPacket) {
@@ -128,6 +131,7 @@ public final class LootEvents {
             CollectionStore.Find f = ids != null
                     ? CollectionStore.Find.of(CollectionStore.INVENTORY, ids, "", "Inventory")
                     : CollectionStore.Find.of(CollectionStore.INVENTORY, -1, "", "Inventory");
+            f.seasonal = player.isSeasonal();
             held.computeIfAbsent(sd.statValue, k -> new ArrayList<>()).add(f);
         }
         writeInventoryDebug(player, codes.length);
@@ -183,7 +187,15 @@ public final class LootEvents {
         return known >= used * 0.9;
     }
 
-    private static int addContainer(Map<Integer, List<CollectionStore.Find>> finds, int[] ids, String enchantData, String label) {
+    /**
+     * Whether the character is seasonal, or null when it is not known yet (no player entity).
+     */
+    private static Boolean seasonal(Entity player) {
+        return player == null ? null : player.isSeasonal();
+    }
+
+    private static int addContainer(Map<Integer, List<CollectionStore.Find>> finds, int[] ids, String enchantData, String label,
+                                    Boolean seasonal) {
         if (ids == null) return 0;
         if (!plausible(ids)) {
             System.out.println("Vault: skipped " + label + " (" + ids.length + " slots did not decode as items)");
@@ -202,6 +214,7 @@ public final class LootEvents {
             CollectionStore.Find f = aligned
                     ? CollectionStore.Find.of(CollectionStore.VAULT, enchantIds(enchants[i]), "Vault", label)
                     : CollectionStore.Find.of(CollectionStore.VAULT, -1, "Vault", label);
+            f.seasonal = seasonal;
             finds.computeIfAbsent(ids[i], k -> new ArrayList<>()).add(f);
         }
         return count;

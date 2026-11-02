@@ -32,7 +32,10 @@ public class SubTabs extends JPanel {
      * Builds the button row once all pages are added; the first page is shown.
      */
     public SubTabs done() {
-        buttons = new Segmented(false, 0, i -> cards.show(pages, names.get(i)), names.toArray(new String[0]));
+        buttons = new Segmented(false, 0, i -> {
+            lootgobbler.AppLog.log("ui", "Page " + names.get(i));
+            cards.show(pages, names.get(i));
+        }, names.toArray(new String[0]));
         add(buttons, BorderLayout.NORTH);
         return this;
     }

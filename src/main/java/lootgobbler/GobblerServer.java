@@ -654,7 +654,14 @@ public final class GobblerServer {
                 : HttpRequest.BodyPublishers.ofString(GSON.toJson(body)));
         if (body != null) req.header("Content-Type", "application/json");
         if (!token.isEmpty()) req.header("Authorization", "Bearer " + token);
-        return HTTP.sendAsync(req.build(), HttpResponse.BodyHandlers.ofString()).thenApply(res -> {
+        long start = System.nanoTime();
+        return HTTP.sendAsync(req.build(), HttpResponse.BodyHandlers.ofString()).whenComplete((res, e) -> {
+            // method, path and outcome only: request bodies can hold passwords and tokens
+            String took = " (" + (System.nanoTime() - start) / 1_000_000 + " ms)";
+            if (e != null) AppLog.log("server", method + " " + path + " failed: " + message(e) + took);
+            else AppLog.log("server", method + " " + path + " -> " + res.statusCode() + took
+                    + (res.statusCode() >= 300 ? " " + abbreviate(res.body()) : ""));
+        }).thenApply(res -> {
             if (res.statusCode() < 300) {
                 if (type == Void.class || res.body().isBlank()) return null;
                 return GSON.fromJson(res.body(), type);
@@ -691,8 +698,20 @@ public final class GobblerServer {
         fire();
     }
 
+    private String logged = "";
+
     private void fire() {
+        String now = state + (user == null ? "" : ", logged in as " + user.ign) + (error.isEmpty() ? "" : ", " + error);
+        if (!now.equals(logged)) {
+            logged = now;
+            AppLog.log("server", "State " + now + (url.isEmpty() ? "" : " (" + url + ")"));
+        }
         for (Runnable r : listeners) r.run();
+    }
+
+    private static String abbreviate(String body) {
+        String s = body == null ? "" : body.replaceAll("\s+", " ").trim();
+        return s.length() > 300 ? s.substring(0, 300) + "..." : s;
     }
 
     /** The address as it is saved: "loot.example.com/" becomes "https://loot.example.com". */

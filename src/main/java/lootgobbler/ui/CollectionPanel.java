@@ -155,14 +155,11 @@ public class CollectionPanel extends JPanel {
         fixWidth(table, 1, 44);
         fixWidth(table, 3, 80);
         table.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        table.addMouseListener(new java.awt.event.MouseAdapter() {
-            @Override
-            public void mouseClicked(java.awt.event.MouseEvent e) {
-                int row = table.rowAtPoint(e.getPoint());
-                if (row < 0) return;
-                ItemDb.Item item = ItemDb.get().item((Integer) logModel.getValueAt(table.convertRowIndexToModel(row), 1));
-                if (item != null) showHistory(item, true);
-            }
+        Clicks.onClick(table, e -> {
+            int row = table.rowAtPoint(e.getPoint());
+            if (row < 0) return;
+            ItemDb.Item item = ItemDb.get().item((Integer) logModel.getValueAt(table.convertRowIndexToModel(row), 1));
+            if (item != null) showHistory(item, true);
         });
         JScrollPane sp = new JScrollPane(table);
         sp.setBorder(null);
@@ -345,23 +342,36 @@ public class CollectionPanel extends JPanel {
             case CollectionStore.INVENTORY -> "Inventory";
             default -> (f.bag.isEmpty() ? "Drop" : f.bag + " bag") + (f.where.isEmpty() ? "" : "  ·  " + f.where);
         };
-        JLabel what = new JLabel(how);
-        JPanel text = new JPanel(new GridLayout(0, 1));
+        // seasonal or not, behind the place: teal like the Characters tab's seasonal tag, red for non-seasonal
+        String season = f.seasonal == null ? "" : f.seasonal
+                ? "  <font color='#2BD8B0'>(ssnl)</font>" : "  <font color='#E5636E'>(nssnl)</font>";
+        JLabel what = leftAligned(new JLabel("<html>" + escapeHtml(how) + season + "</html>"));
+        if (f.seasonal != null) what.setToolTipText(f.seasonal ? "Found on a seasonal character" : "Found on a non-seasonal character");
+        JPanel text = new JPanel();
+        text.setLayout(new BoxLayout(text, BoxLayout.Y_AXIS));
         text.setOpaque(false);
         text.add(what);
         int count = f.enchantIds != null ? f.enchantIds.size() : Math.max(0, f.enchants);
-        if (f.enchantIds != null && f.enchantIds.stream().anyMatch(id -> id >= 0)) text.add(enchantIcons(f.enchantIds));
+        if (f.enchantIds != null && f.enchantIds.stream().anyMatch(id -> id >= 0)) {
+            text.add(Box.createVerticalStrut(4));
+            text.add(leftAligned(enchantIcons(f.enchantIds)));
+        }
         if (f.enchantIds == null && f.enchants < 0) {   // not known yet, which is not the same as "no slots"
             JLabel unknown = new JLabel("enchantments unknown");
             unknown.putClientProperty("FlatLaf.styleClass", "small");
             unknown.setForeground(Palette.MUTED);
             unknown.setToolTipText("Filled in once the game sends this item's enchantments (character list at login, or Refresh in Characters)");
-            text.add(unknown);
+            text.add(leftAligned(unknown));
         }
+        JPanel middle = new JPanel(new GridBagLayout());   // keeps the text block centered next to the icon
+        middle.setOpaque(false);
+        GridBagConstraints at = new GridBagConstraints();
+        at.weightx = 1;
+        at.fill = GridBagConstraints.HORIZONTAL;
+        middle.add(text, at);
 
         // item icon with in-game style enchantment diamonds
         JLabel icon = new JLabel(EnchantBadge.icon(CollectionGrid.icon(itemId), 32, count));
-        icon.setVerticalAlignment(SwingConstants.TOP);
         if (count > 0) icon.setToolTipText(count + (count == 1 ? " enchantment" : " enchantments") + " (" + EnchantBadge.RARITY[Math.min(4, count)] + ")");
         // how long ago, counted in days from today, big and gold on the right; exact time on hover
         JLabel ago = new JLabel(daysAgo(f.time));
@@ -372,7 +382,7 @@ public class CollectionPanel extends JPanel {
         JPanel row = new JPanel(new BorderLayout(8, 0));
         row.setOpaque(false);
         row.add(icon, BorderLayout.WEST);
-        row.add(text, BorderLayout.CENTER);
+        row.add(middle, BorderLayout.CENTER);
         row.add(ago, BorderLayout.EAST);
         row.setAlignmentX(LEFT_ALIGNMENT);
         row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
@@ -397,8 +407,9 @@ public class CollectionPanel extends JPanel {
      * One icon per enchantment (hover for its name); the rarity color frames the row.
      */
     private static JPanel enchantIcons(List<Integer> ids) {
-        JPanel p = new JPanel(new FlowLayout(FlowLayout.LEFT, 3, 1));
+        JPanel p = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
         p.setOpaque(false);
+        p.setBorder(new EmptyBorder(0, -4, 0, 0));   // FlowLayout puts its gap before the first icon too
         Color frame = EnchantBadge.COLORS[Math.min(4, ids.size())];
         for (int id : ids) {
             if (id < 0) continue;   // empty slot: counts for rarity, no icon

@@ -324,20 +324,16 @@ public class CaravanView extends JPanel {
                 if (isShowing()) timer.start();
                 else timer.stop();
             });
-            MouseAdapter mouse = new MouseAdapter() {
-                @Override
-                public void mouseClicked(MouseEvent e) {
-                    CaravanMember m = at(e.getPoint());
-                    if (m != null) pick(m);
-                }
-
+            Clicks.onClick(this, e -> {
+                CaravanMember m = at(e.getPoint());
+                if (m != null) pick(m);
+            });
+            addMouseMotionListener(new MouseAdapter() {
                 @Override
                 public void mouseMoved(MouseEvent e) {
                     setCursor(Cursor.getPredefinedCursor(at(e.getPoint()) != null ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
                 }
-            };
-            addMouseListener(mouse);
-            addMouseMotionListener(mouse);
+            });
         }
 
         void setMembers(List<CaravanMember> members) {

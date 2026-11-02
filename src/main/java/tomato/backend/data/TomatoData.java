@@ -96,6 +96,7 @@ public class TomatoData {
      * @param map New realm to be set.
      */
     public void setNewRealm(MapInfoPacket map) {
+        lootgobbler.AppLog.log("game", "Entered " + map.displayName + " (" + map.width + "x" + map.height + ")");
         clear();
         ParsePanelGUI.clear();
         petYardCheck(map.displayName);
