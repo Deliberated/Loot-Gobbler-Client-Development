@@ -311,17 +311,44 @@ public class DpsPanel extends JPanel {
         icon.setPreferredSize(new Dimension(DUNGEON_ICON, DUNGEON_ICON));
         row.add(icon, BorderLayout.WEST);
         row.add(text, BorderLayout.CENTER);
-        if (!current) {   // Detail and delete only once the run is finished and saved
-            JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
-            buttons.setOpaque(false);
-            buttons.add(button("Detail", null, () -> select(target)));
-            buttons.add(button("x", "danger", () -> DpsHistory.get().remove(r)));
-            row.add(buttons, BorderLayout.EAST);
-        }
+        // your rank (the whole row opens the run), and delete once the run is finished and saved
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        buttons.setOpaque(false);
+        JLabel rank = runRank(r);
+        if (rank != null) buttons.add(rank);
+        if (!current) buttons.add(button("x", "danger", () -> DpsHistory.get().remove(r)));
+        if (buttons.getComponentCount() > 0) row.add(buttons, BorderLayout.EAST);
         row.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         Clicks.onClick(row, () -> select(target));
         row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
         return row;
+    }
+
+    /**
+     * Your place by damage in a run: "#x of y" on its one boss, or with several bosses the average of your places
+     * (and of the group sizes), e.g. "avg #1.5 of 6". Null for guild hall visits and runs where you hit no boss.
+     */
+    static JLabel runRank(Run r) {
+        if (r.guildHall) return null;
+        double places = 0, players = 0;
+        int n = 0;
+        StringBuilder tip = new StringBuilder("<html>Your place by damage");
+        for (Boss b : r.bosses) {
+            PlayerRow me = b.me();
+            if (me == null) continue;
+            places += b.rankOf(me);
+            players += b.players.size();
+            n++;
+            tip.append("<br>").append(b.name).append(": #").append(b.rankOf(me)).append(" of ").append(b.players.size());
+        }
+        if (n == 0) return null;
+        double place = places / n;
+        String x = n == 1 ? String.valueOf((int) place) : String.format(Locale.ROOT, place % 1 == 0 ? "%.0f" : "%.1f", place);
+        JLabel l = new JLabel((n > 1 ? "avg #" : "#") + x + " of " + Math.round(players / n));
+        l.setFont(l.getFont().deriveFont(18f));
+        l.setForeground(place == 1 ? Palette.GOLD : Section.color("LootGobbler.inkSoft", Palette.MUTED));
+        l.setToolTipText(tip.append(n > 1 ? "<br>(average over " + n + " bosses)" : "").append("</html>").toString());
+        return l;
     }
 
     /**
@@ -479,7 +506,7 @@ public class DpsPanel extends JPanel {
         return FitWidthPanel.scroll(content, 24);
     }
 
-    private static JPanel row(boolean filled) {
+    static JPanel row(boolean filled) {
         JPanel row = new JPanel(new BorderLayout(10, 0)) {
             @Override
             public void updateUI() {

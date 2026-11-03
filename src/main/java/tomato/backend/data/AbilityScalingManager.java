@@ -20,12 +20,13 @@ import tomato.realmshark.ParseEnchants;
  */
 public class AbilityScalingManager {
 
-    private static AbilityScalingManager instance;
+    private static volatile AbilityScalingManager instance;
+    // concurrent: filled in the background on start while the packet thread may already read them
     private final Map<Integer, AbilityScalingData> scalingData =
-        new HashMap<>();
-    private final Map<Integer, Integer> projectileToWeaponMap = new HashMap<>();
+        new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<Integer, Integer> projectileToWeaponMap = new java.util.concurrent.ConcurrentHashMap<>();
     private final Map<Integer, AbilityScalingData> projectileScalingData =
-        new HashMap<>();
+        new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
      * Data structure to hold scaling information for an ability.
@@ -61,7 +62,9 @@ public class AbilityScalingManager {
 
     public static AbilityScalingManager getInstance() {
         if (instance == null) {
-            instance = new AbilityScalingManager();
+            synchronized (AbilityScalingManager.class) {
+                if (instance == null) instance = new AbilityScalingManager();
+            }
         }
         return instance;
     }

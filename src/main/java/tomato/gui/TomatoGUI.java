@@ -66,7 +66,7 @@ public class TomatoGUI {
         myDmg = new MyInfoGUI(data);
         lootgobbler.ui.CharactersView characters = new lootgobbler.ui.CharactersView();
         lootgobbler.ui.GuildPanel guild = new lootgobbler.ui.GuildPanel();
-        DpsPanel dps = new DpsPanel();
+        lootgobbler.ui.DpsLoggerView dps = new lootgobbler.ui.DpsLoggerView(new DpsPanel());   // Dungeons | DPS
         tabbedPane.addTab("Profile", new lootgobbler.ui.ProfileView(new lootgobbler.ui.DungeonStatsPanel(), id -> {
             characters.showCharacter(id);   // clicking your character on the profile opens it in Characters
             tabbedPane.show("Characters");
@@ -74,8 +74,8 @@ public class TomatoGUI {
             guild.show(page);   // the guild row on the profile opens the caravan or the quest map
             tabbedPane.show("Guild");
         }, run -> {
-            dps.showRun(run);   // a recent run on the profile opens it in the DPS Logger
-            tabbedPane.show("DPS Logger");
+            dps.showRun(run);   // a recent run on the profile opens it in Battles
+            tabbedPane.show("Battles");
         }));
         chatPanel = new ChatGUI(data);
         questPanel = new QuestGUI();
@@ -98,11 +98,7 @@ public class TomatoGUI {
         tabbedPane.addTab("Characters", characters);
 
         dpsPanel = new DpsGUI(data);   // Tomato's original view: not shown any more, but its packet handlers still run
-        tabbedPane.addTab("DPS Logger", dps);
-        tabbedPane.addTrailing(new lootgobbler.ui.ActiveDungeonBadge(() -> {
-            dps.showRun(null);   // the live run
-            tabbedPane.show("DPS Logger");
-        }));
+        tabbedPane.addTab("Battles", dps);   // Dungeons | DPS (was "DPS Logger")
 
         // Key-pops, Security, the old Characters view and Statistics have no tab any more, but are still created: packet
         // handlers, key-pop sounds, the loot filter, fame tracking and font changes call into them.
@@ -129,11 +125,18 @@ public class TomatoGUI {
         DpsDisplayOptions.loadProfileFilter();
         lootgobbler.PacketDebug.install();
         lootgobbler.ItemUse.install();   // forged and fed items leave the collection
+        lootgobbler.DungeonDifficulty.preload();   // the title bar's dungeon box shows how hard a dungeon is
         jMenuBar = menuBar.make();
         // top-level menus sit in the title bar, so they use its text color (matters for dark title bars)
         for (Component c : jMenuBar.getComponents()) {
             if (c instanceof JMenu m) m.putClientProperty("FlatLaf.styleClass", "titleMenu");
         }
+        // the dungeon you are in, in the title bar between the menus and the window title
+        jMenuBar.add(Box.createHorizontalStrut(12));
+        jMenuBar.add(new lootgobbler.ui.ActiveDungeonBadge(() -> {
+            dps.showDungeons();   // the dungeon you are in, under Battles > Dungeons
+            tabbedPane.show("Battles");
+        }));
         // Built after the menu so the sound/filter flags are already loaded from settings.
         tabbedPane.addTab("Settings", new SettingsPanel());
         tabbedPane.addTab("Guild", guild);
@@ -145,7 +148,12 @@ public class TomatoGUI {
             tabbedPane.show("Server");
             server.showModeration();
         }));
-        tabbedPane.restoreOrder("Profile", "Inventory", "Characters", "DPS Logger", "Social", "Guild", "Server", "Settings");
+        // the DPS Logger tab is called Battles now: keep its place in a saved tab order
+        String savedOrder = util.PropertiesManager.getProperty("tabOrder");
+        if (savedOrder != null && savedOrder.contains("DPS Logger")) {
+            util.PropertiesManager.setProperties("tabOrder", savedOrder.replace("DPS Logger", "Battles"));
+        }
+        tabbedPane.restoreOrder("Profile", "Inventory", "Characters", "Battles", "Social", "Guild", "Server", "Settings");
         makeFrame();
 
         frame.setVisible(true);
@@ -231,7 +239,7 @@ public class TomatoGUI {
      * Creates the frame with icon.
      */
     public void makeFrame() {
-        frame = new JFrame("Loot Gobbler by Pluribus");
+        frame = new JFrame("Loot Gobbler by Gunshit");
         frame.setIconImages(lootgobbler.AppIcon.images());
         frame.setMinimumSize(new Dimension(640, 420));
         lootgobbler.ui.WindowMemory.attach(frame, windowWidth, windowHeight);

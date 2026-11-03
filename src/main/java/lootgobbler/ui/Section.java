@@ -14,6 +14,7 @@ public class Section extends JPanel {
     private final JPanel header;
     private final JPanel actions;
     private final JLabel title;
+    private final JLabel note = new JLabel();
     private final JComponent body;
 
     public Section(String name, Color accent, JComponent body) {
@@ -25,7 +26,11 @@ public class Section extends JPanel {
         title.setBorder(BorderFactory.createEmptyBorder(6, 10, 6, 10));
         actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
         actions.setOpaque(false);
-        header.add(title, BorderLayout.WEST);
+        JPanel titleRow = new JPanel(new BorderLayout());   // the title, and a note after it if there is one
+        titleRow.setOpaque(false);
+        titleRow.add(title, BorderLayout.WEST);
+        titleRow.add(note, BorderLayout.CENTER);
+        header.add(titleRow, BorderLayout.WEST);
         header.add(actions, BorderLayout.EAST);
         add(header, BorderLayout.NORTH);
         add(body, BorderLayout.CENTER);
@@ -34,6 +39,15 @@ public class Section extends JPanel {
 
     public void setTitle(String name) {
         title.setText(name.toUpperCase(Locale.ROOT));
+    }
+
+    /**
+     * A hint right after the title, in plain muted text (e.g. "(click the preferred stats)"); empty: none.
+     */
+    public Section note(String text) {
+        note.setText(text);
+        note.setForeground(Palette.MUTED);
+        return this;
     }
 
     /**

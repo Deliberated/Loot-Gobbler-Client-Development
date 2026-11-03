@@ -287,6 +287,7 @@ public final class CharacterStore implements Syncable {
                     c.extender = pack.statValue > 8;
                 }
                 readEquipment(p, c);
+                if (readSlots(p, c, pack == null ? -1 : pack.statValue)) lastSave = 0;   // save the new packs soon
                 c.alive = true;
                 c.diedBy = null;
                 c.lastPlayed = now;
@@ -306,6 +307,38 @@ public final class CharacterStore implements Syncable {
         } catch (Exception e) {
             // stats can change while being read; try again next tick
         }
+    }
+
+    /**
+     * Every slot from the live player stats (equipment, inventory, then the backpack and extender), with their
+     * enchantments, so the packs shown follow what you pick up, drop or swap instead of the last character list.
+     * Enchantments come from the live per-slot codes, else from what was known for the same item in that slot.
+     * True if anything changed.
+     */
+    private static boolean readSlots(Entity p, Char c, int packSlots) {
+        if (packSlots < 0) packSlots = c.slots != null ? Math.max(0, c.slots.length - 12) : 0;   // not sent: as before
+        packSlots = Math.max(0, Math.min(16, packSlots));
+        int[] slots = new int[12 + packSlots];
+        for (int i = 0; i < slots.length; i++) {
+            int stat = i < 12 ? StatType.INVENTORY_0_STAT.get() + i : StatType.BACKPACK_0_STAT.get() + (i - 12);
+            StatData sd = p.stat.get(stat);
+            if (sd == null) return false;   // the stats are not all there yet: keep what we have
+            slots[i] = sd.statValue;
+        }
+        StatData udata = p.stat.get(StatType.UNIQUE_DATA_STRING);
+        String[] codes = udata == null || udata.stringStatValue == null ? new String[0] : udata.stringStatValue.split(",", -1);
+        int[][] ids = new int[slots.length][];
+        for (int i = 0; i < slots.length; i++) {
+            List<Integer> live = i < codes.length ? LootEvents.enchantIds(codes[i]) : null;
+            if (live != null) ids[i] = toArray(live);
+            else if (c.slots != null && i < c.slots.length && c.slots[i] == slots[i] && c.slotEnchantIds != null
+                    && i < c.slotEnchantIds.length && c.slotEnchantIds[i] != null) ids[i] = c.slotEnchantIds[i];
+            else ids[i] = new int[0];
+        }
+        boolean changed = !Arrays.equals(slots, c.slots) || !Arrays.deepEquals(ids, c.slotEnchantIds);
+        c.slots = slots;
+        c.slotEnchantIds = ids;
+        return changed;
     }
 
     /**

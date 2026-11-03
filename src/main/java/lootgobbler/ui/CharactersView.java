@@ -533,7 +533,10 @@ public class CharactersView extends JPanel {
 
         // one box per part, like the boxes on the right of the Classes page (the card on the left says who it is)
         panel.add(box("Loadout", Palette.GOLD, CharacterDetail.loadout(c)));
-        panel.add(box("Suggested Loadout", Palette.BLUE, CharacterDetail.ideal(c, () -> renderPanel(c))));
+        JComponent suggested = box("Suggested Loadout", Palette.BLUE, CharacterDetail.ideal(c, () -> renderPanel(c)));
+        // until a stat is picked, the header says what to do
+        if (!CharacterDetail.anyStatChosen()) ((Section) suggested.getComponent(0)).note("(click the preferred stats)");
+        panel.add(suggested);
         panel.add(box("Inventory", Palette.PURPLE, CharacterDetail.inventory(c)));
         JPanel fame = column();
 
@@ -565,7 +568,7 @@ public class CharactersView extends JPanel {
     }
 
     /** One part of the right column in its own titled box; boxes are stacked with a gap. */
-    private static JComponent box(String title, Color color, JComponent content) {
+    static JComponent box(String title, Color color, JComponent content) {
         JPanel inner = new JPanel(new BorderLayout());
         inner.setOpaque(false);
         inner.setBorder(new EmptyBorder(10, 10, 10, 10));

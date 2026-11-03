@@ -63,8 +63,11 @@ public class Tomato {
             TomatoMenuBar::stopPacketSniffer
         );
 
-        // Initialize crucible data from API on startup
-        initializeCrucibleData();
+        // Crucible data from the API, in the background: it often times out (10 s) and the game's packets carry the
+        // same data anyway, so the window does not wait for it
+        Thread crucible = new Thread(Tomato::initializeCrucibleData, "crucible-api");
+        crucible.setDaemon(true);
+        crucible.start();
 
         load();
     }
@@ -139,11 +142,17 @@ public class Tomato {
             CrashLogger.loadThisClass();
             TomatoGUI.loadThemePreset();
             // Upstream update check disabled: it compares against Tomato's GitHub releases, not this fork.
-            AssetExtractor.checkForExtraction(Version.VERSION);
+            long t0 = System.currentTimeMillis();
+            lootgobbler.AssetCheck.run(Version.VERSION);   // extracts only when the game's asset file really changed
+            long t1 = System.currentTimeMillis();
             TomatoData data = new TomatoData();
             loadControllers(data);
+            long t2 = System.currentTimeMillis();
             new TomatoGUI(data).create();
+            long t3 = System.currentTimeMillis();
             bootload(data);
+            lootgobbler.AppLog.log("app", "Startup: assets " + (t1 - t0) + " ms, data " + (t2 - t1) + " ms, window "
+                    + (t3 - t2) + " ms, then " + (System.currentTimeMillis() - t3) + " ms");
         } catch (OutOfMemoryError | StackOverflowError e) {
             JavaOutOfMemoryGUI.crashDialog();
             System.exit(0);
@@ -176,8 +185,10 @@ public class Tomato {
         packetRegister(packCap);
         rootController.addController(packCap);
 
-        // Initialize ability scaling manager
-        AbilityScalingManager.getInstance().initialize();
+        // ability scaling (equip.xml) in the background: until it is loaded, hits simply carry no scaling snapshot
+        Thread scaling = new Thread(() -> AbilityScalingManager.getInstance().initialize(), "ability-scaling");
+        scaling.setDaemon(true);
+        scaling.start();
     }
 
     /**

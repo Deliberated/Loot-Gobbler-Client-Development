@@ -275,8 +275,13 @@ public class CaravanView extends JPanel {
             JLabel sub = muted(it.bag + " bag" + (it.where == null || it.where.isBlank() ? "" : "  ·  " + it.where)
                     + "  ·  " + ago(it.time));
             sub.setBorder(new EmptyBorder(0, 48, 0, 0));
-            p.add(left(ItemLinks.link(name, it.itemId)));   // click: the item in Inventory
-            p.add(left(ItemLinks.link(sub, it.itemId)));
+            if (mine(m)) {   // click: the item in Inventory (other players' items do nothing for now)
+                p.add(left(ItemLinks.link(name, it.itemId)));
+                p.add(left(ItemLinks.link(sub, it.itemId)));
+            } else {
+                p.add(left(name));
+                p.add(left(sub));
+            }
             p.add(Box.createVerticalStrut(6));
         }
         return card(p);
@@ -299,6 +304,16 @@ public class CaravanView extends JPanel {
     private static int feedPower(int id) {
         ItemDb.Item info = ItemDb.get().item(id);
         return info == null ? 0 : Math.max(0, info.feedPower);
+    }
+
+    /** Whether this member is you. */
+    private boolean mine(CaravanMember m) {
+        GobblerServer.User me = server.user();
+        return me != null && m.id == me.id;
+    }
+
+    /** A pile item's area in the scene, and whether it lies on your wagon. */
+    private record ItemHit(Rectangle area, int itemId, boolean mine) {
     }
 
     private static String itemName(int id) {
@@ -374,7 +389,8 @@ public class CaravanView extends JPanel {
         private final Map<Long, Image> drivers = new HashMap<>();   // flipped character sprite per member
         private final Map<Integer, Icon> items = new HashMap<>();
         private final List<Map.Entry<Rectangle, CaravanMember>> hits = new ArrayList<>();
-        private final List<Map.Entry<Rectangle, Integer>> itemHits = new ArrayList<>();   // pile items -> item id
+        private final List<ItemHit> itemHits = new ArrayList<>();   // pile items
+        private boolean paintingMine;   // the wagon being painted is yours (only your items open the Inventory)
         private final long[][] stars = new long[40][2];
         private int phase;
         private final java.util.function.Consumer<CaravanMember> onPick;   // null for a click beside the members
@@ -403,9 +419,9 @@ public class CaravanView extends JPanel {
                 else timer.stop();
             });
             Clicks.onClick(this, e -> {
-                Integer item = itemAt(e.getPoint());
-                if (item != null) {   // an item on a pile: show it in Inventory
-                    ItemLinks.open(item);
+                ItemHit item = itemAt(e.getPoint());
+                if (item != null) {   // an item on a pile: yours shows in Inventory, others' do nothing (for now)
+                    if (item.mine()) ItemLinks.open(item.itemId());
                     return;
                 }
                 CaravanMember m = at(e.getPoint());
@@ -414,8 +430,9 @@ public class CaravanView extends JPanel {
             addMouseMotionListener(new MouseAdapter() {
                 @Override
                 public void mouseMoved(MouseEvent e) {
-                    setCursor(Cursor.getPredefinedCursor(anyClick || itemAt(e.getPoint()) != null || at(e.getPoint()) != null
-                            ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
+                    ItemHit item = itemAt(e.getPoint());
+                    boolean hand = anyClick || (item != null ? item.mine() : at(e.getPoint()) != null);
+                    setCursor(Cursor.getPredefinedCursor(hand ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
                 }
             });
         }
@@ -443,17 +460,17 @@ public class CaravanView extends JPanel {
         }
 
         /** The pile item under p (not on the Profile's small wagon, where any click opens the caravan); null if none. */
-        private Integer itemAt(Point p) {
+        private ItemHit itemAt(Point p) {
             if (anyClick) return null;
             Point q = toScene(p);
-            for (Map.Entry<Rectangle, Integer> h : itemHits) if (h.getKey().contains(q)) return h.getValue();
+            for (ItemHit h : itemHits) if (h.area().contains(q)) return h;
             return null;
         }
 
         @Override
         public String getToolTipText(MouseEvent e) {
-            Integer item = itemAt(e.getPoint());
-            if (item != null) return itemName(item) + "  (click: show in Inventory)";
+            ItemHit item = itemAt(e.getPoint());
+            if (item != null) return itemName(item.itemId()) + (item.mine() ? "  (click: show in Inventory)" : "");
             CaravanMember m = at(e.getPoint());
             if (m == null) return null;
             String cls = m.character == null ? "" : " (" + m.character.className + ")";
@@ -622,6 +639,8 @@ public class CaravanView extends JPanel {
             int bob = (int) Math.round(2 * Math.sin(phase * 0.25 + index));        // the driver
             int lootBob = (int) Math.round(2 * Math.sin(phase * 0.06 + index));    // the pile: much slower
             boolean isPicked = m.id == picked;
+            GobblerServer.User me = GobblerServer.get().user();
+            paintingMine = me != null && m.id == me.id;
 
             // the pile: rarest on top
             List<CaravanItem> loot = new ArrayList<>(m.items);
@@ -639,7 +658,7 @@ public class CaravanView extends JPanel {
                 int ix = rowX + col * (ITEM + ITEM_GAP), iy = bedY - (row + 1) * (ITEM + ITEM_GAP) + lootBob;
                 top = Math.min(top, iy);
                 CaravanItem it = pile.get(i);
-                itemHits.add(Map.entry(new Rectangle(ix, iy, ITEM, ITEM), it.itemId));
+                itemHits.add(new ItemHit(new Rectangle(ix, iy, ITEM, ITEM), it.itemId, paintingMine));
                 Icon icon = items.computeIfAbsent(it.itemId, id -> CharactersView.sprite(id, ITEM));
                 if (icon != null) icon.paintIcon(this, g2, ix + (ITEM - icon.getIconWidth()) / 2, iy + (ITEM - icon.getIconHeight()) / 2);
             }
@@ -798,7 +817,7 @@ public class CaravanView extends JPanel {
 
         /** MOCKUP: one loot item at (x, y), turned by angle, with its hit area. */
         private void lootItem(Graphics2D g2, int itemId, int x, int y, double angle) {
-            itemHits.add(Map.entry(new Rectangle(x, y, ITEM, ITEM), itemId));
+            itemHits.add(new ItemHit(new Rectangle(x, y, ITEM, ITEM), itemId, paintingMine));
             Icon icon = items.computeIfAbsent(itemId, id -> CharactersView.sprite(id, ITEM));
             if (icon == null) return;
             Graphics2D g = (Graphics2D) g2.create();

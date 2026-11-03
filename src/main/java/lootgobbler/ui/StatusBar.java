@@ -7,7 +7,8 @@ import javax.swing.*;
 import java.awt.*;
 
 /**
- * Bottom bar: sniffer state (colored dot + text) on the left, Update and Start/Stop Sniffer buttons on the right.
+ * Bottom bar: sniffer state (colored dot + text) on the left; the version (greyed out), Update and Start/Stop
+ * Sniffer buttons on the right.
  */
 public class StatusBar extends JPanel {
     private static final int GLOW = 7;   // px of glow around UPDATE AVAILABLE
@@ -30,12 +31,33 @@ public class StatusBar extends JPanel {
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
         buttons.setOpaque(false);
         buttons.setBorder(BorderFactory.createEmptyBorder(3, GLOW, 3, 0));   // room for the glow
+        JLabel version = new JLabel(versionText());
+        version.putClientProperty("FlatLaf.styleClass", "statusBar");
+        Color muted = Palette.MUTED;   // fainter still than muted text: just there if you look for it
+        version.setForeground(new Color(muted.getRed(), muted.getGreen(), muted.getBlue(), 110));
+        version.setToolTipText(stable() ? "Release version (installed or portable app)"
+                : "Development build (run from source, not a published release)");
+        version.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 12));
+        buttons.add(version);
         buttons.add(update);
         buttons.add(Box.createHorizontalStrut(6));
         buttons.add(sniffer);
         add(state, BorderLayout.WEST);
         add(buttons, BorderLayout.EAST);
         setRunning(false);
+    }
+
+    /** E.g. "stable v0.5.5", or "build v0.5.6" when run from source. */
+    private static String versionText() {
+        return (stable() ? "stable " : "build ") + tomato.version.Version.VERSION;
+    }
+
+    /**
+     * Whether this is a released app: the packaged exe (installer or portable zip), whose launcher sets
+     * jpackage.app-path. Run from source (gradlew run, the IDE, a plain jar) it is a development build.
+     */
+    private static boolean stable() {
+        return System.getProperty("jpackage.app-path") != null;
     }
 
     public void setRunning(boolean running) {

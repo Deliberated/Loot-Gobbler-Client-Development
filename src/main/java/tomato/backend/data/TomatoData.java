@@ -97,12 +97,14 @@ public class TomatoData {
      */
     public void setNewRealm(MapInfoPacket map) {
         lootgobbler.AppLog.log("game", "Entered " + map.displayName + " (" + map.width + "x" + map.height + ")");
+        lootgobbler.DungeonVisits.get().hits(player, true);   // the hits taken in the map left, before they are cleared
         clear();
         ParsePanelGUI.clear();
         petYardCheck(map.displayName);
         if ("{s.nexus}".equals(map.displayName)) lootgobbler.CharacterStore.get().enteredNexus();   // auto Refresh
         this.map = map;
         rng = new RNG(map.seed);
+        lootgobbler.DungeonVisits.get().entered(map);   // after clear(): the run of the map left is saved by now
     }
 
     /**
@@ -910,6 +912,7 @@ public class TomatoData {
             p.healthProgress,
         };
         if (!Arrays.equals(exalts, update)) {
+            lootgobbler.DungeonVisits.get().exaltProgress(p.objType, exalts, update);   // earned in the dungeon you are in
             RealmCharacter.exalts.put((int) p.objType, update);
             CharacterExaltGUI.updateExalts();
             lootgobbler.ExaltStore.get().update(Map.of((int) p.objType, update));

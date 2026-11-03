@@ -153,6 +153,7 @@ public class DpsGUI extends JPanel {
 
     public static void updateNewTickPacket(TomatoData data) {
         lootgobbler.DpsHistory.get().liveTick(data);
+        lootgobbler.DungeonVisits.get().hits(data.player, false);   // damage taken in the dungeon you are in
         lootgobbler.LootEvents.inventoryTick(data);
         lootgobbler.CharacterStore.get().live(data);
         if (!INSTANCE.liveUpdates) return;

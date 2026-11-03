@@ -49,7 +49,7 @@ public class ProfileView extends SubTabs {
 
     private final IntConsumer openCharacter;   // shows a character in the Characters tab
     private final Consumer<String> openGuild;  // shows a page of the Guild tab
-    private final Consumer<DpsHistory.Run> openRun;   // shows a run in the DPS Logger tab
+    private final Consumer<DpsHistory.Run> openRun;   // shows a run in the Battles tab
 
     // the guild row, from the server
     private final GobblerServer server = GobblerServer.get();
@@ -501,7 +501,7 @@ public class ProfileView extends SubTabs {
             g.fill = GridBagConstraints.HORIZONTAL;
             JLabel dungeon = new JLabel(run.dungeon, DpsPanel.dungeonIcon(run), SwingConstants.LEFT);
             dungeon.setIconTextGap(8);
-            dungeon.setToolTipText("Open this run in the DPS Logger");
+            dungeon.setToolTipText("Open this run in Battles");
             dungeon.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             Clicks.onClick(dungeon, () -> openRun.accept(run));
             table.add(dungeon, g);

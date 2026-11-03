@@ -13,42 +13,53 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * A box at the right end of the tab row while a dungeon's boss damage is being logged: the dungeon's portal,
- * "Since: m:ss" (time in the dungeon) and "Active Dungeon: Rank #x / y" (your place on the main boss among everyone
- * who hit it), tinted in a darkened version of the portal's colors. Hidden otherwise; a click opens the live run in
- * the DPS Logger.
+ * A box in the title bar (after the menus) while you are in a dungeon, from the moment you enter it: the dungeon's
+ * portal, "Duration: m:ss" (time in the dungeon), the game's difficulty rating (number and gravestone) and, once you hit its
+ * main boss, "Active Dungeon: Rank #x / y" (your place among everyone who hit it). Tinted in a darkened version of
+ * the portal's colors; hidden outside dungeons. A click opens the dungeon under Battles > Dungeons.
  */
 public final class ActiveDungeonBadge extends JPanel {
     private static final int ICON = 22;
+    private static final int GRAVESTONE = 1282;   // the game's plain gravestone: the difficulty's icon
     private static final Color FALLBACK = new Color(0x3A2C08);
     private final Map<String, Icon> icons = new HashMap<>();
     private final Map<String, Color> tints = new HashMap<>();
     private final JLabel icon = new JLabel();
     private final JLabel since = new JLabel();
+    private final JLabel difficulty = new JLabel();
     private final JLabel rank = new JLabel();
     private final Timer clock = new Timer(1000, e -> updateSince());
     private long start;
+    private String dungeon = "";
     private Color tint = FALLBACK;
 
     public ActiveDungeonBadge(Runnable open) {
         super(new FlowLayout(FlowLayout.LEFT, 10, 0));
         setOpaque(false);
         setBorder(new EmptyBorder(4, 14, 4, 14));
-        for (JLabel l : new JLabel[]{since, rank}) l.setForeground(new Color(0xF2ECDC));
+        for (JLabel l : new JLabel[]{since, difficulty, rank}) l.setForeground(new Color(0xF2ECDC));
         add(icon);
         add(since);
+        add(difficulty);
         add(rank);
         setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        setToolTipText("Open the live run in the DPS Logger");
+        setToolTipText("Open this dungeon in Battles");
         Clicks.onClick(this, open);
         setVisible(false);
         DpsHistory.get().onChange(() -> SwingUtilities.invokeLater(this::refresh));
+        lootgobbler.DungeonVisits.get().onChange(() -> SwingUtilities.invokeLater(this::refresh));
+        refresh();   // already in a dungeon
+    }
+
+    /** Only as wide as its content (the title bar's menu bar would otherwise stretch it). */
+    @Override
+    public Dimension getMaximumSize() {
+        return getPreferredSize();
     }
 
     private void refresh() {
-        Run run = DpsHistory.get().live();
-        Boss boss = run == null || run.guildHall ? null : run.mainBoss();
-        if (boss == null) {
+        lootgobbler.DungeonVisits.Visit visit = lootgobbler.DungeonVisits.get().current();
+        if (visit == null) {
             clock.stop();
             if (isVisible()) {
                 setVisible(false);
@@ -56,14 +67,18 @@ public final class ActiveDungeonBadge extends JPanel {
             }
             return;
         }
-        PlayerRow me = boss.me();
-        Icon portal = icons.computeIfAbsent(run.dungeon, d -> ProfileView.dungeonIcon(d, ICON));
+        Run run = DpsHistory.get().live();
+        Boss boss = run == null || run.guildHall || !run.dungeon.equals(visit.dungeon) ? null : run.mainBoss();
+        PlayerRow me = boss == null ? null : boss.me();
+        Icon portal = icons.computeIfAbsent(visit.dungeon, d -> ProfileView.dungeonIcon(d, ICON));
         icon.setIcon(portal);
-        icon.setToolTipText(run.dungeon);
-        tint = tints.computeIfAbsent(run.dungeon, d -> tint(portal));
-        rank.setText("<html>Active Dungeon: <b>Rank #" + (me == null ? "-" : boss.rankOf(me)) + " / "
-                + boss.players.size() + "</b></html>");
-        start = run.start;
+        icon.setToolTipText(visit.dungeon);
+        tint = tints.computeIfAbsent(visit.dungeon, d -> tint(portal));
+        // the rank only once you have one (you hit the main boss)
+        rank.setVisible(me != null);
+        if (me != null) rank.setText("<html>Active Dungeon: <b>Rank #" + boss.rankOf(me) + " / " + boss.players.size() + "</b></html>");
+        dungeon = visit.dungeon;
+        start = visit.start;
         updateSince();
         if (!clock.isRunning()) clock.start();
         if (!isVisible()) {
@@ -77,7 +92,24 @@ public final class ActiveDungeonBadge extends JPanel {
         long s = Math.max(0, (System.currentTimeMillis() - start) / 1000);
         String time = s >= 3600 ? String.format("%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60)
                 : String.format("%d:%02d", s / 60, s % 60);
-        since.setText("<html>Since: <b>" + time + "</b></html>");
+        since.setText("<html>Duration: <b>" + time + "</b></html>");
+        // the game's rating of the dungeon (loaded in the background, so it may come a moment later)
+        Double d = lootgobbler.DungeonDifficulty.of(dungeon);
+        difficulty.setVisible(d != null);
+        if (d != null) {
+            // the number with the game's gravestone, as the game shows a dungeon's difficulty
+            String text = "<html><b>" + (d % 1 == 0 ? String.valueOf(d.intValue()) : String.valueOf(d)) + "</b></html>";
+            if (difficulty.getIcon() == null) {
+                difficulty.setIcon(CharactersView.sprite(GRAVESTONE, 16));
+                difficulty.setHorizontalTextPosition(SwingConstants.LEFT);
+                difficulty.setIconTextGap(4);
+                difficulty.setToolTipText("Dungeon difficulty");
+            }
+            if (!text.equals(difficulty.getText())) {
+                difficulty.setText(text);
+                revalidateParent();
+            }
+        }
     }
 
     /**

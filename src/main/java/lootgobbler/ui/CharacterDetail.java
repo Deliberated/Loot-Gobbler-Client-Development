@@ -82,36 +82,30 @@ final class CharacterDetail {
      * Stat toggles, then per slot the item that gives the most of the chosen stats: from the items you have of the
      * character's side (seasonal or not) that fit its class, plus what it carries.
      */
+    /** Whether any stat is picked for the suggested loadout. */
+    static boolean anyStatChosen() {
+        return !chosenStats().isEmpty();
+    }
+
     static JComponent ideal(Char c, Runnable rerender) {
         Set<String> chosen = chosenStats();
         JPanel p = column();
-        JPanel toggles = new JPanel(new GridLayout(2, 4, 4, 4));   // two rows of four: fits a narrow panel
-        toggles.setOpaque(false);
-        for (int s = 0; s < STATS.length; s++) {
-            String stat = STATS[s];
-            JToggleButton b = new JToggleButton(STAT_SHORT[s], ClassesView.potion(s, 16), chosen.contains(stat));
-            b.setToolTipText(STAT_LABELS[s]);
-            b.setIconTextGap(4);
-            b.addActionListener(e -> {
-                Set<String> now = chosenStats();
-                if (!now.remove(stat)) now.add(stat);
-                PropertiesManager.setProperties(IDEAL_KEY, String.join(",", now));
-                rerender.run();
-            });
-            toggles.add(b);
-        }
-        p.add(left(toggles));
-        p.add(Box.createVerticalStrut(8));
         int[] types = ClassSlots.of(c.classType);
-        if (chosen.isEmpty() || types == null) {
-            p.add(left(muted(types == null ? "Unknown class." : "Pick the stats to make as high as possible.")));
+        if (types == null) {
+            p.add(left(muted("Unknown class.")));
             return p;
         }
+        // the stat boxes are the toggles (gold when chosen); with none chosen, the box's header says so
         List<Integer> pool = pool(c);
-        JPanel grid = new JPanel(new GridLayout(2, 2, 12, 8));
+        // the four items in one column (weapon, ability, armor, ring), next to the four rows of stats
+        JPanel grid = new JPanel(new GridBagLayout());
         grid.setOpaque(false);
+        GridBagConstraints cell = new GridBagConstraints();
+        cell.anchor = GridBagConstraints.NORTHWEST;
+        int placed = 0;
         int[] suggested = new int[STATS.length], now = new int[STATS.length];   // item bonuses per stat
-        for (int slot : new int[]{0, 2, 1, 3}) {
+        double[] enchanted = new double[STATS.length];   // enchantment bonuses of the suggested items, where known
+        for (int slot : new int[]{0, 1, 2, 3}) {
             int best = -1, bestScore = 0, bestAll = 0;
             for (int id : pool) {
                 ItemDb.Item it = ItemDb.get().item(id);
@@ -132,13 +126,35 @@ final class CharacterDetail {
             ItemDb.Item it = best > 0 ? ItemDb.get().item(best) : null;
             addBonuses(suggested, it);
             addBonuses(now, current > 0 ? ItemDb.get().item(current) : null);
-            grid.add(idealItem(best, it, chosen, best == current, SLOT_NAMES[slot]));
+            // the enchantments are only known for what the character wears, so only a kept item brings its own
+            if (best == current && c.enchantIds != null && slot < c.enchantIds.length && c.enchantIds[slot] != null) {
+                for (int e : c.enchantIds[slot]) {
+                    if (e < 0) continue;
+                    for (Map.Entry<String, Double> b : lootgobbler.EnchantStats.of(e).entrySet()) {
+                        int i = Arrays.asList(STATS).indexOf(b.getKey());
+                        if (i >= 0) enchanted[i] += b.getValue();
+                    }
+                }
+            }
+            cell.gridy = placed;   // one column, a row beside each row of stats
+            cell.insets = new Insets(0, 0, 6, 0);
+            grid.add(idealItem(best, it, chosen, best == current, SLOT_NAMES[slot]), cell);
+            placed++;
         }
         // the character's stats on the left (as with the suggestion), the four items on the right
-        JPanel row = new JPanel(new BorderLayout(18, 0));
+        JPanel row = new JPanel();
+        row.setLayout(new BoxLayout(row, BoxLayout.X_AXIS));
         row.setOpaque(false);
-        row.add(statTable(ClassSlots.maxStats(c.classType), suggested, now, chosen), BorderLayout.WEST);
-        row.add(grid, BorderLayout.CENTER);
+        JComponent stats = statTable(ClassSlots.maxStats(c.classType), suggested, now, enchanted, chosen, rerender);
+        stats.setMaximumSize(stats.getPreferredSize());
+        stats.setMinimumSize(stats.getPreferredSize());   // the item names give way first
+        grid.setMaximumSize(grid.getPreferredSize());
+        stats.setAlignmentY(Component.TOP_ALIGNMENT);
+        grid.setAlignmentY(Component.TOP_ALIGNMENT);
+        row.add(stats);
+        row.add(Box.createHorizontalStrut(12));
+        row.add(grid);
+        row.add(Box.createHorizontalGlue());
         p.add(left(row));
         return p;
     }
@@ -152,66 +168,152 @@ final class CharacterDetail {
     }
 
     /**
-     * The eight stats as they would be with the suggested loadout: the class's maximum plus the suggested items'
-     * bonuses, and how that differs from what the character wears now (green up, red down). Chosen stats in gold.
+     * The eight stats as they would be with the suggested loadout, a box each in two columns of four (life | mana,
+     * attack | defense, ...): the stat's name, then "x (+y) (+z)": x the total (the class's maximum plus both
+     * bonuses), y what the items add, z (blue) what their enchantments add. Chosen stats have a gold name; the
+     * tooltip compares the items with what the character wears now.
      */
-    private static JComponent statTable(int[] max, int[] suggested, int[] now, Set<String> chosen) {
-        JPanel t = new JPanel(new GridBagLayout());
+    private static JComponent statTable(int[] max, int[] suggested, int[] now, double[] enchanted, Set<String> chosen,
+                                        Runnable rerender) {
+        JPanel t = new JPanel(new GridLayout(4, 2, 6, 6));
         t.setOpaque(false);
-        GridBagConstraints g = new GridBagConstraints();
-        g.insets = new Insets(1, 0, 1, 10);
         for (int s = 0; s < STATS.length; s++) {
-            g.gridy = s;
-            g.gridx = 0;
-            g.anchor = GridBagConstraints.WEST;
-            JLabel name = new JLabel(STAT_SHORT[s], ClassesView.potion(s, 16), SwingConstants.LEFT);
-            name.setIconTextGap(6);
-            if (chosen.contains(STATS[s])) name.setForeground(Section.color("LootGobbler.gold", Palette.GOLD));
-            t.add(name, g);
-            g.gridx = 1;
-            g.anchor = GridBagConstraints.EAST;
-            int base = max == null ? 0 : max[s];
-            JLabel value = new JLabel(max == null ? "+" + suggested[s] : NUM.format(base + suggested[s]));
-            value.setToolTipText(max == null ? "Item bonuses" : "Maximum " + NUM.format(base) + ", items " + (suggested[s] >= 0 ? "+" : "") + suggested[s]);
-            t.add(value, g);
-            g.gridx = 2;
-            g.anchor = GridBagConstraints.WEST;
-            int diff = suggested[s] - now[s];
-            JLabel change = new JLabel(diff == 0 ? "" : (diff > 0 ? "+" : "") + diff);
-            change.setForeground(diff > 0 ? Palette.GREEN : new Color(0xE5636E));
-            change.setToolTipText("Compared with what it wears now");
-            t.add(change, g);
+            int base = max == null ? 0 : max[s], items = suggested[s];
+            int ench = (int) Math.floor(enchanted[s] + 1e-9);   // fractions (e.g. 1.4) count only once whole
+            int diff = items - now[s];
+            StringBuilder tip = new StringBuilder("<html>" + STAT_LABELS[s] + "<br>");
+            if (max != null) tip.append("Class maximum ").append(NUM.format(base)).append("<br>");
+            tip.append("Items ").append(signed(items)).append("<br>Enchantments ").append(signed(ench));
+            if (enchanted[s] != ench) tip.append(String.format(Locale.ROOT, " (%.1f)", enchanted[s]));
+            if (diff != 0) tip.append("<br>").append(signed(diff)).append(" compared with what it wears now");
+            tip.append("<br><i>Click to ").append(chosen.contains(STATS[s]) ? "stop aiming for it" : "aim for it").append("</i>");
+            // the enchantments are not counted in yet (only in the tooltip), so x is the maximum plus the items
+            StatBox box = new StatBox(STAT_SHORT[s], base + items, items, chosen.contains(STATS[s]), tip + "</html>");
+            String stat = STATS[s];
+            box.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            Clicks.onClick(box, () -> {   // toggles the stat; the suggestion follows
+                Set<String> picked = chosenStats();
+                if (!picked.remove(stat)) picked.add(stat);
+                PropertiesManager.setProperties(IDEAL_KEY, String.join(",", picked));
+                rerender.run();
+            });
+            t.add(box);
         }
         return t;
+    }
+
+    private static String signed(int n) {
+        return (n >= 0 ? "+" : "") + n;
+    }
+
+    /**
+     * One stat: a framed dark box with the name on top and "x (+y)" below: white at the class's maximum, green when
+     * the items raise it, orange when they lower it. All boxes are as wide as the widest possible value needs.
+     */
+    private static final class StatBox extends JComponent {
+        private static final Color UP = Palette.GREEN, DOWN = new Color(0xFF8A2A);
+        private static final String WIDEST = "9,999 (+999)";
+        private final String name;
+        private final String text;
+        private final int items;
+        private final boolean chosen;
+
+        StatBox(String name, int total, int items, boolean chosen, String tooltip) {
+            this.name = name;
+            this.text = NUM.format(total) + " (" + signed(items) + ")";
+            this.items = items;
+            this.chosen = chosen;
+            setToolTipText(tooltip);
+            setFont(new JLabel().getFont());
+        }
+
+        private Font big() {
+            return getFont().deriveFont(getFont().getSize2D() * 1.15f);
+        }
+
+        @Override
+        public Dimension getPreferredSize() {
+            FontMetrics small = getFontMetrics(getFont()), large = getFontMetrics(big());
+            return new Dimension(large.stringWidth(WIDEST) + 30, small.getHeight() + large.getHeight() + 14);
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            int w = getWidth(), h = getHeight();
+            Color accent = Section.color("LootGobbler.gold", Palette.GOLD);
+            // the inside: dark, or gold-tinted when the stat is chosen
+            g2.setColor(chosen ? new Color(accent.getRed(), accent.getGreen(), accent.getBlue(), 55) : new Color(0, 0, 0, 70));
+            g2.fillRect(3, 3, w - 6, h - 6);
+            g2.setColor(chosen ? accent : new Color(255, 255, 255, 40));   // a frame with open corners
+            int c = 8;
+            g2.fillRect(c, 0, w - 2 * c, 3);
+            g2.fillRect(c, h - 3, w - 2 * c, 3);
+            g2.fillRect(0, c, 3, h - 2 * c);
+            g2.fillRect(w - 3, c, 3, h - 2 * c);
+
+            FontMetrics fm = g2.getFontMetrics(getFont());
+            g2.setFont(getFont());
+            g2.setColor(chosen ? Section.color("LootGobbler.gold", Palette.GOLD) : Palette.MUTED);
+            g2.drawString(name, (w - fm.stringWidth(name)) / 2, 6 + fm.getAscent());
+
+            Font big = big();
+            FontMetrics lm = g2.getFontMetrics(big);
+            g2.setFont(big);
+            int x = (w - lm.stringWidth(text)) / 2, y = 6 + fm.getHeight() + lm.getAscent();
+            g2.setColor(items > 0 ? UP : items < 0 ? DOWN : Color.WHITE);
+            g2.drawString(text, x, y);
+            g2.dispose();
+        }
+    }
+
+    private static final Color OTHER_STAT = new Color(0x3A9BFF);   // item stats that are not among the chosen
+
+    private static String esc(String s) {
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
+    private static String hex(Color c) {
+        return String.format("#%06x", c.getRGB() & 0xFFFFFF);
     }
 
     private static JComponent idealItem(int id, ItemDb.Item it, Set<String> chosen, boolean equipped, String slotName) {
         JPanel p = new JPanel(new BorderLayout(10, 0));
         p.setOpaque(false);
-        JLabel icon = new JLabel(id > 0 ? CharactersView.sprite(id, 40) : null);
-        icon.setPreferredSize(new Dimension(44, 44));
+        JLabel icon = new JLabel(id > 0 ? CharactersView.sprite(id, 48) : null);
+        icon.setPreferredSize(new Dimension(60, 52));   // room on the left; centered beside the text
+        icon.setHorizontalAlignment(SwingConstants.RIGHT);
+        icon.setVerticalAlignment(SwingConstants.CENTER);
         ItemLinks.link(icon, id);
         p.add(icon, BorderLayout.WEST);
         JPanel text = column();
-        text.add(new JLabel(id > 0 ? CharactersView.itemName(id) : "No " + slotName.toLowerCase(Locale.ROOT)));
-        StringBuilder sb = new StringBuilder();
+        String name = id > 0 ? esc(CharactersView.itemName(id)) : "No " + slotName.toLowerCase(Locale.ROOT);
+        // what it wears already (also when nothing gives the chosen stats: then it keeps its item), after the name
+        text.add(new JLabel(equipped && id > 0 ? "<html>" + name + " <span style='color:" + hex(Palette.MUTED)
+                + "'>(equipped)</span></html>" : "<html>" + name + "</html>"));
+        // every stat the item gives: the chosen ones first in green, the others after them in blue
+        StringBuilder picked = new StringBuilder(), other = new StringBuilder();
         if (it != null) {
             for (ItemDb.Stat st : it.onEquip) {
-                if (chosen.contains(st.stat())) sb.append(st.amount() > 0 ? "+" : "").append(st.amount()).append(' ').append(shortName(st.stat())).append("  ");
+                if (Arrays.asList(STATS).indexOf(st.stat()) < 0) continue;
+                StringBuilder to = chosen.contains(st.stat()) ? picked : other;
+                to.append(st.amount() > 0 ? "+" : "").append(st.amount()).append(' ').append(shortName(st.stat())).append("&nbsp;&nbsp;");
             }
         }
-        // no bonus to the chosen stats: nothing better was found, so it is what the character wears
-        JLabel bonus = new JLabel(sb.length() == 0 ? "equipped" : sb.toString().trim());
-        bonus.putClientProperty("FlatLaf.styleClass", "small");
-        bonus.setForeground(sb.length() == 0 ? Palette.MUTED : Palette.GREEN);
-        text.add(bonus);
-        if (equipped && sb.length() > 0) {
-            JLabel eq = new JLabel("equipped");
-            eq.putClientProperty("FlatLaf.styleClass", "small");
-            eq.setForeground(Palette.MUTED);
-            text.add(eq);
+        if (picked.length() + other.length() > 0) {
+            JLabel bonus = new JLabel("<html><span style='color:" + hex(Palette.GREEN) + "'>" + picked + "</span><span style='color:"
+                    + hex(OTHER_STAT) + "'>" + other + "</span></html>");
+            bonus.putClientProperty("FlatLaf.styleClass", "small");
+            text.add(bonus);
         }
-        p.add(text, BorderLayout.CENTER);
+        JPanel middle = new JPanel(new GridBagLayout());   // the text centered on the icon's height
+        middle.setOpaque(false);
+        GridBagConstraints c = new GridBagConstraints();
+        c.anchor = GridBagConstraints.WEST;
+        c.weightx = 1;
+        middle.add(text, c);
+        p.add(middle, BorderLayout.CENTER);
         return p;
     }
 
