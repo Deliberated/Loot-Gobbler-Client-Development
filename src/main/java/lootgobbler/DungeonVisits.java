@@ -48,6 +48,7 @@ public final class DungeonVisits implements Syncable {
         // Moonlight Village: how long its lantern was there, and you within 3.5 / 1.75 tiles of it (MoonlightLog)
         public long lanternActiveMs, lanternRangeMs, lanternNearMs;
         public int[] amuletSaves = new int[0];   // when your amulet saved you, ms after entering (AmuletSaves)
+        public List<MvPhase> mvPhases = new ArrayList<>();   // Moonlight Village: its boss phases in order (MoonlightLog)
 
         public int hits() {
             return hitTime == null ? 0 : hitTime.length;
@@ -55,6 +56,24 @@ public final class DungeonVisits implements Syncable {
 
         public long duration() {   // a visit in progress counts up to now
             return durationMs > 0 ? durationMs : System.currentTimeMillis() - start;
+        }
+    }
+
+    /**
+     * One Moonlight Village phase: a dance (damage) or a lantern phase of one boss, named after its song. Times are
+     * ms after entering; lanternMs is how long the lantern was there, rangeMs / nearMs how long of that you were
+     * within 3.5 / 1.75 tiles of it; flames are the spirits the game sends when the phase ends (its score).
+     */
+    public static final class MvPhase {
+        public int boss;   // the boss's object type
+        public String title = "";
+        public long startMs, durationMs;
+        public boolean lantern;
+        public long lanternMs, rangeMs, nearMs;
+        public int flames;
+
+        public long duration(long now, Visit v) {   // a phase in progress counts up to now
+            return durationMs > 0 ? durationMs : Math.max(0, now - v.start - startMs);
         }
     }
 

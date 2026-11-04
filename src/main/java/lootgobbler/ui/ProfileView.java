@@ -811,7 +811,8 @@ public class ProfileView extends SubTabs {
      * characters of guildmates who fought its bosses with you above it.
      */
     private static class FameGraph extends JComponent {
-        private static final int BREAK = 26, ICON = 20, MATE = 16, TOP = ICON + MATE + 6, AXIS = 15;   // AXIS: break times
+        // GAP: the room between a dungeon icon and the line below it; AXIS: room for the break times
+        private static final int BREAK = 26, ICON = 24, MATE = 16, GAP = 7, TOP = ICON + MATE + GAP + 4, AXIS = 15;
 
         record Series(List<Sample> samples, Color color, float width) {
         }
@@ -883,8 +884,10 @@ public class ProfileView extends SubTabs {
                 if (!((Rectangle) d[2]).contains(e.getPoint())) continue;
                 DungeonVisits.Visit v = (DungeonVisits.Visit) d[0];
                 String with = (String) d[3];
-                return v.dungeon + ":  +" + NUM.format((long) d[1]) + " fame" + (with.isEmpty() ? "" : "  ·  with " + with)
-                        + "  ·  click to open it in Battles";
+                int n = (int) d[4];
+                return (n > 1 ? n + "x " : "") + v.dungeon + ":  +" + NUM.format((long) d[1]) + " fame"
+                        + (with.isEmpty() ? "" : "  ·  with " + with)
+                        + (n > 1 ? "  ·  click to open the last one in Battles" : "  ·  click to open it in Battles");
             }
             if (timeline != null) {
                 for (double[] b : timeline.breaks(2, getWidth() - 2)) {
@@ -947,30 +950,54 @@ public class ProfileView extends SubTabs {
                 String gap = IdleTimeline.gap((long) (b[1] - b[0]));   // under the axis, below the slashes
                 g2.drawString(gap, cx - fm.stringWidth(gap) / 2, getHeight() - 2);
             }
-            // every dungeon, above the line where you left it; ones close together move right so none is hidden
+            // every dungeon above the line where you left it; the same dungeon several times in a row is one icon with
+            // "3x" before it, at the last one. A group that would touch the one before it moves right.
             List<long[]> main = points(series.get(0).samples());
             long base = series.get(0).samples().get(0).fame;
             List<DungeonVisits.Visit> visits = new ArrayList<>(DungeonVisits.get().visits());
             if (DungeonVisits.get().current() != null) visits.add(DungeonVisits.get().current());
             visits.sort(Comparator.comparingLong(v -> v.start));
-            int lastIcon = -10_000;
+            List<List<DungeonVisits.Visit>> groups = new ArrayList<>();
             for (DungeonVisits.Visit v : visits) {
-                long end = DungeonVisits.end(v);
-                if (end < timeline.from || v.start > timeline.to) continue;
-                Long a = DungeonVisits.fameAt(main, v.start), b = DungeonVisits.fameAt(main, end);
-                if (a == null || b == null) continue;
-                int x = Math.max((int) Math.round(timeline.x(end, left, right)), lastIcon + ICON + 2);
-                if (x + ICON / 2 > right) break;
-                Icon icon = icons.computeIfAbsent(v.dungeon, d -> ProfileView.dungeonIcon(d, ICON));
+                if (DungeonVisits.end(v) < timeline.from || v.start > System.currentTimeMillis()) continue;
+                List<DungeonVisits.Visit> last = groups.isEmpty() ? null : groups.get(groups.size() - 1);
+                if (last != null && last.get(0).dungeon.equals(v.dungeon)) last.add(v);
+                else groups.add(new ArrayList<>(List.of(v)));
+            }
+            g2.setFont(getFont().deriveFont(Font.BOLD, Math.max(10f, getFont().getSize2D() - 1)));
+            fm = g2.getFontMetrics();
+            int lastRight = -10_000;
+            for (List<DungeonVisits.Visit> group : groups) {
+                DungeonVisits.Visit first = group.get(0), lastVisit = group.get(group.size() - 1);
+                Icon icon = icons.computeIfAbsent(first.dungeon, d -> ActiveDungeonBadge.fit(ProfileView.dungeonIcon(d, 64), ICON, true));
                 if (icon == null) continue;
-                int y = h - (int) (Math.max(0, b - base) * (h - 4 - TOP) / hi) - 2 - ICON - 2;
+                long end = Math.min(DungeonVisits.end(lastVisit), timeline.to);
+                long gained = 0;
+                for (DungeonVisits.Visit v : group) {
+                    Long a = DungeonVisits.fameAt(main, v.start), b = DungeonVisits.fameAt(main, DungeonVisits.end(v));
+                    if (a != null && b != null) gained += Math.max(0, b - a);
+                }
+                Long at = DungeonVisits.fameAt(main, end);
+                String count = group.size() > 1 ? group.size() + "x" : "";
+                int countW = count.isEmpty() ? 0 : fm.stringWidth(count) + 2, width = countW + ICON;
+                // the icon's centre where you left, kept clear of the group before it and inside the graph
+                int x = (int) Math.round(timeline.x(end, left, right));
+                x = Math.max(x, lastRight + 6 + countW + ICON / 2);
+                x = Math.min(x, right - ICON / 2);
+                int y = h - (int) (Math.max(0, (at == null ? base : at) - base) * (h - 4 - TOP) / hi) - 2 - ICON - GAP;
                 Rectangle r = new Rectangle(x - ICON / 2, Math.max(MATE + 2, y), ICON, ICON);
                 icon.paintIcon(this, g2, r.x, r.y);
-                // the guildmates' characters side by side right above it
-                List<DpsHistory.PlayerRow> mates = mates(v);
+                if (!count.isEmpty()) {
+                    g2.setColor(gold());
+                    g2.drawString(count, r.x - countW, r.y + ICON - (ICON - fm.getAscent()) / 2 - 2);
+                    r.add(new Rectangle(r.x - countW, r.y, countW, ICON));
+                }
+                // the guildmates' characters (of all the group's runs) side by side right above it
+                Map<String, DpsHistory.PlayerRow> mates = new LinkedHashMap<>();
+                for (DungeonVisits.Visit v : group) for (DpsHistory.PlayerRow p : mates(v)) mates.putIfAbsent(p.name.toLowerCase(Locale.ROOT), p);
                 StringBuilder with = new StringBuilder();
                 int mx = x - mates.size() * MATE / 2;
-                for (DpsHistory.PlayerRow p : mates) {
+                for (DpsHistory.PlayerRow p : mates.values()) {
                     Icon mate = mateIcons.computeIfAbsent(p.classType, t -> CharactersView.sprite(t, MATE));
                     if (mate != null) mate.paintIcon(this, g2, mx, r.y - MATE - 1);
                     mx += MATE;
@@ -978,8 +1005,8 @@ public class ProfileView extends SubTabs {
                     with.append(with.isEmpty() ? "" : ", ").append(p.name).append(cls == null ? "" : " (" + cls + ")");
                 }
                 if (!mates.isEmpty()) r.add(new Rectangle(x - mates.size() * MATE / 2, r.y - MATE - 1, mates.size() * MATE, MATE));
-                dungeons.add(new Object[]{v, Math.max(0, b - a), r, with.toString()});
-                lastIcon = x;
+                dungeons.add(new Object[]{lastVisit, gained, r, with.toString(), group.size()});
+                lastRight = x + ICON / 2;
             }
             g2.dispose();
         }

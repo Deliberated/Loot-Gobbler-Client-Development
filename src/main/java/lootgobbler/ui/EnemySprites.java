@@ -16,16 +16,19 @@ import java.util.Map;
  * the real enemy's name as their display name, so the name leads back to a sprite worth showing.
  */
 final class EnemySprites {
-    private static final String LIST = "assets/ObjectID.list";
-    private static Map<String, List<Integer>> enemiesByName;   // lower-case name -> real enemies of that name
+    private static final String LIST = "assets/ObjectID.list", XML_DIR = "assets/xml";
+    private static Map<Integer, Integer> fileOf;
+    private static Map<String, List<Integer>> enemiesByName;   // lower-case name -> visible enemies of that name
+    private static final java.util.Set<Integer> combatants = new java.util.HashSet<>();   // bosses, minions, quests
 
     private EnemySprites() {
     }
 
     /**
-     * Real enemies the object may stand for, nearest object id first (a dungeon's objects are numbered together, so
-     * Oryx 3's helpers lead to Oryx 3, not Oryx 2). Its display name first, then with trailing words cut off
-     * ("Oryx Deacon Holy Beam" -> "Oryx Deacon"). Empty if none.
+     * Enemies the object may stand for: those defined in the same game file first (Oryx 3's helpers lead to Oryx 3,
+     * not Oryx 2 or Infested Oryx), then bosses and minions before other visible enemy objects (Dammah's invisible
+     * Bloodshed Portals lead to the visible ones), then the nearest object id. Its display name first, then with
+     * trailing words cut off ("Oryx Deacon Holy Beam" -> "Oryx Deacon"). Empty if none.
      */
     static List<Integer> candidates(int type) {
         String name = assets.IdToAsset.objectName(type);
@@ -38,7 +41,11 @@ final class EnemySprites {
                 List<Integer> out = new ArrayList<>(found);
                 out.remove((Integer) type);
                 if (!out.isEmpty()) {
-                    out.sort((a, b) -> Integer.compare(Math.abs(a - type), Math.abs(b - type)));
+                    Map<Integer, Integer> files = files();
+                    Integer own = files.get(type);
+                    out.sort(java.util.Comparator.comparing((Integer a) -> own == null || !own.equals(files.get(a)))
+                            .thenComparing(a -> !combatants.contains(a))
+                            .thenComparingInt(a -> Math.abs(a - type)));
                     return out;
                 }
             }
@@ -55,8 +62,8 @@ final class EnemySprites {
     }
 
     /**
-     * Characters with combat labels by name, from the extracted ObjectID.list
-     * (id;display;class;group;stats;texture;labels;idName).
+     * Visible enemy objects by name, from the extracted ObjectID.list (id;display;class;group;stats;texture;labels;
+     * idName); the Characters among them with combat labels are also noted in combatants.
      */
     private static synchronized Map<String, List<Integer>> index() {
         if (enemiesByName != null) return enemiesByName;
@@ -64,11 +71,16 @@ final class EnemySprites {
         try {
             for (String line : Files.readAllLines(Path.of(LIST), StandardCharsets.UTF_8)) {
                 String[] f = line.split(";", -1);
-                if (f.length < 8 || !f[2].equals("Character") || f[5].endsWith(",invisible")) continue;
-                if (!realEnemy(f[6])) continue;
+                if (f.length < 8 || f[5].isEmpty() || f[5].endsWith(",invisible")) continue;
+                boolean character = f[2].equals("Character");
+                if (!character && !f[2].equals("GameObject")) continue;
+                boolean combatant = character && realEnemy(f[6]);
+                if (!combatant && !("," + f[6] + ",").contains(",ENEMY,")) continue;
                 String name = (f[1].isEmpty() ? f[7] : f[1]).toLowerCase(Locale.ROOT).trim();
                 try {
-                    out.computeIfAbsent(name, k -> new ArrayList<>()).add(Integer.parseInt(f[0]));
+                    int id = Integer.parseInt(f[0]);
+                    out.computeIfAbsent(name, k -> new ArrayList<>()).add(id);
+                    if (combatant) combatants.add(id);
                 } catch (NumberFormatException ignored) {
                 }
             }
@@ -77,6 +89,25 @@ final class EnemySprites {
             return Map.of();
         }
         enemiesByName = out;
+        return out;
+    }
+
+    /** Object type -> the extracted XML file it is defined in (as an index), read once. */
+    private static synchronized Map<Integer, Integer> files() {
+        if (fileOf != null) return fileOf;
+        Map<Integer, Integer> out = new HashMap<>();
+        java.io.File[] xml = new java.io.File(XML_DIR).listFiles((d, n) -> n.toLowerCase(Locale.ROOT).endsWith(".xml"));
+        if (xml == null) return Map.of();   // not extracted yet: try again next time
+        java.util.regex.Pattern object = java.util.regex.Pattern.compile("<Object type=\"(0x[0-9a-fA-F]+)\"");
+        for (int i = 0; i < xml.length; i++) {
+            try {
+                java.util.regex.Matcher m = object.matcher(Files.readString(xml[i].toPath(), StandardCharsets.UTF_8));
+                while (m.find()) out.putIfAbsent(Integer.decode(m.group(1)), i);
+            } catch (IOException | RuntimeException ignored) {
+                // an unreadable file only costs its own objects
+            }
+        }
+        fileOf = out;
         return out;
     }
 

@@ -2,6 +2,7 @@ package lootgobbler.ui;
 
 import assets.ImageBuffer;
 import lootgobbler.DpsHistory;
+import lootgobbler.DungeonVisits;
 import lootgobbler.ItemDb;
 import lootgobbler.DpsHistory.Boss;
 import lootgobbler.DpsHistory.PlayerRow;
@@ -183,7 +184,19 @@ public class DpsPanel extends JPanel {
         block.setOpaque(false);
         block.setAlignmentX(LEFT_ALIGNMENT);
         block.add(head, BorderLayout.NORTH);
-        if (open) block.add(run.guildHall ? rangeTable(boss) : bossTable(boss), BorderLayout.CENTER);
+        if (open) {
+            JComponent table = run.guildHall ? rangeTable(boss) : bossTable(boss);
+            DungeonVisits.Visit visit = run.guildHall ? null : visitOf(run, live);
+            List<DungeonVisits.MvPhase> phases = phasesOf(visit, boss.objectType);
+            if (!phases.isEmpty()) {   // Moonlight Village: the boss's phases below its damage table
+                JPanel both = new JPanel(new BorderLayout(0, 6));
+                both.setOpaque(false);
+                both.add(table, BorderLayout.NORTH);
+                both.add(phaseTable(visit, phases), BorderLayout.CENTER);
+                table = both;
+            }
+            block.add(table, BorderLayout.CENTER);
+        }
         block.setMaximumSize(new Dimension(Integer.MAX_VALUE, block.getPreferredSize().height));
         return block;
     }
@@ -211,6 +224,98 @@ public class DpsPanel extends JPanel {
         table.getColumnModel().getColumn(0).setMaxWidth(40);
         table.getColumnModel().getColumn(6).setMaxWidth(70);
         return tablePanel(table);
+    }
+
+    /** The dungeon visit a run belongs to: the one in progress for the live run, else the one linked to it. */
+    private static DungeonVisits.Visit visitOf(Run run, boolean live) {
+        if (live) {
+            DungeonVisits.Visit v = DungeonVisits.get().current();
+            return v != null && run.dungeon.equals(v.dungeon) ? v : null;
+        }
+        for (DungeonVisits.Visit v : DungeonVisits.get().visits()) if (v.runStart == run.start) return v;
+        return null;
+    }
+
+    /** A Moonlight Village boss's phases in this visit, in order; empty for any other boss or dungeon. */
+    private static List<DungeonVisits.MvPhase> phasesOf(DungeonVisits.Visit v, int boss) {
+        if (v == null || v.mvPhases == null) return List.of();
+        return v.mvPhases.stream().filter(p -> p.boss == boss).toList();
+    }
+
+    private static final int PHASE_LANTERN = 6, PHASE_FLAMES = 7;   // columns of the phase table
+
+    /**
+     * Moonlight Village: one row per phase of the boss (its song, damage or lantern, how long, your damage and DPS
+     * in it, how long you stayed within 3.5 tiles of the lantern, and the flames it scored), then the totals.
+     */
+    private static JComponent phaseTable(DungeonVisits.Visit v, List<DungeonVisits.MvPhase> phases) {
+        DefaultTableModel model = new DefaultTableModel(
+                new Object[]{"Phase", "Song", "Type", "Time", "Your DMG", "Your DPS", "At lantern", "Flames"}, 0) {
+            @Override
+            public boolean isCellEditable(int r, int c) {
+                return false;
+            }
+        };
+        long now = System.currentTimeMillis(), totalMs = 0, totalDmg = 0, lanternMs = 0, rangeMs = 0;
+        int flames = 0;
+        for (int i = 0; i < phases.size(); i++) {
+            DungeonVisits.MvPhase p = phases.get(i);
+            long ms = p.duration(now, v), dmg = dealt(v, p.startMs, p.startMs + ms);
+            boolean last = p.lantern && i > 0 && phases.get(i - 1).lantern;   // two lanterns in a row: the final one
+            model.addRow(new Object[]{i + 1, p.title, p.lantern ? (last ? "Lantern (final)" : "Lantern") : "Damage",
+                    duration(ms), NUM.format(dmg), NUM.format(Math.round(dmg * 1000.0 / Math.max(1000, ms))),
+                    p.lantern && p.lanternMs > 0 ? Math.round(100.0 * p.rangeMs / p.lanternMs) + "%" : "-",
+                    p.durationMs > 0 ? String.valueOf(p.flames) : "..."});
+            totalMs += ms;
+            totalDmg += dmg;
+            lanternMs += p.lanternMs;
+            rangeMs += p.rangeMs;
+            flames += p.flames;
+        }
+        model.addRow(new Object[]{"Total", "", "", duration(totalMs), NUM.format(totalDmg),
+                NUM.format(Math.round(totalDmg * 1000.0 / Math.max(1000, totalMs))),
+                lanternMs > 0 ? Math.round(100.0 * rangeMs / lanternMs) + "%" : "-", String.valueOf(flames)});
+        int totalRow = phases.size();
+
+        JTable table = new JTable(model);
+        table.setShowGrid(false);
+        table.setIntercellSpacing(new Dimension(0, 0));
+        table.setRowHeight(24);
+        table.getTableHeader().setReorderingAllowed(false);
+        table.setToolTipText("At lantern: your time within 3.5 tiles of the lantern while it was there. "
+                + "Flames: the score the game gave for the phase.");
+        table.setDefaultRenderer(Object.class, new DefaultTableCellRenderer() {
+            @Override
+            public Component getTableCellRendererComponent(JTable t, Object value, boolean sel, boolean focus, int row, int column) {
+                super.getTableCellRendererComponent(t, value, sel, false, row, column);
+                setBorder(new EmptyBorder(0, 8, 0, 8));
+                if (!sel) {
+                    setBackground(row % 2 == 1 && UIManager.getColor("Table.alternateRowColor") != null
+                            ? UIManager.getColor("Table.alternateRowColor") : t.getBackground());
+                    setForeground(t.getForeground());
+                    if (column == PHASE_FLAMES) setForeground(Palette.GOLD);
+                    if (column == PHASE_LANTERN && value instanceof String s && s.endsWith("%")) {
+                        int pct = Integer.parseInt(s.substring(0, s.length() - 1));
+                        setForeground(pct >= 90 ? Palette.GREEN : pct < 60 ? new Color(0xBE332D) : t.getForeground());
+                    }
+                    if (row == totalRow) setForeground(column == PHASE_FLAMES ? Palette.GOLD : Section.color("LootGobbler.inkSoft", Palette.MUTED));
+                }
+                setFont(t.getFont().deriveFont(row == totalRow ? Font.BOLD : Font.PLAIN));
+                return this;
+            }
+        });
+        table.getColumnModel().getColumn(0).setMaxWidth(60);
+        table.getColumnModel().getColumn(1).setPreferredWidth(220);
+        table.getColumnModel().getColumn(PHASE_FLAMES).setMaxWidth(70);
+        return tablePanel(table);
+    }
+
+    /** Your damage to enemies between two times after entering (the visit keeps it per second). */
+    private static long dealt(DungeonVisits.Visit v, long fromMs, long toMs) {
+        if (v.dealt == null) return 0;
+        long sum = 0;
+        for (int s = (int) (fromMs / 1000); s < Math.min(v.dealt.length, (toMs + 999) / 1000); s++) sum += v.dealt[s];
+        return sum;
     }
 
     /**
@@ -407,6 +512,21 @@ public class DpsPanel extends JPanel {
             sb.append(String.format("%-3d %-14s %-12s %8s %10s %8s %6.1f%%%s%n", i + 1, p.name, p.className(),
                     NUM.format(Math.round(boss.dps(p))), NUM.format(p.damage), NUM.format(p.taken), boss.share(p),
                     p.died ? "  died" : ""));
+        }
+        DungeonVisits.Visit v = visitOf(run, run == DpsHistory.get().live());
+        List<DungeonVisits.MvPhase> phases = phasesOf(v, boss.objectType);
+        if (!phases.isEmpty()) {   // Moonlight Village
+            sb.append(String.format("%-3s %-30s %-16s %7s %10s %11s %7s%n", "#", "Song", "Type", "Time", "Your DMG", "At lantern", "Flames"));
+            long now = System.currentTimeMillis();
+            for (int i = 0; i < phases.size(); i++) {
+                DungeonVisits.MvPhase p = phases.get(i);
+                long ms = p.duration(now, v);
+                boolean last = p.lantern && i > 0 && phases.get(i - 1).lantern;
+                sb.append(String.format("%-3d %-30s %-16s %7s %10s %11s %7d%n", i + 1, p.title,
+                        p.lantern ? (last ? "Lantern (final)" : "Lantern") : "Damage", duration(ms),
+                        NUM.format(dealt(v, p.startMs, p.startMs + ms)),
+                        p.lantern && p.lanternMs > 0 ? Math.round(100.0 * p.rangeMs / p.lanternMs) + "%" : "-", p.flames));
+            }
         }
         return sb.toString();
     }

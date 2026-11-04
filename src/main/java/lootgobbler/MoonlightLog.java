@@ -32,6 +32,14 @@ import java.util.Set;
  * </ul>
  * It also measures the lantern (MV Lantern System, the one that moves around): how long it is there, and how long
  * you are within 1.75 and 3.5 tiles of it (the two rings the tutorial lantern draws), kept with the dungeon visit.
+ * <p>
+ * And it splits the boss fights into their phases (DungeonVisits.MvPhase), from what a logged run showed:
+ * <ul>
+ * <li>each phase starts with a progress bar named after its song (the tutorial's is skipped);</li>
+ * <li>the boss whose condition turns active owns it (damage: 67108864, lantern: 16777216 alongside invulnerable);</li>
+ * <li>it is a lantern phase if the lantern is there during it;</li>
+ * <li>it ends when its flames (MV Total Counter, the score) appear, or when its boss turns idle.</li>
+ * </ul>
  * Called on the packet thread.
  */
 public final class MoonlightLog {
@@ -40,6 +48,9 @@ public final class MoonlightLog {
     // the dancers and Umi: Sage Genji, Dancer Miko, Drummer Kaguya, Kitsune Umi (no BOSS label in the game data)
     private static final Set<Integer> BOSSES = Set.of(20450, 20451, 20452, 20493);
     public static final double NEAR = 1.75, RANGE = 3.5;   // tiles: the tutorial lantern's inner and outer ring
+    private static final int FLAME = 20518;   // MV Total Counter: the flames a finished phase scores
+    private static final int DANCING = 67108864, LANTERN_UP = 16777216;   // a boss's condition in its phases
+    private static final long LATE_BOSS_MS = 2000;   // a boss may turn active just after its phase's bar
     private static final long TICK_MS = 1000, SAMPLE_MS = 5000;
     private static final MoonlightLog INSTANCE = new MoonlightLog();
     // your own values that change all the time and say nothing about the dungeon's mechanics
@@ -50,8 +61,15 @@ public final class MoonlightLog {
     private final Map<String, String> values = new HashMap<>();      // "id:stat" -> last value written
     private final Set<String> unknownStats = new HashSet<>();
     private final Map<String, Integer> seen = new java.util.TreeMap<>();   // object name -> how often it appeared
+    private final Set<Integer> flames = new HashSet<>();   // flame objects counted already
+    // lanterns that are there now: the game state keeps removed objects around, so the old lantern would count on
+    private final Set<Integer> lanterns = new HashSet<>();
+    private final Map<Integer, Integer> types = new HashMap<>();   // object id -> type, for MV objects
     private boolean active;
     private long lastTick, lastSample;
+    private DungeonVisits.MvPhase phase;   // the latest phase; open while phaseOpen
+    private boolean phaseOpen;
+    private int currentBoss;   // the boss that turned active last
 
     public static MoonlightLog get() {
         return INSTANCE;
@@ -89,6 +107,12 @@ public final class MoonlightLog {
         unknownStats.clear();
         tracked.clear();
         values.clear();
+        flames.clear();
+        lanterns.clear();
+        types.clear();
+        phase = null;
+        phaseOpen = false;
+        currentBoss = 0;
         lastTick = lastSample = 0;
         if (active) write("=== ENTERED " + DUNGEON + " ===");
     }
@@ -101,13 +125,20 @@ public final class MoonlightLog {
         String key = name == null ? "type " + o.objectType : name;
         if (!relevant(key)) return;
         tracked.put(o.status.objectId, key);
+        types.put(o.status.objectId, o.objectType);
+        if (o.objectType == LANTERN) lanterns.add(o.status.objectId);
         seen.merge(key, 1, Integer::sum);
+        if (o.objectType == FLAME && phase != null && flames.add(o.status.objectId)) {   // the phase's score
+            phase.flames++;
+            endPhase();
+        }
         write("ADD    " + label(o.objectType, key, o.status.objectId) + " at " + pos(o.status) + "  " + stats(o.status));
     }
 
     /** An object left (killed, picked up, out of sight). */
     public synchronized void removed(TomatoData data, int objectId) {
         if (!active) return;
+        lanterns.remove(objectId);
         String name = tracked.remove(objectId);
         if (name != null) write("REMOVE " + name + " #" + objectId);
     }
@@ -127,6 +158,7 @@ public final class MoonlightLog {
             String k = s.objectId + ":" + stat;
             if (v.equals(values.put(k, v))) continue;   // unchanged
             if (d.statType == null) unknownStats.add(stat);
+            if ("CONDITION_STAT".equals(stat) && !me) bossCondition(types.getOrDefault(s.objectId, 0), d.statValue);
             sb.append(' ').append(stat).append('=').append(v);
         }
         if (sb.length() > 0) write("CHANGE " + name + " #" + s.objectId + sb);
@@ -136,6 +168,55 @@ public final class MoonlightLog {
     public synchronized void message(TomatoData data, String kind, Object packet) {
         if (!active || !inDungeon(data) || packet == null) return;
         write(kind.toUpperCase() + " " + packet.toString().replace('\n', ' '));
+        if (packet instanceof packets.incoming.NotificationPacket n
+                && n.effect == packets.data.enums.NotificationEffectType.ProgressBar && n.extra == 42) {
+            startPhase(n.message);
+        }
+    }
+
+    /** A named progress bar: a new phase of the active boss (not the tutorial's). */
+    private void startPhase(String title) {
+        DungeonVisits.Visit v = DungeonVisits.get().current();
+        if (v == null || title == null || title.contains("Tutorial")) return;
+        endPhase();
+        phase = new DungeonVisits.MvPhase();
+        phase.boss = currentBoss;
+        phase.title = title;
+        phase.startMs = System.currentTimeMillis() - v.start;
+        // a new list rather than adding to it: the window reads it at the same time
+        java.util.List<DungeonVisits.MvPhase> phases = v.mvPhases == null ? new java.util.ArrayList<>() : new java.util.ArrayList<>(v.mvPhases);
+        phases.add(phase);
+        v.mvPhases = phases;
+        phaseOpen = true;
+        write("PHASE " + v.mvPhases.size() + " started: " + title);
+    }
+
+    private void endPhase() {
+        DungeonVisits.Visit v = DungeonVisits.get().current();
+        if (!phaseOpen || v == null) return;
+        phaseOpen = false;
+        phase.durationMs = Math.max(1, System.currentTimeMillis() - v.start - phase.startMs);
+        write(String.format(java.util.Locale.ROOT, "PHASE ended: %s (%s) %.1fs%s", phase.title, phase.lantern ? "lantern" : "damage",
+                phase.durationMs / 1000.0, phase.lanternMs > 0 ? ", in range " + 100 * phase.rangeMs / phase.lanternMs + "%" : ""));
+    }
+
+    /**
+     * A boss's condition changed: dancing or at the lantern makes it the active boss (also of a phase whose bar came
+     * a moment before); idle again ends its phase.
+     */
+    private void bossCondition(int type, int condition) {
+        if (!BOSSES.contains(type)) return;
+        if ((condition & (DANCING | LANTERN_UP)) != 0) {
+            currentBoss = type;
+            DungeonVisits.Visit v = DungeonVisits.get().current();
+            if (phaseOpen && phase.boss != type && v != null
+                    && System.currentTimeMillis() - v.start - phase.startMs <= LATE_BOSS_MS) {
+                phase.boss = type;
+            }
+            if ((condition & LANTERN_UP) != 0 && phaseOpen && phase.boss == type) phase.lantern = true;
+        } else if (phaseOpen && phase.boss == type) {
+            endPhase();
+        }
     }
 
     /**
@@ -151,7 +232,7 @@ public final class MoonlightLog {
         Entity lantern = null;
         double best = Double.MAX_VALUE;
         for (Entity e : data.entityList.values()) {
-            if (e == null || e.objectType != LANTERN || e.pos == null) continue;
+            if (e == null || e.objectType != LANTERN || e.pos == null || !lanterns.contains(e.id)) continue;
             double d = Math.sqrt(data.player.distSqrd(e.pos));
             if (d < best) {
                 best = d;
@@ -163,6 +244,12 @@ public final class MoonlightLog {
         v.lanternActiveMs += dt;
         if (best <= RANGE) v.lanternRangeMs += dt;
         if (best <= NEAR) v.lanternNearMs += dt;
+        if (phaseOpen) {   // the same for the phase in progress, which makes it a lantern phase
+            phase.lantern = true;
+            phase.lanternMs += dt;
+            if (best <= RANGE) phase.rangeMs += dt;
+            if (best <= NEAR) phase.nearMs += dt;
+        }
         if (now - lastSample >= SAMPLE_MS) {
             lastSample = now;
             write(String.format(java.util.Locale.ROOT, "LANTERN #%d at %s, you %.2f tiles away (%s)  active %ds, in 3.5: %ds, in 1.75: %ds",

@@ -469,9 +469,10 @@ public class DpsLoggerView extends JPanel {
         east.setOpaque(false);
         east.setBorder(new EmptyBorder(0, 0, 0, 6));
         east.add(right);
-        if (v.exalts != null && !v.exalts.isEmpty()) {   // exaltation progress made here: each stat's potion, "2x" if twice
+        // exaltation progress made here: each stat's potion, with "3x" in front when it went up by 3 (over all classes)
+        if (v.exalts != null && !v.exalts.isEmpty()) {
             java.util.Map<Integer, Integer> perStat = new java.util.LinkedHashMap<>();
-            for (Exalt e : merged(v)) perStat.merge(e.stat, 1, Integer::sum);
+            for (Exalt e : merged(v)) perStat.merge(e.stat, Math.max(1, e.after - e.before), Integer::sum);
             perStat.forEach((stat, count) -> {
                 JLabel potion = new JLabel(count > 1 ? count + "x" : null, ClassesView.potion(EXALT_POTION[stat], 20),
                         SwingConstants.LEFT);

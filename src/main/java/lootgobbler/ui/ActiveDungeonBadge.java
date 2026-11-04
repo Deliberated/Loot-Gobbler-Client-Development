@@ -85,6 +85,16 @@ public final class ActiveDungeonBadge extends JPanel {
 
     /** A portal sprite cut to its visible pixels and scaled (crisp) to fit ICON, so it fills the box's height. */
     private static Icon fit(Icon src) {
+        return fit(src, ICON);
+    }
+
+    /** A sprite cut to its visible pixels and scaled (crisp) into a size x size square, so all portals look alike. */
+    static Icon fit(Icon src, int size) {
+        return fit(src, size, false);
+    }
+
+    /** As above; bottom: standing on the square's lower edge instead of centred (e.g. to sit above a line). */
+    static Icon fit(Icon src, int size, boolean bottom) {
         if (src == null || src.getIconWidth() <= 0) return src;
         java.awt.image.BufferedImage img = new java.awt.image.BufferedImage(src.getIconWidth(), src.getIconHeight(),
                 java.awt.image.BufferedImage.TYPE_INT_ARGB);
@@ -103,12 +113,12 @@ public final class ActiveDungeonBadge extends JPanel {
         }
         if (x1 < 0) return src;
         int w = x1 - x0 + 1, h = y1 - y0 + 1;
-        double scale = (double) ICON / Math.max(w, h);
+        double scale = (double) size / Math.max(w, h);
         int dw = Math.max(1, (int) Math.round(w * scale)), dh = Math.max(1, (int) Math.round(h * scale));
-        java.awt.image.BufferedImage out = new java.awt.image.BufferedImage(ICON, ICON, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+        java.awt.image.BufferedImage out = new java.awt.image.BufferedImage(size, size, java.awt.image.BufferedImage.TYPE_INT_ARGB);
         g = out.createGraphics();
         g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
-        g.drawImage(img.getSubimage(x0, y0, w, h), (ICON - dw) / 2, (ICON - dh) / 2, dw, dh, null);
+        g.drawImage(img.getSubimage(x0, y0, w, h), (size - dw) / 2, bottom ? size - dh : (size - dh) / 2, dw, dh, null);
         g.dispose();
         return new ImageIcon(out);
     }
