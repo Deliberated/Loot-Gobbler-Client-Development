@@ -97,7 +97,7 @@ public class TomatoData {
      */
     public void setNewRealm(MapInfoPacket map) {
         lootgobbler.AppLog.log("game", "Entered " + map.displayName + " (" + map.width + "x" + map.height + ")");
-        lootgobbler.DungeonVisits.get().hits(player, true);   // the hits taken in the map left, before they are cleared
+        lootgobbler.DungeonVisits.get().hits(this, true);   // damage taken and dealt in the map left, before it is cleared
         clear();
         ParsePanelGUI.clear();
         petYardCheck(map.displayName);

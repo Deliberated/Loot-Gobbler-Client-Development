@@ -325,29 +325,23 @@ public class DpsPanel extends JPanel {
     }
 
     /**
-     * Your place by damage in a run: "#x of y" on its one boss, or with several bosses the average of your places
-     * (and of the group sizes), e.g. "avg #1.5 of 6". Null for guild hall visits and runs where you hit no boss.
+     * Your place by damage on the run's main boss (the one with the most life): "#x of y"; "no boss fought" if
+     * there is none or you did not hit it. Null for guild hall visits.
      */
     static JLabel runRank(Run r) {
         if (r.guildHall) return null;
-        double places = 0, players = 0;
-        int n = 0;
-        StringBuilder tip = new StringBuilder("<html>Your place by damage");
-        for (Boss b : r.bosses) {
-            PlayerRow me = b.me();
-            if (me == null) continue;
-            places += b.rankOf(me);
-            players += b.players.size();
-            n++;
-            tip.append("<br>").append(b.name).append(": #").append(b.rankOf(me)).append(" of ").append(b.players.size());
+        Boss boss = r.mainBoss();
+        PlayerRow me = boss == null ? null : boss.me();
+        if (me == null) {
+            JLabel none = new JLabel("no boss fought");
+            none.setForeground(Palette.MUTED);
+            return none;
         }
-        if (n == 0) return null;
-        double place = places / n;
-        String x = n == 1 ? String.valueOf((int) place) : String.format(Locale.ROOT, place % 1 == 0 ? "%.0f" : "%.1f", place);
-        JLabel l = new JLabel((n > 1 ? "avg #" : "#") + x + " of " + Math.round(players / n));
+        int place = boss.rankOf(me);
+        JLabel l = new JLabel("#" + place + " of " + boss.players.size());
         l.setFont(l.getFont().deriveFont(18f));
         l.setForeground(place == 1 ? Palette.GOLD : Section.color("LootGobbler.inkSoft", Palette.MUTED));
-        l.setToolTipText(tip.append(n > 1 ? "<br>(average over " + n + " bosses)" : "").append("</html>").toString());
+        l.setToolTipText("Your place by damage on " + boss.name);
         return l;
     }
 

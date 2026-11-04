@@ -86,11 +86,13 @@ public class ClassesView extends JPanel {
         });
         add(split, BorderLayout.CENTER);
 
-        ExaltStore.get().onChange(() -> SwingUtilities.invokeLater(this::refresh));
-        CharacterStore.get().onChange(() -> SwingUtilities.invokeLater(this::refresh));
-        lootgobbler.DpsHistory.get().onChange(() -> {
-            if (selected >= 0) SwingUtilities.invokeLater(this::showClass);
+        Runnable later = ViewRefresh.of(this, this::refresh);   // only while it can be seen
+        ExaltStore.get().onChange(later);
+        CharacterStore.get().onChange(later);
+        Runnable classLater = ViewRefresh.of(this, () -> {
+            if (selected >= 0) showClass();
         });
+        lootgobbler.DpsHistory.get().onChange(classLater);
         refresh();
     }
 

@@ -16,6 +16,7 @@ import java.awt.*;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -44,9 +45,12 @@ public class DpsLoggerView extends JPanel {
     private JLabel nowWhen;   // the time line of the visit in progress
     private Visit nowVisit;
     private final JPanel detail = new JPanel();
-    private DamageGraph graph;   // of the visit shown on the right
+    private final Map<Long, Long> fame = new HashMap<>();   // fame gained per finished visit (by its start)
+    private final List<DamageGraph> graphs = new ArrayList<>();   // of the visit shown on the right (one per slice size)
+    private final List<JLabel> graphCaptions = new ArrayList<>();
     private JLabel takenStats;
     private Visit graphVisit;
+    private boolean scrollToSelected;   // bring the selected row into view after the next rebuild
     private long selected = -1;   // start of the visit shown on the right; -1 = the newest
 
     public DpsLoggerView(DpsPanel dps) {
@@ -82,13 +86,17 @@ public class DpsLoggerView extends JPanel {
         views.add(dps, PAGES[1]);
         add(views, BorderLayout.CENTER);
 
-        DungeonVisits.get().onChange(() -> SwingUtilities.invokeLater(this::refresh));
-        DpsHistory.get().onChange(() -> SwingUtilities.invokeLater(this::refresh));
+        Runnable later = ViewRefresh.of(this, this::refresh);   // only while it can be seen, once per burst
+        DungeonVisits.get().onChange(later);
+        DpsHistory.get().onChange(later);
         // new hits in the dungeon you are in: only its graph (if shown) follows, not the whole list
         DungeonVisits.get().onHits(() -> SwingUtilities.invokeLater(() -> {
-            if (graph != null && graphVisit == DungeonVisits.get().current()) {
+            if (!graphs.isEmpty() && graphVisit == DungeonVisits.get().current()) {
                 takenStats.setText(takenText(graphVisit));
-                graph.repaint();
+                for (int i = 0; i < graphs.size(); i++) {
+                    graphCaptions.get(i).setText(captionText(graphVisit, DamageGraph.WINDOWS_MS[i]));
+                    graphs.get(i).repaint();
+                }
             }
         }));
         refresh();
@@ -103,6 +111,28 @@ public class DpsLoggerView extends JPanel {
             picker.select(0);
             pages.show(views, PAGES[0]);
         }
+    }
+
+    private static java.util.function.Consumer<Visit> visitOpener = v -> {
+    };
+
+    /** How to open a dungeon visit from elsewhere (set on start: switches to Battles and shows it). */
+    public static void setVisitOpener(java.util.function.Consumer<Visit> opener) {
+        visitOpener = opener;
+    }
+
+    /** Opens this visit under Battles > Dungeons, e.g. from a dungeon icon on a fame chart. */
+    static void openVisit(Visit v) {
+        visitOpener.accept(v);
+    }
+
+    /** The Dungeons list with this visit selected and shown on the right. */
+    public void showVisit(Visit v) {
+        selected = v.start;
+        scrollToSelected = true;
+        picker.select(0);
+        pages.show(views, PAGES[0]);
+        refresh();
     }
 
     /** The Dungeons list with the dungeon you are in shown on the right (e.g. from the title bar). */
@@ -178,6 +208,13 @@ public class DpsLoggerView extends JPanel {
         name.setFont(name.getFont().deriveFont(26f));
         text.add(name);
         text.add(muted(whenText(v, current)));
+        long gained = fame(v, current);
+        if (gained > 0) {   // the fame you gained in it, as a number
+            JLabel f = new JLabel("+" + String.format(Locale.ROOT, "%,d", gained) + " fame");
+            f.setFont(f.getFont().deriveFont(18f));
+            f.setForeground(Section.color("LootGobbler.gold", Palette.GOLD));
+            text.add(f);
+        }
         head.add(text, BorderLayout.CENTER);
         detail.add(CharactersView.box("Dungeon", Palette.BLUE, head));
 
@@ -204,12 +241,27 @@ public class DpsLoggerView extends JPanel {
         takenStats = muted(takenText(v));
         takenStats.setAlignmentX(LEFT_ALIGNMENT);
         taken.add(takenStats);
-        taken.add(Box.createVerticalStrut(6));
-        graph = new DamageGraph(v);
+        graphs.clear();
+        graphCaptions.clear();
         graphVisit = v;
-        graph.setAlignmentX(LEFT_ALIGNMENT);
-        taken.add(graph);
-        detail.add(CharactersView.box("Damage Taken", Palette.RED, taken));
+        // the hits added up per slice of 3 seconds (a finished dungeon without hits needs no graph)
+        boolean anyDealt = v.dealt != null && java.util.Arrays.stream(v.dealt).anyMatch(d -> d > 0);
+        for (int window : v.hits() == 0 && !anyDealt && !current ? new int[0] : DamageGraph.WINDOWS_MS) {
+            taken.add(Box.createVerticalStrut(8));
+            JLabel caption = new JLabel(captionText(v, window));
+            caption.putClientProperty("FlatLaf.styleClass", "small");
+            caption.setToolTipText("Damage taken added up per " + (window / 1000) + (window == 1000 ? " second" : " seconds")
+                    + "; orange: 30% of your life or 300 damage in one of them");
+            caption.setAlignmentX(LEFT_ALIGNMENT);
+            taken.add(caption);
+            taken.add(Box.createVerticalStrut(2));
+            DamageGraph graph = new DamageGraph(v, window);
+            graph.setAlignmentX(LEFT_ALIGNMENT);
+            taken.add(graph);
+            graphs.add(graph);
+            graphCaptions.add(caption);
+        }
+        detail.add(CharactersView.box("Damage", Palette.RED, taken));   // dealt above the line, taken below
 
         JPanel exalts = column();
         if (v.exalts == null || v.exalts.isEmpty()) {
@@ -247,20 +299,27 @@ public class DpsLoggerView extends JPanel {
         return row;
     }
 
-    /** "4,320 damage in 152 hits · 3 hits over 30% of your life · biggest 410 (Septavius)". */
+    /** "PER 2 S \u00B7 4 OVER 30% / 300": a graph's slice size and how many of its slices reach the danger mark. */
+    private static String captionText(Visit v, int window) {
+        int n = DamageGraph.dangerous(v, window);
+        return ("Per " + (window / 1000) + " s  \u00B7  " + n + " over 30% / 300").toUpperCase(Locale.ROOT);
+    }
+
+    /** "4,320 damage in 152 hits · biggest 410 (Septavius)". */
     private static String takenText(Visit v) {
         int n = v.hits();
-        if (n == 0) return "No damage taken.";
+        long dealt = 0;
+        if (v.dealt != null) for (int d : v.dealt) dealt += d;
+        String dealtText = dealt > 0 ? String.format(Locale.ROOT, "Dealt %,d", dealt) + "  ·  " : "";
+        if (n == 0) return dealtText + "No damage taken.";
         long total = 0;
-        int big = 0, biggest = 0;
+        int biggest = 0;
         for (int i = 0; i < n; i++) {
             total += v.hitDamage[i];
-            if (v.maxHp > 0 && v.hitDamage[i] >= v.maxHp * DamageGraph.BIG_HIT) big++;
             if (v.hitDamage[i] > v.hitDamage[biggest]) biggest = i;
         }
         String who = v.hitEnemy[biggest] > 0 ? " (" + assets.IdToAsset.objectName(v.hitEnemy[biggest]) + ")" : "";
-        return String.format(Locale.ROOT, "%,d damage in %,d hits", total, n)
-                + (v.maxHp > 0 ? "  \u00B7  " + big + (big == 1 ? " hit" : " hits") + " over 30% of your life" : "")
+        return dealtText + String.format(Locale.ROOT, "taken %,d in %,d hits", total, n)
                 + "  \u00B7  biggest " + v.hitDamage[biggest] + who;
     }
 
@@ -275,6 +334,12 @@ public class DpsLoggerView extends JPanel {
         JLabel l = new JLabel(text);
         l.setForeground(Palette.MUTED);
         return l;
+    }
+
+    /** Fame gained in a visit: worked out once for a finished one, live for the one in progress. */
+    private long fame(Visit v, boolean current) {
+        if (current) return DungeonVisits.fameGained(v);
+        return fame.computeIfAbsent(v.start, k -> DungeonVisits.fameGained(v));
     }
 
     private static String whenText(Visit v, boolean current) {
@@ -292,6 +357,10 @@ public class DpsLoggerView extends JPanel {
      */
     private JPanel row(Visit v, Run run, boolean current, boolean isSelected) {
         JPanel row = DpsPanel.row(true);
+        if (isSelected && scrollToSelected) {
+            scrollToSelected = false;
+            SwingUtilities.invokeLater(() -> row.scrollRectToVisible(new Rectangle(0, 0, row.getWidth(), row.getHeight())));
+        }
         if (isSelected) {
             row.setBorder(BorderFactory.createCompoundBorder(new LineBorder(Palette.GOLD, 2), new EmptyBorder(4, 8, 4, 6)));
         }
@@ -302,7 +371,8 @@ public class DpsLoggerView extends JPanel {
         JLabel name = new JLabel(v.dungeon);
         name.setFont(name.getFont().deriveFont(18f));
         if (current) name.setForeground(Palette.GOLD);
-        JLabel when = new JLabel(whenText(v, current));
+        long gained = fame(v, current);
+        JLabel when = new JLabel(whenText(v, current) + (gained > 0 ? "  \u00B7  +" + String.format(Locale.ROOT, "%,d", gained) + " fame" : ""));
         if (current) nowWhen = when;
         when.setForeground(current ? Palette.GOLD : Palette.MUTED);
         JPanel text = new JPanel(new GridLayout(2, 1));
@@ -313,7 +383,7 @@ public class DpsLoggerView extends JPanel {
 
         JLabel right = run != null ? DpsPanel.runRank(run) : null;
         if (right == null) {
-            right = new JLabel(run != null ? "" : "no boss fought");
+            right = new JLabel("no boss fought");
             right.setForeground(Palette.MUTED);
         }
         right.setBorder(new EmptyBorder(0, 0, 0, 6));

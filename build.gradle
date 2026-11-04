@@ -4,7 +4,7 @@ plugins {
     id 'com.gradleup.shadow' version '8.3.5'
 }
 
-version = '0.6.0'
+version = '0.6.1'
 
 repositories {
     mavenCentral()
@@ -51,7 +51,8 @@ tasks.withType(JavaCompile).configureEach {
 
 application {
     mainClass = 'tomato.Tomato'
-    applicationDefaultJvmArgs = ['-Xmx2g']
+    applicationDefaultJvmArgs = ['-Xmx1g', '-XX:+UseG1GC', '-XX:G1PeriodicGCInterval=60000', '-XX:MinHeapFreeRatio=10',
+                                 '-XX:MaxHeapFreeRatio=30']
 }
 
 // `gradlew run` works from the project root, so assets/ and realmShark.properties live there.
@@ -91,7 +92,9 @@ tasks.register('packageExe', Exec) {
         }
     }
     // nothing is written outside the exe's folder: no perf data in %TEMP%, natives loaded from app\natives
-    def javaOptions = ['-Xmx2g', '-XX:-UsePerfData', '-Dflatlaf.nativeLibraryPath=$APPDIR\\natives',
+    // memory: 1 GB at most (it needs a few hundred MB); G1 gives unused memory back to Windows when idle
+    def javaOptions = ['-Xmx1g', '-XX:+UseG1GC', '-XX:G1PeriodicGCInterval=60000', '-XX:MinHeapFreeRatio=10',
+                       '-XX:MaxHeapFreeRatio=30', '-XX:-UsePerfData', '-Dflatlaf.nativeLibraryPath=$APPDIR\\natives',
                        '-Djna.boot.library.path=$APPDIR\\natives', '-Djna.nounpack=true']
     def cmd = ['jpackage', '--type', 'app-image', '--name', 'LootGobbler', '--app-version', project.version,
                '--vendor', 'Pluribus Guild', '--description', 'Loot Gobbler - your right hand for your RotMG adventures',

@@ -99,6 +99,10 @@ public class TomatoGUI {
 
         dpsPanel = new DpsGUI(data);   // Tomato's original view: not shown any more, but its packet handlers still run
         tabbedPane.addTab("Battles", dps);   // Dungeons | DPS (was "DPS Logger")
+        lootgobbler.ui.DpsLoggerView.setVisitOpener(v -> {   // e.g. a dungeon icon on a fame chart
+            dps.showVisit(v);
+            tabbedPane.show("Battles");
+        });
 
         // Key-pops, Security, the old Characters view and Statistics have no tab any more, but are still created: packet
         // handlers, key-pop sounds, the loot filter, fame tracking and font changes call into them.
@@ -111,7 +115,7 @@ public class TomatoGUI {
             GraphicsEnvironment.getLocalGraphicsEnvironment().getCenterPoint();
         menuBar = new TomatoMenuBar();
 
-        statusBar = new StatusBar(TomatoMenuBar::toggleSniffer);
+        statusBar = new StatusBar(TomatoMenuBar::toggleSniffer, () -> tabbedPane.show("Server"));
 
         mainPanel = new JPanel();
         mainPanel.setLayout(new BorderLayout());
@@ -125,7 +129,8 @@ public class TomatoGUI {
         DpsDisplayOptions.loadProfileFilter();
         lootgobbler.PacketDebug.install();
         lootgobbler.ItemUse.install();   // forged and fed items leave the collection
-        lootgobbler.DungeonDifficulty.preload();   // the title bar's dungeon box shows how hard a dungeon is
+        lootgobbler.DungeonDifficulty.preload();
+        lootgobbler.SpriteMemory.start();   // drops RealmShark's decoded sprite sheets (300+ MB) when idle   // the title bar's dungeon box shows how hard a dungeon is
         jMenuBar = menuBar.make();
         // top-level menus sit in the title bar, so they use its text color (matters for dark title bars)
         for (Component c : jMenuBar.getComponents()) {

@@ -36,7 +36,7 @@ public class DungeonStatsPanel extends JPanel {
         content.setBorder(new EmptyBorder(10, 12, 12, 12));
         JScrollPane sp = FitWidthPanel.scroll(content, 24);
         add(new Section("Dungeon Stats", Palette.BLUE, wrap(sp)));
-        DpsHistory.get().onChange(() -> SwingUtilities.invokeLater(this::refresh));
+        DpsHistory.get().onChange(ViewRefresh.of(this, this::refresh));   // only while it can be seen
         refresh();
     }
 

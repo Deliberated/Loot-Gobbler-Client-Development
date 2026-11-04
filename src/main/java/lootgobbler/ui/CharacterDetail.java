@@ -98,11 +98,9 @@ final class CharacterDetail {
         // the stat boxes are the toggles (gold when chosen); with none chosen, the box's header says so
         List<Integer> pool = pool(c);
         // the four items in one column (weapon, ability, armor, ring), next to the four rows of stats
-        JPanel grid = new JPanel(new GridBagLayout());
-        grid.setOpaque(false);
-        GridBagConstraints cell = new GridBagConstraints();
-        cell.anchor = GridBagConstraints.NORTHWEST;
-        int placed = 0;
+        // a plain column (a GridBag drops every item to its minimum size, wrapping all names, once one is too wide)
+        JPanel grid = new FitPanel(null, false);
+        grid.setLayout(new BoxLayout(grid, BoxLayout.Y_AXIS));
         int[] suggested = new int[STATS.length], now = new int[STATS.length];   // item bonuses per stat
         double[] enchanted = new double[STATS.length];   // enchantment bonuses of the suggested items, where known
         for (int slot : new int[]{0, 1, 2, 3}) {
@@ -136,27 +134,68 @@ final class CharacterDetail {
                     }
                 }
             }
-            cell.gridy = placed;   // one column, a row beside each row of stats
-            cell.insets = new Insets(0, 0, 6, 0);
-            grid.add(idealItem(best, it, chosen, best == current, SLOT_NAMES[slot]), cell);
-            placed++;
+            if (grid.getComponentCount() > 0) grid.add(Box.createVerticalStrut(6));
+            JComponent item = idealItem(best, it, chosen, best == current, SLOT_NAMES[slot]);
+            item.setAlignmentX(Component.LEFT_ALIGNMENT);
+            grid.add(item);
         }
         // the character's stats on the left (as with the suggestion), the four items on the right
-        JPanel row = new JPanel();
+        JPanel row = new JPanel() {
+            @Override
+            public Dimension getMaximumSize() {   // as tall as it is now, not as when it was built
+                return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+            }
+        };
         row.setLayout(new BoxLayout(row, BoxLayout.X_AXIS));
         row.setOpaque(false);
         JComponent stats = statTable(ClassSlots.maxStats(c.classType), suggested, now, enchanted, chosen, rerender);
-        stats.setMaximumSize(stats.getPreferredSize());
-        stats.setMinimumSize(stats.getPreferredSize());   // the item names give way first
-        grid.setMaximumSize(grid.getPreferredSize());
         stats.setAlignmentY(Component.TOP_ALIGNMENT);
         grid.setAlignmentY(Component.TOP_ALIGNMENT);
         row.add(stats);
         row.add(Box.createHorizontalStrut(12));
         row.add(grid);
         row.add(Box.createHorizontalGlue());
-        p.add(left(row));
+        row.setAlignmentX(Component.LEFT_ALIGNMENT);
+        // the item stat lines use the width there is: one line if it fits, else wrapped to it (redone on resize)
+        row.addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent e) {
+                int room = row.getWidth() - stats.getPreferredSize().width - 12 - ITEM_ICON;
+                if (room > 0 && fitStatLines(grid, room)) {
+                    row.revalidate();
+                    row.repaint();
+                }
+            }
+        });
+        p.add(row);
         return p;
+    }
+
+    /** Re-wraps the item stat lines under c to this width (one line where they fit); true if any changed. */
+    private static boolean fitStatLines(Container c, int width) {
+        boolean changed = false;
+        for (Component k : c.getComponents()) {
+            if (k instanceof JLabel l && l.getClientProperty(STATS_HTML) instanceof String stats) {
+                JLabel probe = new JLabel("<html>" + stats + "</html>");
+                probe.setFont(l.getFont());
+                String text = "<html>" + stats + "</html>";
+                if (probe.getPreferredSize().width > width) {
+                    // Swing's HTML draws a CSS width wider than asked for: measure by how much, then ask for less
+                    JLabel ruler = new JLabel("<html><div style='width:100px'>" + stats + "</div></html>");
+                    ruler.setFont(l.getFont());
+                    double scale = ruler.getPreferredSize().width / 100.0;
+                    int css = (int) Math.max(80, (width - 4) / Math.max(1.0, scale));
+                    text = "<html><div style='width:" + css + "px'>" + stats + "</div></html>";
+                }
+                if (!text.equals(l.getText())) {
+                    l.setText(text);
+                    changed = true;
+                }
+            } else if (k instanceof Container sub) {
+                changed |= fitStatLines(sub, width);
+            }
+        }
+        return changed;
     }
 
     private static void addBonuses(int[] into, ItemDb.Item it) {
@@ -175,7 +214,7 @@ final class CharacterDetail {
      */
     private static JComponent statTable(int[] max, int[] suggested, int[] now, double[] enchanted, Set<String> chosen,
                                         Runnable rerender) {
-        JPanel t = new JPanel(new GridLayout(4, 2, 6, 6));
+        JPanel t = new FitPanel(new GridLayout(4, 2, 6, 6), true);   // never squeezed: the item names give way first
         t.setOpaque(false);
         for (int s = 0; s < STATS.length; s++) {
             int base = max == null ? 0 : max[s], items = suggested[s];
@@ -200,6 +239,30 @@ final class CharacterDetail {
             t.add(box);
         }
         return t;
+    }
+
+    /**
+     * A panel that is never stretched beyond its current preferred size (and, if fixed, never squeezed below it).
+     * Asked each layout, not frozen when built: HTML labels can report another size once they have their font.
+     */
+    private static final class FitPanel extends JPanel {
+        private final boolean fixed;
+
+        FitPanel(LayoutManager layout, boolean fixed) {
+            super(layout);
+            this.fixed = fixed;
+            setOpaque(false);
+        }
+
+        @Override
+        public Dimension getMaximumSize() {
+            return getPreferredSize();
+        }
+
+        @Override
+        public Dimension getMinimumSize() {
+            return fixed ? getPreferredSize() : super.getMinimumSize();
+        }
     }
 
     private static String signed(int n) {
@@ -269,6 +332,8 @@ final class CharacterDetail {
     }
 
     private static final Color OTHER_STAT = new Color(0x3A9BFF);   // item stats that are not among the chosen
+    private static final String STATS_HTML = "lootgobbler.statsHtml";   // an item's stat line, kept to re-wrap it
+    private static final int ITEM_ICON = 70;   // an item's icon and the gap after it, left of its text
 
     private static String esc(String s) {
         return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
@@ -298,12 +363,16 @@ final class CharacterDetail {
             for (ItemDb.Stat st : it.onEquip) {
                 if (Arrays.asList(STATS).indexOf(st.stat()) < 0) continue;
                 StringBuilder to = chosen.contains(st.stat()) ? picked : other;
-                to.append(st.amount() > 0 ? "+" : "").append(st.amount()).append(' ').append(shortName(st.stat())).append("&nbsp;&nbsp;");
+                // "+3&nbsp;WIS": a stat never splits across lines, only the gaps between stats wrap
+                to.append(st.amount() > 0 ? "+" : "").append(st.amount()).append("&nbsp;").append(shortName(st.stat())).append("&nbsp; ");
             }
         }
         if (picked.length() + other.length() > 0) {
-            JLabel bonus = new JLabel("<html><span style='color:" + hex(Palette.GREEN) + "'>" + picked + "</span><span style='color:"
-                    + hex(OTHER_STAT) + "'>" + other + "</span></html>");
+            // items with many stats wrap onto a second line instead of making the column very wide
+            String stats = "<span style='color:" + hex(Palette.GREEN) + "'>" + picked + "</span><span style='color:"
+                    + hex(OTHER_STAT) + "'>" + other + "</span>";
+            JLabel bonus = new JLabel("<html>" + stats + "</html>");   // one line; wraps only if the panel is too narrow
+            bonus.putClientProperty(STATS_HTML, stats);
             bonus.putClientProperty("FlatLaf.styleClass", "small");
             text.add(bonus);
         }
@@ -437,8 +506,9 @@ final class CharacterDetail {
         for (int i = 4; i < c.slots.length; i++) {
             if (c.slots[i] > 0 && ItemDb.get().item(c.slots[i]) != null && !carried.contains(c.slots[i])) carried.add(c.slots[i]);
         }
-        // highlights: the facts in an order fixed per character, the first three that find a new item; first among
-        // the items this character's class can wear, then (if fewer than three) among all, so wearables come first
+        // highlights: the facts in an order fixed per character, the first three whose item is not shown yet. A fact
+        // is always true over everything carried ("most enchantments" is the item with the most, or one of those tied
+        // for it); the facts won by an item this character's class can wear come first, the others fill up
         List<Fact> facts = facts(c);
         Collections.shuffle(facts, new Random(c.charId));
         int[] types = ClassSlots.of(c.classType);
@@ -454,20 +524,26 @@ final class CharacterDetail {
         for (int pass = 0; pass < 2; pass++) for (Fact f : facts) {
             if (highlights.getComponentCount() == 3) break;
             if (shownFacts.contains(f)) continue;
-            int best = -1;
+            Map<Integer, Double> values = new HashMap<>();
             double bestValue = Double.NaN;
             for (int id : carried) {
-                if (used.contains(id) || (pass == 0 && !wearable.contains(id))) continue;
                 double v;
                 try {
                     v = f.measure().applyAsDouble(id);
                 } catch (Exception e) {
                     v = Double.NaN;
                 }
-                if (!Double.isNaN(v) && (Double.isNaN(bestValue) || v > bestValue)) {
-                    best = id;
-                    bestValue = v;
-                }
+                if (Double.isNaN(v)) continue;
+                values.put(id, v);
+                if (Double.isNaN(bestValue) || v > bestValue) bestValue = v;
+            }
+            if (Double.isNaN(bestValue)) continue;
+            int best = -1;   // among the items tied for the top value: one not shown yet (a wearable one first)
+            for (int id : carried) {
+                Double v = values.get(id);
+                if (v == null || v != bestValue || used.contains(id) || (pass == 0 && !wearable.contains(id))) continue;
+                best = id;
+                break;
             }
             if (best < 0) continue;
             used.add(best);

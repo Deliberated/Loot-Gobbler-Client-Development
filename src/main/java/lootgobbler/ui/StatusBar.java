@@ -7,17 +7,18 @@ import javax.swing.*;
 import java.awt.*;
 
 /**
- * Bottom bar: sniffer state (colored dot + text) on the left; the version (greyed out), Update and Start/Stop
- * Sniffer buttons on the right.
+ * Bottom bar: sniffer state and server connection (colored square + text each) on the left; the version (greyed
+ * out), Update and Start/Stop Sniffer buttons on the right. Clicking the server state opens the Server tab.
  */
 public class StatusBar extends JPanel {
     private static final int GLOW = 7;   // px of glow around UPDATE AVAILABLE
 
     private final JLabel state = new JLabel();
+    private final JLabel server = new JLabel();
     private final JButton sniffer = new JButton();
     private final UpdateButton update = new UpdateButton();
 
-    public StatusBar(Runnable toggleSniffer) {
+    public StatusBar(Runnable toggleSniffer, Runnable openServer) {
         super(new BorderLayout());
         putClientProperty("FlatLaf.styleClass", "statusBar");
         state.putClientProperty("FlatLaf.styleClass", "statusBar");
@@ -42,9 +43,53 @@ public class StatusBar extends JPanel {
         buttons.add(update);
         buttons.add(Box.createHorizontalStrut(6));
         buttons.add(sniffer);
-        add(state, BorderLayout.WEST);
+        server.putClientProperty("FlatLaf.styleClass", "statusBar");
+        server.setIconTextGap(8);
+        server.setBorder(BorderFactory.createEmptyBorder(0, 24, 0, 0));
+        server.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Clicks.onClick(server, openServer);
+        lootgobbler.GobblerServer.get().onChange(() -> SwingUtilities.invokeLater(this::showServer));
+        showServer();
+        JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        left.setOpaque(false);
+        left.add(state);
+        left.add(server);
+        JPanel leftHolder = new JPanel(new GridBagLayout());   // vertically centered like the sniffer state was
+        leftHolder.setOpaque(false);
+        leftHolder.add(left);
+        add(leftHolder, BorderLayout.WEST);
         add(buttons, BorderLayout.EAST);
         setRunning(false);
+    }
+
+    /**
+     * The Loot Gobbler server: grey when none is set up yet, red when one is set up but not reachable (or still
+     * connecting), green when connected.
+     */
+    private void showServer() {
+        lootgobbler.GobblerServer s = lootgobbler.GobblerServer.get();
+        String url = s.url();
+        Color color;
+        String text, tip;
+        if (url == null || url.isBlank()) {
+            color = Palette.STONE;
+            text = "NO SERVER CONFIGURED YET";
+            tip = "No Loot Gobbler server set up. Click to open the Server tab.";
+        } else if (s.state() == lootgobbler.GobblerServer.State.ONLINE) {
+            color = Palette.GREEN;
+            text = "CONNECTED";
+            lootgobbler.GobblerServer.User u = s.user();
+            tip = "Connected to " + url + (u != null ? " as " + u.ign : " (not logged in)") + ". Click to open the Server tab.";
+        } else {
+            color = Palette.RED;
+            text = "NO SERVER CONNECTION";
+            String why = s.state() == lootgobbler.GobblerServer.State.CONNECTING ? "connecting..."
+                    : s.error() == null || s.error().isBlank() ? "not connected" : s.error();
+            tip = url + ": " + why + ". Click to open the Server tab.";
+        }
+        server.setIcon(new Section.Square(color, 10));
+        server.setText(text);
+        server.setToolTipText(tip);
     }
 
     /** E.g. "stable v0.5.5", or "build v0.5.6" when run from source. */

@@ -85,7 +85,7 @@ public class PetsView extends JPanel {
         });
         add(split, BorderLayout.CENTER);
 
-        PetStore.get().onChange(() -> SwingUtilities.invokeLater(this::refresh));
+        PetStore.get().onChange(ViewRefresh.of(this, this::refresh));   // only while it can be seen
         refresh();
     }
 

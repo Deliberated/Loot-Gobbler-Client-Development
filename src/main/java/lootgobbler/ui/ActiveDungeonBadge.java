@@ -14,9 +14,9 @@ import java.util.Map;
 
 /**
  * A box in the title bar (after the menus) while you are in a dungeon, from the moment you enter it: the dungeon's
- * portal, "Duration: m:ss" (time in the dungeon), the game's difficulty rating (number and gravestone) and, once you hit its
- * main boss, "Active Dungeon: Rank #x / y" (your place among everyone who hit it). Tinted in a darkened version of
- * the portal's colors; hidden outside dungeons. A click opens the dungeon under Battles > Dungeons.
+ * portal, "Duration: m:ss" (time in the dungeon), once you hit its main boss "Rank #x / y" (your place among everyone
+ * who hit it), and at the right edge the game's difficulty rating (number and gravestone). Tinted in a darkened
+ * version of the portal's colors; hidden outside dungeons. A click opens the dungeon under Battles > Dungeons.
  */
 public final class ActiveDungeonBadge extends JPanel {
     private static final int ICON = 22;
@@ -26,7 +26,7 @@ public final class ActiveDungeonBadge extends JPanel {
     private final Map<String, Color> tints = new HashMap<>();
     private final JLabel icon = new JLabel();
     private final JLabel since = new JLabel();
-    private final JLabel difficulty = new JLabel();
+    private final DifficultyMark difficulty = new DifficultyMark();
     private final JLabel rank = new JLabel();
     private final Timer clock = new Timer(1000, e -> updateSince());
     private long start;
@@ -34,14 +34,19 @@ public final class ActiveDungeonBadge extends JPanel {
     private Color tint = FALLBACK;
 
     public ActiveDungeonBadge(Runnable open) {
-        super(new FlowLayout(FlowLayout.LEFT, 10, 0));
+        super(new BorderLayout());
         setOpaque(false);
-        setBorder(new EmptyBorder(4, 14, 4, 14));
-        for (JLabel l : new JLabel[]{since, difficulty, rank}) l.setForeground(new Color(0xF2ECDC));
-        add(icon);
-        add(since);
-        add(difficulty);
-        add(rank);
+        setBorder(new EmptyBorder(4, 14, 4, 10));
+        for (JLabel l : new JLabel[]{since, rank}) l.setForeground(new Color(0xF2ECDC));
+        JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+        left.setOpaque(false);
+        left.add(icon);
+        left.add(since);
+        left.add(rank);
+        add(left, BorderLayout.CENTER);
+        difficulty.setBorder(new EmptyBorder(0, 12, 0, 0));
+        difficulty.lineOf = since;
+        add(difficulty, BorderLayout.EAST);   // at the right edge, as the game shows it: a big number and the gravestone
         setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         setToolTipText("Open this dungeon in Battles");
         Clicks.onClick(this, open);
@@ -76,7 +81,7 @@ public final class ActiveDungeonBadge extends JPanel {
         tint = tints.computeIfAbsent(visit.dungeon, d -> tint(portal));
         // the rank only once you have one (you hit the main boss)
         rank.setVisible(me != null);
-        if (me != null) rank.setText("<html>Active Dungeon: <b>Rank #" + boss.rankOf(me) + " / " + boss.players.size() + "</b></html>");
+        if (me != null) rank.setText("<html><b>Rank #" + boss.rankOf(me) + " / " + boss.players.size() + "</b></html>");
         dungeon = visit.dungeon;
         start = visit.start;
         updateSince();
@@ -96,19 +101,120 @@ public final class ActiveDungeonBadge extends JPanel {
         // the game's rating of the dungeon (loaded in the background, so it may come a moment later)
         Double d = lootgobbler.DungeonDifficulty.of(dungeon);
         difficulty.setVisible(d != null);
-        if (d != null) {
-            // the number with the game's gravestone, as the game shows a dungeon's difficulty
-            String text = "<html><b>" + (d % 1 == 0 ? String.valueOf(d.intValue()) : String.valueOf(d)) + "</b></html>";
-            if (difficulty.getIcon() == null) {
-                difficulty.setIcon(CharactersView.sprite(GRAVESTONE, 16));
-                difficulty.setHorizontalTextPosition(SwingConstants.LEFT);
-                difficulty.setIconTextGap(4);
-                difficulty.setToolTipText("Dungeon difficulty");
+        if (d != null && difficulty.set(d % 1 == 0 ? String.valueOf(d.intValue()) : String.valueOf(d), since.getFont())) {
+            revalidateParent();
+        }
+    }
+
+    /**
+     * A dungeon's difficulty as the game shows it: a big bold number and the gravestone right after it, both
+     * standing on the same line (the gravestone's visible bottom on the number's baseline, not its padded box).
+     */
+    private static final class DifficultyMark extends JComponent {
+        private static final int GAP = 5;   // as in the game
+        private String text = "";
+        private Icon grave;
+        private Rectangle visible;   // the gravestone's opaque pixels within its icon
+        JComponent lineOf;   // text whose baseline the number stands on
+
+        DifficultyMark() {
+            setToolTipText("Dungeon difficulty");
+        }
+
+        /** Shows this number (font: the badge's text font, made bigger); true if anything changed. */
+        boolean set(String number, Font base) {
+            if (grave == null) {
+                Font big = base.deriveFont(Font.BOLD, base.getSize2D() * 1.3f);
+                setFont(big);
+                // the gravestone as tall as the digits: measure how much of its icon it fills, then size it to them
+                FontMetrics fm = getFontMetrics(big);
+                double digits = -big.createGlyphVector(fm.getFontRenderContext(), "0123456789").getVisualBounds().getY();
+                grave = plainGravestone(digits);
+                visible = new Rectangle(0, 0, grave == null ? 0 : grave.getIconWidth(), grave == null ? 0 : grave.getIconHeight());
             }
-            if (!text.equals(difficulty.getText())) {
-                difficulty.setText(text);
-                revalidateParent();
+            if (number.equals(text)) return false;
+            text = number;
+            return true;
+        }
+
+        /**
+         * The game's gravestone as the game draws it next to a difficulty: the plain sprite (no outline), cut to its
+         * pixels and blown up (nearest neighbour, so it stays crisp) to exactly the digits' height.
+         */
+        private static Icon plainGravestone(double digits) {
+            try {
+                java.awt.image.BufferedImage sprite = assets.ImageBuffer.getImage(GRAVESTONE);
+                if (sprite == null) return null;
+                Rectangle r = opaqueBounds(new ImageIcon(sprite));
+                java.awt.image.BufferedImage cut = sprite.getSubimage(r.x, r.y, r.width, r.height);
+                // exactly as tall as the digits (pixel-sharp, but not only by whole factors, which came out too small)
+                int height = Math.max(r.height, (int) Math.ceil(digits) + 1);   // the measured glyphs come out a pixel short
+                int width = Math.max(1, (int) Math.round(r.width * (double) height / r.height));
+                java.awt.image.BufferedImage big = new java.awt.image.BufferedImage(width, height,
+                        java.awt.image.BufferedImage.TYPE_INT_ARGB);
+                Graphics2D g = big.createGraphics();
+                g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+                g.drawImage(cut, 0, 0, big.getWidth(), big.getHeight(), null);
+                g.dispose();
+                return new ImageIcon(big);
+            } catch (Exception e) {
+                return CharactersView.sprite(GRAVESTONE, Math.max(8, (int) Math.round(digits)));
             }
+        }
+
+        private static Rectangle opaqueBounds(Icon icon) {
+            if (icon == null) return new Rectangle();
+            java.awt.image.BufferedImage img = new java.awt.image.BufferedImage(Math.max(1, icon.getIconWidth()),
+                    Math.max(1, icon.getIconHeight()), java.awt.image.BufferedImage.TYPE_INT_ARGB);
+            Graphics2D g = img.createGraphics();
+            icon.paintIcon(null, g, 0, 0);
+            g.dispose();
+            int x0 = img.getWidth(), y0 = img.getHeight(), x1 = -1, y1 = -1;
+            for (int y = 0; y < img.getHeight(); y++) {
+                for (int x = 0; x < img.getWidth(); x++) {
+                    if ((img.getRGB(x, y) >>> 24) < 40) continue;
+                    x0 = Math.min(x0, x);
+                    y0 = Math.min(y0, y);
+                    x1 = Math.max(x1, x);
+                    y1 = Math.max(y1, y);
+                }
+            }
+            return x1 < 0 ? new Rectangle(0, 0, icon.getIconWidth(), icon.getIconHeight()) : new Rectangle(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
+        }
+
+        @Override
+        public Dimension getPreferredSize() {
+            FontMetrics fm = getFontMetrics(getFont());
+            Insets in = getInsets();
+            int w = fm.stringWidth(text) + GAP + (visible == null ? 0 : visible.width);
+            int h = Math.max(fm.getAscent(), visible == null ? 0 : visible.height);
+            return new Dimension(in.left + in.right + w, in.top + in.bottom + h);
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            if (grave == null) return;
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            Insets in = getInsets();
+            FontMetrics fm = g2.getFontMetrics(getFont());
+            // where both stand: on the same line as the box's other text, else centered on what is drawn
+            int floor = -1;
+            if (lineOf != null && lineOf.isShowing()) {
+                int b = lineOf.getBaseline(lineOf.getWidth(), lineOf.getHeight());
+                if (b >= 0) floor = SwingUtilities.convertPoint(lineOf, 0, b, this).y;
+            }
+            if (floor < 0) {
+                double digits = -getFont().createGlyphVector(g2.getFontRenderContext(), text).getVisualBounds().getY();
+                int h = (int) Math.round(Math.max(digits, visible.height));
+                floor = (getHeight() - h) / 2 + h;
+            }
+            g2.setFont(getFont());
+            g2.setColor(new Color(0xF2ECDC));
+            g2.drawString(text, in.left, floor);
+            int x = in.left + fm.stringWidth(text) + GAP - visible.x;
+            grave.paintIcon(this, g2, x, floor - (visible.y + visible.height));
+            g2.dispose();
         }
     }
 

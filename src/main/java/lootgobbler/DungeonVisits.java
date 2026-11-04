@@ -43,6 +43,7 @@ public final class DungeonVisits {
         // type (0 = no enemy, e.g. ground or an area effect); maxHp is your maximum life then
         public int[] hitTime = new int[0], hitDamage = new int[0], hitEnemy = new int[0];
         public int maxHp;
+        public int[] dealt = new int[0];   // the damage you dealt to enemies, per second after entering
 
         public int hits() {
             return hitTime == null ? 0 : hitTime.length;
@@ -167,12 +168,13 @@ public final class DungeonVisits {
     }
 
     /**
-     * Copies the hits you took into the visit in progress: once a second from the game tick, and once more right
+     * Copies the hits you took, and the damage you dealt per second, into the visit in progress: once a second from the game tick, and once more right
      * before a map change (force), while the fight data is still there. Called on the packet thread.
      */
-    public void hits(tomato.backend.data.Entity player, boolean force) {
+    public void hits(tomato.backend.data.TomatoData data, boolean force) {
         Visit v = current;
         long now = System.currentTimeMillis();
+        tomato.backend.data.Entity player = data == null ? null : data.player;
         if (v == null || player == null || (!force && now - lastHits < HITS_INTERVAL_MS)) return;
         lastHits = now;
         List<tomato.backend.data.Damage> list = player.getDamageList();
@@ -192,6 +194,23 @@ public final class DungeonVisits {
         v.hitEnemy = java.util.Arrays.copyOf(enemy, n);
         int max = player.maxHp();
         if (max > 0) v.maxHp = max;
+        // your damage to every enemy hit in this map, per second
+        int[] dealt = new int[(int) Math.max(1, (now - v.start) / 1000 + 1)];
+        boolean any = false;
+        for (tomato.backend.data.Entity e : data.getEntityHitList()) {
+            if (e == null) continue;
+            for (tomato.backend.data.Damage d : e.getDamageList()) {
+                if (d == null || d.owner == null || !d.owner.isUser() || d.time < v.start || d.damage <= 0) continue;
+                int s = (int) ((d.time - v.start) / 1000);
+                if (s >= dealt.length) dealt = java.util.Arrays.copyOf(dealt, s + 1);
+                dealt[s] += d.damage;
+                any = true;
+            }
+        }
+        if (any || v.dealt == null) {
+            changed |= !java.util.Arrays.equals(dealt, v.dealt);
+            v.dealt = dealt;
+        }
         if (changed) for (Runnable r : hitListeners) r.run();
     }
 
@@ -208,6 +227,42 @@ public final class DungeonVisits {
     /** The finished visits, newest first. */
     public synchronized List<Visit> visits() {
         return new ArrayList<>(visits);
+    }
+
+    /**
+     * The fame a series of {time, fame} points (or CharacterStore samples) shows at a time: the last value at or
+     * before it, else the first one after it; null if there are none.
+     */
+    public static Long fameAt(List<long[]> points, long t) {
+        Long at = null;
+        for (long[] p : points) {
+            if (p[0] <= t) at = p[1];
+            else return at != null ? at : p[1];
+        }
+        return at;
+    }
+
+    /** The end of a visit: when you left it, or now for the one in progress. */
+    public static long end(Visit v) {
+        return v.start + v.duration();
+    }
+
+    /**
+     * The fame you gained in a dungeon: the character whose fame went up between entering and leaving it (from
+     * CharacterStore's fame samples), 0 if none did.
+     */
+    public static long fameGained(Visit v) {
+        long best = 0, end = end(v);
+        for (CharacterStore.Char c : CharacterStore.get().all()) {
+            if (c.samples == null || c.samples.isEmpty()) continue;
+            CharacterStore.Sample last = c.samples.get(c.samples.size() - 1), first = c.samples.get(0);
+            if (last.t < v.start || first.t > end) continue;
+            List<long[]> points = new ArrayList<>();
+            for (CharacterStore.Sample s : c.samples) points.add(new long[]{s.t, s.fame});
+            Long a = fameAt(points, v.start), b = fameAt(points, end);
+            if (a != null && b != null) best = Math.max(best, b - a);
+        }
+        return best;
     }
 
     /** The run with your boss damage of a finished visit, or null if you fought no boss (or it was deleted). */

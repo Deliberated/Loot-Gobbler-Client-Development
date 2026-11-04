@@ -260,9 +260,10 @@ public final class CharacterStore implements Syncable {
         StatData rank = p.stat.get(StatType.GUILD_RANK_STAT);
         PlayerProfile.get().update(name, p.getStatGuild(), rank == null ? null : rank.statValue);
         try {
-            boolean sampled;
+            boolean sampled, changed;
             synchronized (this) {
                 Char c = chars.computeIfAbsent(id, k -> new Char());
+                String before = shown(c);
                 c.charId = id;
                 c.classType = p.objectType;
                 c.className = className(p.objectType);
@@ -302,8 +303,9 @@ public final class CharacterStore implements Syncable {
                     if (c.samples.size() > MAX_SAMPLES) c.samples.remove(0);
                 }
                 if (sampled || now - lastSave > 60_000) save();
+                changed = sampled || !before.equals(shown(c));
             }
-            fire();
+            if (changed) fire();   // every 5 s during play: only tell the pages when something they show changed
         } catch (Exception e) {
             // stats can change while being read; try again next tick
         }
@@ -339,6 +341,14 @@ public final class CharacterStore implements Syncable {
         c.slots = slots;
         c.slotEnchantIds = ids;
         return changed;
+    }
+
+    /** What the pages show of a character, to tell whether a live update changed anything. */
+    private static String shown(Char c) {
+        return c.classType + "|" + c.level + "|" + c.fame + "|" + c.skin + "|" + c.tex1 + "|" + c.tex2 + "|" + c.seasonal
+                + "|" + c.crucible + "|" + c.ritual + "|" + c.statsMaxed + "|" + c.backpack + "|" + c.extender + "|" + c.alive
+                + "|" + Arrays.toString(c.equipment) + "|" + Arrays.deepToString(c.enchantIds) + "|" + Arrays.toString(c.slots)
+                + "|" + Arrays.deepToString(c.slotEnchantIds);
     }
 
     /**

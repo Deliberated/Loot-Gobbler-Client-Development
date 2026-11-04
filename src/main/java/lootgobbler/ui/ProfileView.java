@@ -5,6 +5,7 @@ import lootgobbler.CharacterStore.Char;
 import lootgobbler.CharacterStore.Sample;
 import lootgobbler.CollectionStore;
 import lootgobbler.DpsHistory;
+import lootgobbler.DungeonVisits;
 import lootgobbler.ExaltStore;
 import lootgobbler.GobblerServer;
 import lootgobbler.GobblerServer.CaravanMember;
@@ -77,14 +78,14 @@ public class ProfileView extends SubTabs {
         page("Dungeon Stats", dungeonStats);
         done();
 
-        Runnable later = () -> SwingUtilities.invokeLater(this::refresh);
+        Runnable later = ViewRefresh.of(this, this::refresh);   // only while it can be seen, once per burst
         CharacterStore.get().onChange(later);
         DpsHistory.get().onChange(later);
         CollectionStore.get().onChange(later);
         ExaltStore.get().onChange(later);
         PetStore.get().onChange(later);
         DungeonStatsPanel.onUpdate(later);
-        new javax.swing.Timer(60_000, e -> refresh()).start();   // "x min ago" and the 24 hour window move on by themselves
+        new javax.swing.Timer(60_000, e -> later.run()).start();   // "x min ago" and the 24 hour window move on by themselves
 
         server.onChange(() -> SwingUtilities.invokeLater(this::loadGuild));
         ServerSync.get().onUploaded(kind -> {   // your run or drops reached the server
@@ -766,23 +767,53 @@ public class ProfileView extends SubTabs {
     }
 
     /**
-     * Fame gained over the last 24 hours, as stepped lines on one time axis: the most played character in gold on
-     * top, up to two others behind it in see-through tints. Each line starts at 0 (its fame at its first sample in
-     * the window), so characters with very different fame compare.
+     * Fame over the last 24 hours as small step lines (the main character's on top, others tinted behind). Like the
+     * Characters page's chart, stretches of an hour or more without any fame change are cut out to a narrow break,
+     * and the dungeons the main character gained fame in sit above its line (click: that dungeon under Battles).
      */
     private static class FameGraph extends JComponent {
         static final Color[] TINTS = {new Color(0x6F, 0xA8, 0xDC, 150), new Color(0xC2, 0x7B, 0xE0, 150)};
+        private static final int BREAK = 26, ICON = 20, TOP = ICON + 4, AXIS = 15;   // AXIS: room for the break times
 
         record Series(List<Sample> samples, Color color, float width) {
         }
 
         private final List<Series> series;   // the main one first
+        private final IdleTimeline timeline;
+        private final List<Object[]> dungeons = new ArrayList<>();   // {Visit, gained, Rectangle} as last painted
+        private final Map<String, Icon> icons = new HashMap<>();
 
         FameGraph(List<Series> series) {
             this.series = series.stream().filter(s -> s.samples().size() > 1).toList();
-            setPreferredSize(new Dimension(240, 64));
-            setMaximumSize(new Dimension(Integer.MAX_VALUE, 64));
+            long t0 = Long.MAX_VALUE, t1 = Long.MIN_VALUE;
+            List<Long> changes = new ArrayList<>();
+            for (Series s : this.series) {
+                List<Sample> ss = s.samples();
+                t0 = Math.min(t0, ss.get(0).t);
+                t1 = Math.max(t1, ss.get(ss.size() - 1).t);
+                changes.addAll(IdleTimeline.changes(points(ss)));
+            }
+            Collections.sort(changes);
+            timeline = this.series.isEmpty() ? null : new IdleTimeline(changes, t0, t1, BREAK);
+            setPreferredSize(new Dimension(240, 64 + TOP + AXIS));
+            setMaximumSize(new Dimension(Integer.MAX_VALUE, 64 + TOP + AXIS));
             setToolTipText("Fame gained over the last 24 hours");
+            Clicks.onClick(this, e -> {
+                DungeonVisits.Visit v = dungeonAt(e.getPoint());
+                if (v != null) DpsLoggerView.openVisit(v);
+            });
+            addMouseMotionListener(new java.awt.event.MouseAdapter() {
+                @Override
+                public void mouseMoved(java.awt.event.MouseEvent e) {
+                    setCursor(Cursor.getPredefinedCursor(dungeonAt(e.getPoint()) != null ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
+                }
+            });
+        }
+
+        private static List<long[]> points(List<Sample> ss) {
+            List<long[]> out = new ArrayList<>(ss.size());
+            for (Sample x : ss) out.add(new long[]{x.t, x.fame});
+            return out;
         }
 
         /** The tint without its transparency, for text. */
@@ -790,21 +821,46 @@ public class ProfileView extends SubTabs {
             return new Color(c.getRed(), c.getGreen(), c.getBlue());
         }
 
+        private DungeonVisits.Visit dungeonAt(Point p) {
+            for (Object[] d : dungeons) if (((Rectangle) d[2]).contains(p)) return (DungeonVisits.Visit) d[0];
+            return null;
+        }
+
+        @Override
+        public String getToolTipText(java.awt.event.MouseEvent e) {
+            for (Object[] d : dungeons) {
+                if (!((Rectangle) d[2]).contains(e.getPoint())) continue;
+                DungeonVisits.Visit v = (DungeonVisits.Visit) d[0];
+                return v.dungeon + ":  +" + NUM.format((long) d[1]) + " fame  ·  click to open it in Battles";
+            }
+            if (timeline != null) {
+                for (double[] b : timeline.breaks(2, getWidth() - 2)) {
+                    if (Math.abs(e.getX() - b[2]) <= BREAK / 2.0) return "No fame for " + IdleTimeline.gap((long) (b[1] - b[0])) + " (left out)";
+                }
+            }
+            return super.getToolTipText(e);
+        }
+
         @Override
         protected void paintComponent(Graphics g) {
+            dungeons.clear();
             if (series.isEmpty()) return;
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            int w = getWidth(), h = getHeight() - 4;
-            long t0 = Long.MAX_VALUE, t1 = Long.MIN_VALUE, hi = 1;
+            int w = getWidth(), h = getHeight() - 4 - AXIS, left = 2, right = w - 2;
+            long hi = 1;
             for (Series s : series) {
                 List<Sample> ss = s.samples();
-                t0 = Math.min(t0, ss.get(0).t);
-                t1 = Math.max(t1, ss.get(ss.size() - 1).t);
                 long base = ss.get(0).fame;
                 for (Sample x : ss) hi = Math.max(hi, x.fame - base);
             }
-            t1 = Math.max(t0 + 1, t1);
+            // the lines leave the cut-out stretches empty, so the card's own background shows there
+            java.awt.geom.Area drawn = new java.awt.geom.Area(new Rectangle(0, 0, w, getHeight()));
+            for (double[] b : timeline.breaks(left, right)) {
+                drawn.subtract(new java.awt.geom.Area(new Rectangle((int) Math.round(b[2]) - BREAK / 2 + 3, 0, BREAK - 6, getHeight())));
+            }
+            Shape oldClip = g2.getClip();
+            g2.clip(drawn);
             g2.setColor(Section.color("LootGobbler.line", Color.GRAY));
             g2.fillRect(0, h + 2, w, 2);
             for (int k = series.size() - 1; k >= 0; k--) {   // the main line last, on top
@@ -816,8 +872,8 @@ public class ProfileView extends SubTabs {
                 int px = 0, py = 0;
                 for (int i = 0; i < ss.size(); i++) {
                     Sample x = ss.get(i);
-                    int sx = (int) ((x.t - t0) * (w - 4) / (t1 - t0)) + 2;
-                    int sy = h - (int) (Math.max(0, x.fame - base) * (h - 4) / hi) - 2;
+                    int sx = (int) Math.round(timeline.x(x.t, left, right));
+                    int sy = h - (int) (Math.max(0, x.fame - base) * (h - 4 - TOP) / hi) - 2;
                     if (i > 0) {
                         g2.drawLine(px, py, sx, py);   // stepped: fame stays until the next sample
                         g2.drawLine(sx, py, sx, sy);
@@ -825,6 +881,40 @@ public class ProfileView extends SubTabs {
                     px = sx;
                     py = sy;
                 }
+            }
+            g2.setClip(oldClip);
+            // the cut-out stretches: two slashes on the base line and how long it was
+            g2.setStroke(new BasicStroke(1.3f));
+            g2.setFont(getFont().deriveFont(Math.max(9f, getFont().getSize2D() - 3)));
+            FontMetrics fm = g2.getFontMetrics();
+            for (double[] b : timeline.breaks(left, right)) {
+                int cx = (int) Math.round(b[2]);
+                g2.setColor(Palette.MUTED);
+                for (int dx : new int[]{-3, 2}) g2.drawLine(cx + dx - 2, h + 5, cx + dx + 2, h - 3);
+                String gap = IdleTimeline.gap((long) (b[1] - b[0]));   // under the axis, below the slashes
+                g2.drawString(gap, cx - fm.stringWidth(gap) / 2, getHeight() - 2);
+            }
+            // the dungeons the main character gained fame in, above its line
+            List<long[]> main = points(series.get(0).samples());
+            long base = series.get(0).samples().get(0).fame;
+            List<DungeonVisits.Visit> visits = new ArrayList<>(DungeonVisits.get().visits());
+            if (DungeonVisits.get().current() != null) visits.add(DungeonVisits.get().current());
+            visits.sort(Comparator.comparingLong(v -> v.start));
+            int lastIcon = -10_000;
+            for (DungeonVisits.Visit v : visits) {
+                long end = DungeonVisits.end(v);
+                if (end < timeline.from || v.start > timeline.to) continue;
+                Long a = DungeonVisits.fameAt(main, v.start), b = DungeonVisits.fameAt(main, end);
+                if (a == null || b == null || b <= a) continue;
+                int x = (int) Math.round(timeline.x((v.start + end) / 2, left, right));
+                if (x - lastIcon < ICON) continue;
+                Icon icon = icons.computeIfAbsent(v.dungeon, d -> ProfileView.dungeonIcon(d, ICON));
+                if (icon == null) continue;
+                int y = h - (int) (Math.max(0, b - base) * (h - 4 - TOP) / hi) - 2 - ICON - 2;
+                Rectangle r = new Rectangle(x - ICON / 2, Math.max(0, y), ICON, ICON);
+                icon.paintIcon(this, g2, r.x, r.y);
+                dungeons.add(new Object[]{v, b - a, r});
+                lastIcon = x;
             }
             g2.dispose();
         }

@@ -62,7 +62,7 @@ public class CollectionPanel extends JPanel {
         views.add(logView(), VIEWS[2]);
         add(views, BorderLayout.CENTER);
 
-        CollectionStore.get().onChange(() -> SwingUtilities.invokeLater(this::refresh));
+        CollectionStore.get().onChange(ViewRefresh.of(this, this::refresh));   // only while it can be seen
         Thread loader = new Thread(() -> {
             ItemDb db = ItemDb.get();
             List<StSets.Set> sets = StSets.get();

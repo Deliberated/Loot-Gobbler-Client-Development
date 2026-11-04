@@ -5,6 +5,7 @@ import lootgobbler.CharacterStore;
 import lootgobbler.CharacterStore.Char;
 import lootgobbler.CharacterStore.Session;
 import lootgobbler.Dyes;
+import lootgobbler.DungeonVisits;
 import lootgobbler.Themes;
 import lootgobbler.ItemDb;
 
@@ -98,7 +99,7 @@ public class CharactersView extends JPanel {
         views.add(new PetsView(), PAGES[2]);
         add(views, BorderLayout.CENTER);
 
-        CharacterStore.get().onChange(() -> SwingUtilities.invokeLater(this::refresh));
+        CharacterStore.get().onChange(ViewRefresh.of(this, this::refresh));   // only while it can be seen
         refresh();
     }
 
@@ -609,11 +610,18 @@ public class CharactersView extends JPanel {
     }
 
     /**
-     * Fame over the chosen range: an area chart that steps with the recorded samples.
+     * Fame over the chosen range, as steps. Stretches of an hour or more without any fame change are cut out (see
+     * IdleTimeline): each shrinks to a narrow break marked with how long it was, so the time with fame gets the room. Above the line,
+     * the portal of every dungeon you gained fame in (hover: which and how much).
      */
     private static class FameChart extends JComponent {
+        private static final int BREAK = 34, ICON = 18;
         private final List<long[]> points = new ArrayList<>();   // {time, fame}
         private final long from, to;
+        private final IdleTimeline timeline;   // the time axis without the idle stretches
+        private final List<Object[]> dungeons = new ArrayList<>();   // {Visit, gained, Rectangle} as last painted
+        private final Map<String, Icon> icons = new HashMap<>();
+        private int left, right;
 
         FameChart(List<CharacterStore.Sample> samples, long since, long now) {
             long first = Long.MAX_VALUE;
@@ -625,22 +633,53 @@ public class CharactersView extends JPanel {
             }
             this.to = now;
             this.from = since > 0 ? since : (first == Long.MAX_VALUE ? now - HOUR : first);
+            timeline = new IdleTimeline(IdleTimeline.changes(points), from, to, BREAK);
             setPreferredSize(new Dimension(380, 200));
             setMaximumSize(new Dimension(Integer.MAX_VALUE, 200));
+            setToolTipText("");   // see getToolTipText(MouseEvent)
+            // a dungeon icon: that dungeon under Battles > Dungeons
+            Clicks.onClick(this, e -> {
+                DungeonVisits.Visit v = dungeonAt(e.getPoint());
+                if (v != null) DpsLoggerView.openVisit(v);
+            });
+            addMouseMotionListener(new java.awt.event.MouseAdapter() {
+                @Override
+                public void mouseMoved(java.awt.event.MouseEvent e) {
+                    setCursor(Cursor.getPredefinedCursor(dungeonAt(e.getPoint()) != null ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
+                }
+            });
+        }
+
+        /** The dungeon whose icon (as last painted) is under the point, or null. */
+        private DungeonVisits.Visit dungeonAt(Point p) {
+            for (Object[] d : dungeons) if (((Rectangle) d[2]).contains(p)) return (DungeonVisits.Visit) d[0];
+            return null;
+        }
+
+        private double x(long t) {
+            return timeline.x(t, left, right);
+        }
+
+        private List<double[]> breakList() {
+            return timeline.breaks(left, right);
         }
 
         @Override
         protected void paintComponent(Graphics g) {
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            int w = getWidth(), h = getHeight(), left = 8, right = w - 8, top = 18, bottom = h - 24;
-            g2.setColor(Section.color("LootGobbler.sand", Color.LIGHT_GRAY));
+            int w = getWidth(), h = getHeight(), top = 18 + ICON, bottom = h - 24;
+            left = 8;
+            right = w - 8;
+            Color sand = Section.color("LootGobbler.sand", Color.LIGHT_GRAY);
+            g2.setColor(sand);
             g2.fillRect(0, 0, w, h);
             g2.setColor(Section.color("LootGobbler.line", Color.GRAY));
             g2.drawRect(0, 0, w - 1, h - 1);
             Color accent = Section.color("LootGobbler.gold", Palette.GOLD);
             g2.setFont(getFont().deriveFont(13f));
-            timeAxis(g2, left, right, top, bottom, h);
+            timeAxis(g2, top, bottom, h);
+            dungeons.clear();
             if (points.isEmpty()) {
                 g2.setColor(Palette.MUTED);
                 g2.drawString("No fame recorded in this range yet.", left + 6, h / 2);
@@ -649,12 +688,12 @@ public class CharactersView extends JPanel {
             }
             long min = points.stream().mapToLong(p -> p[1]).min().orElse(0);
             long max = points.stream().mapToLong(p -> p[1]).max().orElse(1);
-            double span = Math.max(1, max - min), tspan = Math.max(1, to - from);
+            double span = Math.max(1, max - min);
             Path2D line = new Path2D.Double();
             Path2D area = new Path2D.Double();
             double lastY = 0;
             for (int i = 0; i < points.size(); i++) {
-                double x = left + (points.get(i)[0] - from) / tspan * (right - left);
+                double x = x(points.get(i)[0]);
                 double y = bottom - (points.get(i)[1] - min) / span * (bottom - top);
                 if (i == 0) {
                     line.moveTo(x, y);
@@ -677,10 +716,63 @@ public class CharactersView extends JPanel {
             g2.setColor(accent);
             g2.setStroke(new BasicStroke(2f));
             g2.draw(line);
+
+            // the cut-out stretches: a gap in the chart (the chart's own background) with two slashes and how long
+            g2.setStroke(new BasicStroke(1.5f));
+            FontMetrics fm = g2.getFontMetrics();
+            for (double[] b : breakList()) {
+                int cx = (int) Math.round(b[2]);
+                g2.setColor(sand);
+                g2.fillRect(cx - BREAK / 2 + 4, 1, BREAK - 8, bottom);
+                g2.setColor(Palette.MUTED);
+                for (int dx : new int[]{-4, 3}) g2.drawLine(cx + dx - 3, bottom + 4, cx + dx + 3, bottom - 6);
+                String gap = gap((long) (b[1] - b[0]));
+                g2.drawString(gap, cx - fm.stringWidth(gap) / 2, (top + bottom) / 2 + fm.getAscent() / 2);
+            }
+
+            // the dungeons you gained fame in, as their portals above the line
+            List<DungeonVisits.Visit> visits = new ArrayList<>(DungeonVisits.get().visits());
+            if (DungeonVisits.get().current() != null) visits.add(DungeonVisits.get().current());
+            visits.sort(Comparator.comparingLong(v -> v.start));
+            int lastIcon = -10_000;
+            for (DungeonVisits.Visit v : visits) {
+                long end = DungeonVisits.end(v);
+                if (end < from || v.start > to) continue;
+                Long a = DungeonVisits.fameAt(points, v.start), b = DungeonVisits.fameAt(points, end);
+                if (a == null || b == null || b <= a) continue;
+                int x = (int) Math.round(x((v.start + end) / 2));
+                if (x - lastIcon < ICON) continue;
+                Icon icon = icons.computeIfAbsent(v.dungeon, d -> ProfileView.dungeonIcon(d, ICON));
+                if (icon == null) continue;
+                int y = (int) Math.round(bottom - (b - min) / span * (bottom - top)) - ICON - 4;
+                icon.paintIcon(this, g2, x - ICON / 2, Math.max(2, y));
+                dungeons.add(new Object[]{v, b - a, new Rectangle(x - ICON / 2, Math.max(2, y), ICON, ICON)});
+                lastIcon = x;
+            }
             g2.setColor(Palette.MUTED);
-            g2.drawString(NUM.format(max), left + 4, top - 4);
+            g2.drawString(NUM.format(max), left + 4, 14);
             g2.drawString(NUM.format(min), left + 4, bottom - 4);
             g2.dispose();
+        }
+
+        private static String gap(long ms) {
+            return IdleTimeline.gap(ms);
+        }
+
+        /** A dungeon icon under the mouse: which dungeon, when and the fame from it; a break: how long it was. */
+        @Override
+        public String getToolTipText(java.awt.event.MouseEvent e) {
+            for (Object[] d : dungeons) {
+                if (!((Rectangle) d[2]).contains(e.getPoint())) continue;
+                DungeonVisits.Visit v = (DungeonVisits.Visit) d[0];
+                return v.dungeon + ":  +" + NUM.format((long) d[1]) + " fame  ("
+                        + DateTimeFormatter.ofPattern("d MMM, HH:mm", Locale.ENGLISH).format(Instant.ofEpochMilli(v.start).atZone(ZoneId.systemDefault()))
+                        + ")  \u00B7  click to open it in Battles";
+            }
+            for (double[] b : breakList()) {
+                if (Math.abs(e.getX() - b[2]) <= BREAK / 2.0) return "No fame for " + gap((long) (b[1] - b[0])) + " (left out)";
+            }
+            return null;
         }
 
         private static final long MIN = 60_000L;
@@ -689,38 +781,45 @@ public class CharactersView extends JPanel {
         private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("d MMM", Locale.ENGLISH);
 
         /**
-         * Time scale under the chart: faint gridlines with clock times (or dates for long ranges) at round local
-         * times, about one label per 80 px, and "now" at the right end.
+         * Time scale under the chart, per shown span: faint gridlines with clock times (or dates for long spans) at
+         * round local times, about one label per 80 px, and "now" at the right end.
          */
-        private void timeAxis(Graphics2D g2, int left, int right, int top, int bottom, int h) {
+        private void timeAxis(Graphics2D g2, int top, int bottom, int h) {
             FontMetrics fm = g2.getFontMetrics();
-            double tspan = Math.max(1, to - from);
-            int maxLabels = Math.max(2, (right - left) / 80);
-            long step = STEPS[STEPS.length - 1];
-            for (long s : STEPS) {
-                if (tspan / s <= maxLabels) {
-                    step = s;
-                    break;
-                }
-            }
-            boolean days = step >= 24 * HOUR;
-            ZoneId zone = ZoneId.systemDefault();
-            long offset = zone.getRules().getOffset(Instant.ofEpochMilli(from)).getTotalSeconds() * 1000L;
-            long tick = Math.floorDiv(from + offset + step - 1, step) * step - offset;   // first round local time
             String nowLabel = "now";
             int nowLeft = right - fm.stringWidth(nowLabel);
             Color grid = Section.color("LootGobbler.line", Color.GRAY);
             g2.setColor(Palette.MUTED);
             g2.drawLine(left, bottom, right, bottom);
-            for (; tick < to; tick += step) {
-                int x = (int) Math.round(left + (tick - from) / tspan * (right - left));
-                g2.setColor(new Color(grid.getRed(), grid.getGreen(), grid.getBlue(), 70));
-                g2.drawLine(x, top, x, bottom);
-                g2.setColor(Palette.MUTED);
-                g2.drawLine(x, bottom, x, bottom + 3);
-                String label = (days ? DAY : TIME).format(Instant.ofEpochMilli(tick).atZone(zone));
-                int lx = x - fm.stringWidth(label) / 2;
-                if (lx >= 2 && lx + fm.stringWidth(label) < nowLeft - 6) g2.drawString(label, lx, h - 5);
+            ZoneId zone = ZoneId.systemDefault();
+            int lastLabelEnd = -10_000;
+            for (long[] seg : timeline.segments) {
+                double x0 = x(seg[0]), x1 = x(seg[1]);
+                double tspan = Math.max(1, seg[1] - seg[0]);
+                int maxLabels = Math.max(1, (int) ((x1 - x0) / 80));
+                long step = STEPS[STEPS.length - 1];
+                for (long s : STEPS) {
+                    if (tspan / s <= maxLabels) {
+                        step = s;
+                        break;
+                    }
+                }
+                boolean days = step >= 24 * HOUR;
+                long offset = zone.getRules().getOffset(Instant.ofEpochMilli(seg[0])).getTotalSeconds() * 1000L;
+                long tick = Math.floorDiv(seg[0] + offset + step - 1, step) * step - offset;   // first round local time
+                for (; tick < seg[1]; tick += step) {
+                    int x = (int) Math.round(x(tick));
+                    g2.setColor(new Color(grid.getRed(), grid.getGreen(), grid.getBlue(), 70));
+                    g2.drawLine(x, top, x, bottom);
+                    g2.setColor(Palette.MUTED);
+                    g2.drawLine(x, bottom, x, bottom + 3);
+                    String label = (days ? DAY : TIME).format(Instant.ofEpochMilli(tick).atZone(zone));
+                    int lx = x - fm.stringWidth(label) / 2;
+                    if (lx >= 2 && lx > lastLabelEnd + 6 && lx + fm.stringWidth(label) < nowLeft - 6) {
+                        g2.drawString(label, lx, h - 5);
+                        lastLabelEnd = lx + fm.stringWidth(label);
+                    }
+                }
             }
             g2.setColor(Palette.MUTED);
             g2.drawString(nowLabel, nowLeft, h - 5);
