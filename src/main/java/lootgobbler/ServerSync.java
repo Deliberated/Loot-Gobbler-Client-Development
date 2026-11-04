@@ -80,7 +80,7 @@ public final class ServerSync {
     private final GobblerServer server = GobblerServer.get();
     private final List<Kind> kinds = List.of(new Kind(CollectionStore.get()), new Kind(CharacterStore.get()),
             new Kind(ExaltStore.get()), new Kind(PetStore.get()), new Kind(DpsHistory.get()),
-            new Kind(PlayerProfile.get()));
+            new Kind(PlayerProfile.get()), new Kind(DungeonVisits.get()), new Kind(AmuletSaves.get()));
     private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
     private final List<java.util.function.Consumer<String>> uploadListeners = new CopyOnWriteArrayList<>();
     private final ScheduledExecutorService exec = Executors.newSingleThreadScheduledExecutor(r -> {

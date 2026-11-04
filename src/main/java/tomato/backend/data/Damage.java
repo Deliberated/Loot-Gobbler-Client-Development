@@ -11,6 +11,7 @@ import tomato.realmshark.ParseEnchants;
 public class Damage implements Serializable {
 
     public Entity owner;
+    public int sourceType;   // what caused it when there is no owner, e.g. the object behind an area attack (0 = unknown)
     public int ownerObjectType;
     public String ownerObjectName;
     public int[] ownerInvntory;

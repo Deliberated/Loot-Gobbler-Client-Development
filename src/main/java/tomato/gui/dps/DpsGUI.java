@@ -155,6 +155,7 @@ public class DpsGUI extends JPanel {
         lootgobbler.DpsHistory.get().liveTick(data);
         lootgobbler.DungeonVisits.get().hits(data, false);   // damage taken and dealt in the dungeon you are in
         lootgobbler.MoonlightLog.get().tick(data);   // Moonlight Village: lantern time
+        lootgobbler.AmuletSaves.get().tick(data);   // an amulet making you invulnerable
         lootgobbler.LootEvents.inventoryTick(data);
         lootgobbler.CharacterStore.get().live(data);
         if (!INSTANCE.liveUpdates) return;

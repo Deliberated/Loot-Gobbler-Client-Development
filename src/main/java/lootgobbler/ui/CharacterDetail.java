@@ -41,12 +41,41 @@ final class CharacterDetail {
         grid.setOpaque(false);
         for (int slot : new int[]{0, 2, 1, 3}) {
             int id = c.equipment != null && slot < c.equipment.length ? c.equipment[slot] : -1;
-            grid.add(equipped(id, CharactersView.enchantIds(c, slot), SLOT_NAMES[slot]));
+            grid.add(equipped(id, CharactersView.enchantIds(c, slot), SLOT_NAMES[slot], slot == 3 ? amuletNote(c) : null));
         }
         return left(grid);
     }
 
-    private static JComponent equipped(int id, int[] enchants, String slotName) {
+    /**
+     * With an Amulet of Restoration in the ring slot: "at 182 HP", the life below which it fires (its share of the
+     * character's maximum life as the game last reported it); the details are in its tooltip.
+     */
+    private static JLabel amuletNote(Char c) {
+        int ring = c.equipment != null && c.equipment.length > 3 ? c.equipment[3] : -1;
+        lootgobbler.Amulets.Amulet a = lootgobbler.Amulets.of(ring);
+        if (a == null) return null;
+        int life = c.maxHp;
+        boolean estimated = life <= 0;
+        if (estimated) {   // not seen live yet: the class's maximum plus what the gear adds
+            int[] max = ClassSlots.maxStats(c.classType);
+            int[] bonus = new int[STATS.length];
+            if (c.equipment != null) for (int id : c.equipment) if (id > 0) addBonuses(bonus, ItemDb.get().item(id));
+            life = (max == null ? 0 : max[0]) + bonus[0];
+        }
+        int at = (int) Math.round(life * a.threshold());
+        long saved = lootgobbler.AmuletSaves.get().all().stream().filter(s -> s.charId == c.charId).count();
+        JLabel l = new JLabel(String.format(Locale.ROOT, "at %dHP", at));   // an estimate says so in the tooltip
+        l.setFont(l.getFont().deriveFont(Math.max(10f, l.getFont().getSize2D() - 3)));   // about as wide as the icon
+        l.setForeground(new Color(0x3A9BFF));   // the amulet's blue, as on the damage graph
+        l.setHorizontalAlignment(SwingConstants.CENTER);
+        l.setToolTipText(String.format(Locale.ROOT, "<html>%s fires when you take damage below %,d life (%d%% of %,d%s)<br>"
+                        + "2 seconds invulnerable, every %d minutes%s</html>", a.name(), at, Math.round(a.threshold() * 100), life,
+                estimated ? ", estimated until this character is played with Loot Gobbler running" : "", a.cooldownS() / 60,
+                saved > 0 ? "<br>Saved this character " + saved + (saved == 1 ? " time" : " times") : ""));
+        return l;
+    }
+
+    private static JComponent equipped(int id, int[] enchants, String slotName, JComponent underIcon) {
         JPanel p = new JPanel(new BorderLayout(10, 0));
         p.setOpaque(false);
         JLabel icon = new JLabel(id > 0 ? CharactersView.sprite(id, 44) : null);
@@ -54,7 +83,16 @@ final class CharacterDetail {
         icon.setVerticalAlignment(SwingConstants.TOP);
         icon.setToolTipText(CharactersView.itemTooltip(id, enchants, slotName));
         ItemLinks.link(icon, id);
-        p.add(icon, BorderLayout.WEST);
+        if (underIcon == null) {
+            p.add(icon, BorderLayout.WEST);
+        } else {   // e.g. the amulet's "at 182HP" right below its icon
+            JPanel west = new JPanel(new BorderLayout());
+            west.setOpaque(false);
+            icon.setHorizontalAlignment(SwingConstants.CENTER);
+            west.add(icon, BorderLayout.NORTH);
+            west.add(underIcon, BorderLayout.CENTER);
+            p.add(west, BorderLayout.WEST);
+        }
         JPanel text = column();
         JLabel name = new JLabel(id > 0 ? CharactersView.itemName(id) : "No " + slotName.toLowerCase(Locale.ROOT));
         int n = enchants == null ? 0 : enchants.length;

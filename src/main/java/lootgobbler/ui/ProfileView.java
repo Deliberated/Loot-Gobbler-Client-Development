@@ -84,6 +84,7 @@ public class ProfileView extends SubTabs {
         CollectionStore.get().onChange(later);
         ExaltStore.get().onChange(later);
         PetStore.get().onChange(later);
+        lootgobbler.AmuletSaves.get().onChange(later);
         DungeonStatsPanel.onUpdate(later);
         new javax.swing.Timer(60_000, e -> later.run()).start();   // "x min ago" and the 24 hour window move on by themselves
 
@@ -420,13 +421,19 @@ public class ProfileView extends SubTabs {
         List<DpsHistory.Run> today = runs.stream().filter(r -> r.start >= since && !r.guildHall).toList();
         long kinds = today.stream().map(r -> r.dungeon).distinct().count();
 
-        JPanel tiles = new JPanel(new GridLayout(1, 4, 12, 0));   // fame gained is on the most played card
+        // a fifth tile for amulet saves, only while an amulet is worn or saved you recently
+        boolean amulet = lootgobbler.AmuletSaves.get().relevant();
+        JPanel tiles = new JPanel(new GridLayout(1, amulet ? 5 : 4, 12, 0));   // fame gained is on the most played card
         tiles.setOpaque(false);
         tiles.add(tile("DUNGEONS", NUM.format(today.size()), kinds == 0 ? "none yet" : kinds + " different"));
         tiles.add(bagTile("WHITE BAGS", "White", drops, since));
         tiles.add(bagTile("ORANGE BAGS", "Orange", drops, since));
         tiles.add(tile("PLAYTIME", duration(playMs),
                 sessions == 0 ? "not played" : sessions + (sessions == 1 ? " session" : " sessions")));
+        if (amulet) {
+            int all = lootgobbler.AmuletSaves.get().count(), todayN = lootgobbler.AmuletSaves.get().countSince(since);
+            tiles.add(tile("AMULET SAVES", NUM.format(all), todayN == 0 ? "none today" : todayN + " today"));
+        }
         return left(tiles);
     }
 

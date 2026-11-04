@@ -486,9 +486,15 @@ public void genericDamageHit(
     }
 
     public void userDamageTaken(Entity e, long timePc, Projectile p) {
+        userDamageTaken(e, timePc, p, 0);
+    }
+
+    /** As above, for damage without an owner entity: sourceType is the object type behind it (e.g. an area attack). */
+    public void userDamageTaken(Entity e, long timePc, Projectile p, int sourceType) {
         int dmg = p.getDamage();
         dmg = calculatePlayerDmg(dmg, p.isArmorPiercing());
         Damage d = new Damage(e, timePc, dmg);
+        d.sourceType = sourceType;
         damageList.add(d);
     }
 

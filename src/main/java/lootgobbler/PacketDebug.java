@@ -29,6 +29,7 @@ public final class PacketDebug {
 
     public static void install() {
         Register.INSTANCE.registerAll(PacketDebug::seen);
+        Register.INSTANCE.registerAll(HubPacketLog::seen);   // graveyard research: what arrives in the Nexus / Vault
     }
 
     private static synchronized void seen(Packet p) {
@@ -54,6 +55,7 @@ public final class PacketDebug {
      */
     public static synchronized void problem(int type, int size, byte[] data, String what) {
         if (type == ItemUse.USE_REQUEST || type == ItemUse.USE_RESULT) ItemUse.raw(type, data);   // unknown to RealmShark
+        HubPacketLog.raw(type, size, data, what);
         if (what.startsWith("VAULT_UPDATE")) {   // keep the whole packet so the new layout can be decoded
             try {
                 Files.writeString(Path.of("vault-packet.txt"), what + "\n" + Arrays.toString(data) + "\n");

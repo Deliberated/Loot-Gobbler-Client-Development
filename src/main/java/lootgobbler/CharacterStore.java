@@ -42,6 +42,7 @@ public final class CharacterStore implements Syncable {
         public int petSkin;            // sprite of the pet following this character, 0 = none / unknown
         public String petName;
         public int level;
+        public int maxHp;              // maximum life as the game last reported it (with gear); 0 = unknown
         public long fame;
         public int statsMaxed;
         public boolean seasonal, crucible, ritual, favorite;
@@ -274,6 +275,8 @@ public final class CharacterStore implements Syncable {
                 if (tex2 != null) c.tex2 = liveTexture(tex2.statValue);
                 int level = intStat(p, StatType.LEVEL_STAT);
                 if (level > 0) c.level = level;
+                int maxHp = intStat(p, StatType.MAX_HP_STAT);
+                if (maxHp > 0) c.maxHp = maxHp;
                 int fame = intStat(p, StatType.CURR_FAME_STAT);
                 if (fame > 0) c.fame = fame;
                 c.seasonal = p.isSeasonal();
@@ -817,6 +820,10 @@ public final class CharacterStore implements Syncable {
         }
         if (n.level == 0 && o.level > 0) {
             n.level = o.level;
+            c = true;
+        }
+        if (n.maxHp == 0 && o.maxHp > 0) {   // only known from live play
+            n.maxHp = o.maxHp;
             c = true;
         }
         if (n.fame == 0 && o.fame > 0) {

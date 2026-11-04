@@ -800,7 +800,8 @@ public class TomatoData {
                 player.userDamageTaken(
                     null,
                     timePc,
-                    new Projectile(p.damage, p.armorPiercing)
+                    new Projectile(p.damage, p.armorPiercing),
+                    p.origType   // the object that threw it, so it is not "unknown"
                 );
             }
         }
@@ -1072,6 +1073,7 @@ public class TomatoData {
 
     public void text(TextPacket p) {
         lootgobbler.MoonlightLog.get().message(this, "text", p);
+        lootgobbler.AmuletSaves.get().text(this, p);
         if (
             p.text.equals(
                 "I SAID DO NOT INTERRUPT ME! For this I shall hasten your end!"
@@ -1097,6 +1099,7 @@ public class TomatoData {
      */
     public void notification(NotificationPacket packet) {
         lootgobbler.MoonlightLog.get().message(this, "notification", packet);
+        lootgobbler.AmuletSaves.get().notification(this, packet);   // logged; amulet saves counted
         if (packet.effect == NotificationEffectType.PlayerDeath) {
             deathNotifications.add(packet);
         }

@@ -51,7 +51,9 @@ public class DpsLoggerView extends JPanel {
     private JLabel takenStats;
     private Visit graphVisit;
     private boolean scrollToSelected;   // bring the selected row into view after the next rebuild
-    private long selected = -1;   // start of the visit shown on the right; -1 = the newest
+    private long selected = -1;
+    private String detailKey = "";          // what the details were last built from
+    private boolean detailPending;          // a rebuild waits for a scrollbar drag to end   // start of the visit shown on the right; -1 = the newest
 
     public DpsLoggerView(DpsPanel dps) {
         super(new BorderLayout(0, 8));
@@ -95,7 +97,7 @@ public class DpsLoggerView extends JPanel {
                 takenStats.setText(takenText(graphVisit));
                 for (int i = 0; i < graphs.size(); i++) {
                     graphCaptions.get(i).setText(captionText(graphVisit, DamageGraph.WINDOWS_MS[i]));
-                    graphs.get(i).repaint();
+                    graphs.get(i).update(false);   // longer now; a view at the latest end follows
                 }
             }
         }));
@@ -189,10 +191,31 @@ public class DpsLoggerView extends JPanel {
             Run live = DpsHistory.get().live();
             shownRun = live != null && !live.guildHall && live.dungeon.equals(now.dungeon) && live.mainBoss() != null ? live : null;
         }
-        showDetail(shown, shownRun, shown != null && shown == now);
+        // the details only when something in them changed (a finished dungeon never does), and never while its
+        // graph's scrollbar is being dragged: rebuilding would take the bar away from under the mouse
+        String key = shown == null ? "" : detailKey(shown, shownRun, shown == now);
+        boolean dragging = graphs.stream().anyMatch(DamageGraph::dragging);
+        if (dragging) {
+            detailPending = true;
+        } else if (!key.equals(detailKey)) {
+            detailKey = key;
+            detailPending = false;
+            showDetail(shown, shownRun, shown != null && shown == now);
+        }
     }
 
     /** The column on the right: the visit, its boss fights and the exaltation progress made in it. */
+    /** What the details show of a visit: when this is unchanged, they need no rebuild. */
+    private static String detailKey(Visit v, Run run, boolean current) {
+        int bosses = 0;
+        if (run != null) for (Boss b : run.bosses) bosses += b.players.size() + (b.me() != null ? b.rankOf(b.me()) : 0) * 1000;
+        // the dungeon in progress: its time in the details moves on, refreshed every 5 seconds
+        return v.start + "|" + current + "|" + v.dungeon + "|" + (current ? v.duration() / 5000 : v.durationMs) + "|" + v.hits() + "|"
+                + (v.dealt == null ? 0 : v.dealt.length) + "|" + (v.exalts == null ? 0 : v.exalts.size()) + "|"
+                + (v.amuletSaves == null ? 0 : v.amuletSaves.length) + "|" + v.runStart + "|" + v.lanternActiveMs / 1000
+                + "|" + (run == null ? 0 : run.bosses.size()) + "|" + bosses;
+    }
+
     private void showDetail(Visit v, Run run, boolean current) {
         detail.removeAll();
         if (v == null) {
@@ -248,10 +271,15 @@ public class DpsLoggerView extends JPanel {
         takenStats = muted(takenText(v));
         takenStats.setAlignmentX(LEFT_ALIGNMENT);
         taken.add(takenStats);
+        // the details are rebuilt whenever new data comes in (every second in a fight): keep where the graph was
+        // scrolled to for the same dungeon, instead of jumping back to its latest end
+        boolean same = graphVisit != null && graphVisit.start == v.start && !graphs.isEmpty();
+        int keptValue = same ? graphs.get(0).scrollValue() : 0;
+        boolean keptAtEnd = !same || graphs.get(0).atLatestEnd();
         graphs.clear();
         graphCaptions.clear();
         graphVisit = v;
-        // the hits added up per slice of 3 seconds (a finished dungeon without hits needs no graph)
+        // the hits added up per slice of 2 seconds (a finished dungeon without hits needs no graph)
         boolean anyDealt = v.dealt != null && java.util.Arrays.stream(v.dealt).anyMatch(d -> d > 0);
         for (int window : v.hits() == 0 && !anyDealt && !current ? new int[0] : DamageGraph.WINDOWS_MS) {
             taken.add(Box.createVerticalStrut(8));
@@ -263,8 +291,14 @@ public class DpsLoggerView extends JPanel {
             taken.add(caption);
             taken.add(Box.createVerticalStrut(2));
             DamageGraph graph = new DamageGraph(v, window);
+            graph.restore(keptValue, keptAtEnd);
+            graph.onDragEnd(() -> {   // a rebuild that waited for the drag
+                if (detailPending) refresh();
+            });
             graph.setAlignmentX(LEFT_ALIGNMENT);
-            taken.add(graph);
+            JComponent scrolled = graph.withScrollbar();   // a window of 100 slices, scrolled under it
+            scrolled.setAlignmentX(LEFT_ALIGNMENT);
+            taken.add(scrolled);
             graphs.add(graph);
             graphCaptions.add(caption);
         }
@@ -326,6 +360,8 @@ public class DpsLoggerView extends JPanel {
             if (v.hitDamage[i] > v.hitDamage[biggest]) biggest = i;
         }
         String who = v.hitEnemy[biggest] > 0 ? " (" + assets.IdToAsset.objectName(v.hitEnemy[biggest]) + ")" : "";
+        int saves = v.amuletSaves == null ? 0 : v.amuletSaves.length;
+        if (saves > 0) dealtText = (saves == 1 ? "Amulet saved you once" : "Amulet saved you " + saves + " times") + "  \u00B7  " + dealtText;
         return dealtText + String.format(Locale.ROOT, "taken %,d in %,d hits", total, n)
                 + "  \u00B7  biggest " + v.hitDamage[biggest] + who;
     }

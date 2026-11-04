@@ -1,6 +1,7 @@
 package lootgobbler;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonElement;
 import com.google.gson.reflect.TypeToken;
 import packets.incoming.MapInfoPacket;
 
@@ -18,7 +19,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * damage): the dungeon in progress, and the finished visits, newest first. A visit where you fought a boss is linked
  * to its run in {@link DpsHistory}. Kept in dungeon_visits.json next to the app.
  */
-public final class DungeonVisits {
+public final class DungeonVisits implements Syncable {
     /**
      * Exaltation progress the game reported during a visit: one stat of one class (stat index in ExaltStore's order,
      * e.g. ExaltStore.DEX), from before to after. An exaltation was earned if a threshold lies in between.
@@ -46,6 +47,7 @@ public final class DungeonVisits {
         public int[] dealt = new int[0];   // the damage you dealt to enemies, per second after entering
         // Moonlight Village: how long its lantern was there, and you within 3.5 / 1.75 tiles of it (MoonlightLog)
         public long lanternActiveMs, lanternRangeMs, lanternNearMs;
+        public int[] amuletSaves = new int[0];   // when your amulet saved you, ms after entering (AmuletSaves)
 
         public int hits() {
             return hitTime == null ? 0 : hitTime.length;
@@ -187,7 +189,7 @@ public final class DungeonVisits {
             if (d == null || d.time < v.start || d.damage <= 0) continue;
             time[n] = (int) (d.time - v.start);
             dmg[n] = d.damage;
-            enemy[n] = d.owner == null ? 0 : d.owner.objectType;
+            enemy[n] = d.owner != null ? d.owner.objectType : d.sourceType;   // area attacks: the object behind them
             n++;
         }
         boolean changed = n != v.hits();
@@ -219,6 +221,17 @@ public final class DungeonVisits {
     /** Runs (on the packet thread) when the visit in progress has new hits. */
     public void onHits(Runnable listener) {
         hitListeners.add(listener);
+    }
+
+    /** Your amulet saved you now: marked on the visit in progress (for its damage graph). */
+    public void amuletSaved(long now) {
+        Visit v = current;
+        if (v == null) return;
+        int[] old = v.amuletSaves == null ? new int[0] : v.amuletSaves;
+        int[] n = java.util.Arrays.copyOf(old, old.length + 1);
+        n[old.length] = (int) Math.max(0, now - v.start);
+        v.amuletSaves = n;
+        for (Runnable r : hitListeners) r.run();
     }
 
     /** The dungeon you are in now, or null. */
@@ -284,6 +297,78 @@ public final class DungeonVisits {
 
     public void onChange(Runnable listener) {
         listeners.add(listener);
+    }
+
+    // --- sync: the visits with everything recorded in them (hits, damage dealt, lantern, amulet saves) -----------
+
+    private static final int SYNC_LIMIT = 12 << 20;   // stay well under the server's 16 MB per upload
+
+    @Override
+    public String syncKind() {
+        return "dungeon_visits";
+    }
+
+    @Override
+    public String syncLabel() {
+        return "Dungeon visits";
+    }
+
+    @Override
+    public synchronized int syncCount() {
+        return visits.size();
+    }
+
+    /** The finished visits; if that gets very large, the hit details of the oldest ones are left out. */
+    @Override
+    public synchronized JsonElement exportSync() {
+        JsonElement all = GSON.toJsonTree(visits);
+        if (all.toString().length() <= SYNC_LIMIT) return all;
+        List<Visit> trimmed = new ArrayList<>();
+        for (Visit v : visits) trimmed.add(GSON.fromJson(GSON.toJson(v), Visit.class));
+        for (int i = trimmed.size() - 1; i >= 0 && GSON.toJson(trimmed).length() > SYNC_LIMIT; i--) {
+            Visit v = trimmed.get(i);   // oldest first
+            v.hitTime = v.hitDamage = v.hitEnemy = new int[0];
+            v.dealt = new int[0];
+        }
+        return GSON.toJsonTree(trimmed);
+    }
+
+    /**
+     * Visits only the other side has are added (a visit is identified by its start and dungeon); for one both have,
+     * the one with more recorded (hits, damage dealt) is kept.
+     */
+    @Override
+    public boolean mergeSync(JsonElement remote) {
+        List<Visit> theirs = GSON.fromJson(remote, new TypeToken<ArrayList<Visit>>() {
+        }.getType());
+        if (theirs == null) return false;
+        boolean changed = false;
+        synchronized (this) {
+            java.util.Map<String, Integer> index = new java.util.HashMap<>();
+            for (int i = 0; i < visits.size(); i++) index.put(visits.get(i).start + "|" + visits.get(i).dungeon, i);
+            for (Visit t : theirs) {
+                Integer i = index.get(t.start + "|" + t.dungeon);
+                if (i == null) {
+                    visits.add(t);
+                    changed = true;
+                } else if (detail(t) > detail(visits.get(i))) {
+                    visits.set(i, t);
+                    changed = true;
+                }
+            }
+            if (changed) {
+                visits.sort((a, b) -> Long.compare(b.start, a.start));   // newest first
+                while (visits.size() > MAX_VISITS) visits.remove(visits.size() - 1);
+                save();
+            }
+        }
+        if (changed) fire();
+        return changed;
+    }
+
+    private static int detail(Visit v) {
+        return v.hits() + (v.dealt == null ? 0 : v.dealt.length) + (v.exalts == null ? 0 : v.exalts.size())
+                + (v.amuletSaves == null ? 0 : v.amuletSaves.length) + (v.runStart != 0 ? 1 : 0);
     }
 
     private void fire() {
