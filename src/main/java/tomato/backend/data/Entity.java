@@ -786,6 +786,7 @@ public void genericDamageHit(
     }
 
     public boolean isBossMob() {
+        if (lootgobbler.MoonlightLog.isBoss(objectType)) return true;   // Moonlight Village: bosses without labels
         String label = IdToAsset.getIdLabel(objectType);
         if (label != null) {
             String[] split = label.split(",");

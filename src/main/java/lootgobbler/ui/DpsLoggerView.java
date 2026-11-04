@@ -215,6 +215,13 @@ public class DpsLoggerView extends JPanel {
             f.setForeground(Section.color("LootGobbler.gold", Palette.GOLD));
             text.add(f);
         }
+        if (v.lanternActiveMs > 0) {   // Moonlight Village: time near its lantern while it was there
+            JLabel lantern = muted(String.format(Locale.ROOT, "Lantern: near it %.0f%% of %s (%s)  ·  close %.0f%%",
+                    100.0 * v.lanternRangeMs / v.lanternActiveMs, DpsPanel.duration(v.lanternActiveMs),
+                    DpsPanel.duration(v.lanternRangeMs), 100.0 * v.lanternNearMs / v.lanternActiveMs));
+            lantern.setToolTipText("While the lantern was there: near = within 3.5 tiles, close = within 1.75 tiles");
+            text.add(lantern);
+        }
         head.add(text, BorderLayout.CENTER);
         detail.add(CharactersView.box("Dungeon", Palette.BLUE, head));
 

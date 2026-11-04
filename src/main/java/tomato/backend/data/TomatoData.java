@@ -105,6 +105,7 @@ public class TomatoData {
         this.map = map;
         rng = new RNG(map.seed);
         lootgobbler.DungeonVisits.get().entered(map);   // after clear(): the run of the map left is saved by now
+        lootgobbler.MoonlightLog.get().entered(map.name);
     }
 
     /**
@@ -204,9 +205,11 @@ public class TomatoData {
         for (int i = 0; i < p.newObjects.length; i++) {
             ObjectData object = p.newObjects[i];
             entityUpdate(object);
+            lootgobbler.MoonlightLog.get().added(this, object);   // Moonlight Village research log
         }
         for (int i = 0; i < p.drops.length; i++) {
             int dropId = p.drops[i];
+            lootgobbler.MoonlightLog.get().removed(this, dropId);
             crystalTracker.remove(dropId);
             Entity e = entityList.get(dropId);
             dropList.put(dropId, e);
@@ -442,6 +445,7 @@ public class TomatoData {
                 new Entity(this, idd, timePc)
             );
             entity.updateStats(p.status[i], timePc);
+            lootgobbler.MoonlightLog.get().changed(this, p.status[i]);
         }
         SecurityAbilityUseCheck.decreaseDecoyCounter();
         lootTick();
@@ -1067,6 +1071,7 @@ public class TomatoData {
      */
 
     public void text(TextPacket p) {
+        lootgobbler.MoonlightLog.get().message(this, "text", p);
         if (
             p.text.equals(
                 "I SAID DO NOT INTERRUPT ME! For this I shall hasten your end!"
@@ -1091,6 +1096,7 @@ public class TomatoData {
      * @param packet Notification packet
      */
     public void notification(NotificationPacket packet) {
+        lootgobbler.MoonlightLog.get().message(this, "notification", packet);
         if (packet.effect == NotificationEffectType.PlayerDeath) {
             deathNotifications.add(packet);
         }

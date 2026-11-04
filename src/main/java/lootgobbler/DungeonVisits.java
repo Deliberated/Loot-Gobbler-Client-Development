@@ -44,6 +44,8 @@ public final class DungeonVisits {
         public int[] hitTime = new int[0], hitDamage = new int[0], hitEnemy = new int[0];
         public int maxHp;
         public int[] dealt = new int[0];   // the damage you dealt to enemies, per second after entering
+        // Moonlight Village: how long its lantern was there, and you within 3.5 / 1.75 tiles of it (MoonlightLog)
+        public long lanternActiveMs, lanternRangeMs, lanternNearMs;
 
         public int hits() {
             return hitTime == null ? 0 : hitTime.length;
