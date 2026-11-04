@@ -421,6 +421,10 @@ public class DpsPanel extends JPanel {
     }
 
     private static Icon bossIcon(int objectType) {
+        if (objectType > 0 && EnemySprites.invisible(objectType)) {   // an invisible boss part: the boss itself
+            List<Integer> enemies = EnemySprites.candidates(objectType);
+            if (!enemies.isEmpty()) objectType = enemies.get(0);
+        }
         return icon(objectType, 20);
     }
 

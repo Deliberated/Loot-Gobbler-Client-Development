@@ -58,6 +58,7 @@ public class ProfileView extends SubTabs {
     private String guildName, guildNote = "";   // guildNote: why there is nothing to show; "" while loading
     private CaravanMember myWagon;
     private QuestMap questMap;
+    private Set<String> guildmates = Set.of();   // the other members' names, lower case (fame graph: who joined you)
     private int guildVersion;
     private boolean guildLoading, guildAgain, guildStale;
 
@@ -120,6 +121,16 @@ public class ProfileView extends SubTabs {
             return;
         }
         guildLoading = true;
+        server.leaderboard().whenComplete((b, e) -> SwingUtilities.invokeLater(() -> {
+            Set<String> mates = new HashSet<>();
+            if (e == null && b != null) {
+                for (GobblerServer.Member m : b.members) if (m.id != me.id) mates.add(m.ign.toLowerCase(Locale.ROOT));
+            }
+            if (mates.equals(guildmates)) return;
+            guildmates = mates;
+            guildVersion++;
+            refresh();
+        }));
         server.caravan("week").thenCombine(server.questMaps(1), (c, q) -> {
             CaravanMember mine = c.members.stream().filter(m -> m.id == me.id).findFirst().orElseGet(() -> {
                 CaravanMember m = new CaravanMember();   // nothing found this week yet
@@ -228,8 +239,8 @@ public class ProfileView extends SubTabs {
 
     /**
      * The character's skin, class and progress, why it was picked (fame gained today, or played most recently),
-     * and the fame it gained over the last 24 hours as a graph, with (tinted) the two other characters that gained
-     * the most. Clicking it opens the character in the Characters tab.
+     * and the fame all your characters gained over the last 24 hours as one graph, with every dungeon on it and
+     * the guildmates who joined you above each. Clicking it opens the character in the Characters tab.
      */
     private JComponent mostPlayedCard(CharacterStore store, Char c, List<Char> chars, long since) {
         if (c == null) {
@@ -238,7 +249,9 @@ public class ProfileView extends SubTabs {
             p.add(left(muted("Log in once so your character list is loaded.")));
             return card(p);
         }
-        long gain = store.gainedToday(c);
+        List<Char> gainers = chars.stream().filter(o -> store.gainedToday(o) > 0)
+                .sorted(Comparator.comparingLong((Char o) -> -store.gainedToday(o))).toList();
+        long gain = gainers.stream().mapToLong(store::gainedToday).sum();   // all characters, not just this one
         JLabel sprite = new JLabel(CharactersView.skin(c, 96));
         sprite.setVerticalAlignment(SwingConstants.TOP);
 
@@ -251,7 +264,7 @@ public class ProfileView extends SubTabs {
         progress.setFont(progress.getFont().deriveFont(22f));
         progress.setForeground(gold());
         about.add(left(progress));
-        if (gain == 0) about.add(left(muted(c.lastPlayed == 0 ? "Not played yet" : "Last played " + CharactersView.ago(c.lastPlayed))));
+        if (store.gainedToday(c) == 0) about.add(left(muted(c.lastPlayed == 0 ? "Not played yet" : "Last played " + CharactersView.ago(c.lastPlayed))));
 
         // beside it, a bit in from the right: the fame gained in the last 24h (always, also +0) and, below in
         // gold, in the last hour (only when there is some)
@@ -259,9 +272,9 @@ public class ProfileView extends SubTabs {
         JLabel gained = new JLabel("+" + NUM.format(gain) + " fame");
         gained.setFont(gained.getFont().deriveFont(20f));
         gained.setForeground(gain > 0 ? Palette.GREEN : Palette.MUTED);
-        gained.setToolTipText("Fame gained in the last 24 hours");
+        gained.setToolTipText("Fame gained by all your characters in the last 24 hours");
         gains.add(right(gained));
-        long hour = store.sessions(c, System.currentTimeMillis() - 3_600_000L).stream()
+        long hour = gainers.stream().flatMap(o -> store.sessions(o, System.currentTimeMillis() - 3_600_000L).stream())
                 .mapToLong(CharacterStore.Session::gained).sum();
         if (hour > 0) {
             JLabel lastHour = new JLabel("+" + NUM.format(hour) + " last hour");
@@ -281,24 +294,17 @@ public class ProfileView extends SubTabs {
         JPanel text = column();
         text.add(left(head));
 
-        List<Char> others = chars.stream().filter(o -> o.charId != c.charId && store.gainedToday(o) > 0)
-                .sorted(Comparator.comparingLong((Char o) -> -store.gainedToday(o))).limit(FameGraph.TINTS.length).toList();
-        List<FameGraph.Series> series = new ArrayList<>();
-        series.add(new FameGraph.Series(window(c, since), gold(), 3f));
-        for (int i = 0; i < others.size(); i++) {
-            series.add(new FameGraph.Series(window(others.get(i), since), FameGraph.TINTS[i], 2f));
-        }
-        if (series.stream().anyMatch(sr -> sr.samples().size() > 1)) {
+        List<Sample> total = total(gainers.isEmpty() ? List.of(c) : gainers, since);
+        if (total.size() > 1) {
             text.add(Box.createVerticalStrut(6));
-            text.add(left(new FameGraph(series)));
-            if (!others.isEmpty()) {
+            text.add(left(new FameGraph(List.of(new FameGraph.Series(total, gold(), 3f)), guildmates)));
+            if (gainers.size() > 1) {   // which characters the total is made of
                 JPanel legend = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
                 legend.setOpaque(false);
-                legend.add(legendLabel(c.className + " +" + NUM.format(gain), gold()));
-                for (int i = 0; i < others.size(); i++) {
-                    Char o = others.get(i);
-                    legend.add(legendLabel("     " + o.className + " +" + NUM.format(store.gainedToday(o)),
-                            FameGraph.solid(FameGraph.TINTS[i])));
+                for (int i = 0; i < gainers.size(); i++) {
+                    Char o = gainers.get(i);
+                    legend.add(legendLabel((i == 0 ? "" : "     ") + o.className + " +" + NUM.format(store.gainedToday(o)),
+                            i == 0 ? gold() : Palette.MUTED));
                 }
                 text.add(left(legend));
             }
@@ -318,6 +324,31 @@ public class ProfileView extends SubTabs {
 
     private static List<Sample> window(Char c, long since) {
         return c.samples.stream().filter(s -> s.t >= since).toList();
+    }
+
+    /**
+     * The fame all the given characters gained together since then, as one series: at every sample of any of
+     * them, the sum of what each had gained by that time (counted from its first sample in the window).
+     */
+    private static List<Sample> total(List<Char> chars, long since) {
+        List<List<Sample>> windows = chars.stream().map(o -> window(o, since)).filter(w -> !w.isEmpty()).toList();
+        List<long[]> events = new ArrayList<>();   // {time, character, fame}
+        for (int k = 0; k < windows.size(); k++) {
+            for (Sample s : windows.get(k)) events.add(new long[]{s.t, k, s.fame});
+        }
+        events.sort(Comparator.comparingLong(e -> e[0]));
+        long[] gained = new long[windows.size()];
+        List<Sample> out = new ArrayList<>();
+        for (long[] e : events) {
+            int k = (int) e[1];
+            gained[k] = Math.max(0, e[2] - windows.get(k).get(0).fame);
+            Sample s = new Sample();
+            s.t = e[0];
+            s.fame = Arrays.stream(gained).sum();
+            if (!out.isEmpty() && out.get(out.size() - 1).t == s.t) out.set(out.size() - 1, s);
+            else out.add(s);
+        }
+        return out;
     }
 
     private static JLabel legendLabel(String text, Color color) {
@@ -776,21 +807,24 @@ public class ProfileView extends SubTabs {
     /**
      * Fame over the last 24 hours as small step lines (the main character's on top, others tinted behind). Like the
      * Characters page's chart, stretches of an hour or more without any fame change are cut out to a narrow break,
-     * and the dungeons the main character gained fame in sit above its line (click: that dungeon under Battles).
+     * and every dungeon sits above the main line where you left it (click: that dungeon under Battles), with the
+     * characters of guildmates who fought its bosses with you above it.
      */
     private static class FameGraph extends JComponent {
-        static final Color[] TINTS = {new Color(0x6F, 0xA8, 0xDC, 150), new Color(0xC2, 0x7B, 0xE0, 150)};
-        private static final int BREAK = 26, ICON = 20, TOP = ICON + 4, AXIS = 15;   // AXIS: room for the break times
+        private static final int BREAK = 26, ICON = 20, MATE = 16, TOP = ICON + MATE + 6, AXIS = 15;   // AXIS: break times
 
         record Series(List<Sample> samples, Color color, float width) {
         }
 
         private final List<Series> series;   // the main one first
         private final IdleTimeline timeline;
-        private final List<Object[]> dungeons = new ArrayList<>();   // {Visit, gained, Rectangle} as last painted
+        private final Set<String> guildmates;   // lower case
+        private final List<Object[]> dungeons = new ArrayList<>();   // {Visit, gained, Rectangle, mates} as last painted
         private final Map<String, Icon> icons = new HashMap<>();
+        private final Map<Integer, Icon> mateIcons = new HashMap<>();
 
-        FameGraph(List<Series> series) {
+        FameGraph(List<Series> series, Set<String> guildmates) {
+            this.guildmates = guildmates;
             this.series = series.stream().filter(s -> s.samples().size() > 1).toList();
             long t0 = Long.MAX_VALUE, t1 = Long.MIN_VALUE;
             List<Long> changes = new ArrayList<>();
@@ -823,9 +857,19 @@ public class ProfileView extends SubTabs {
             return out;
         }
 
-        /** The tint without its transparency, for text. */
-        static Color solid(Color c) {
-            return new Color(c.getRed(), c.getGreen(), c.getBlue());
+        /** The guildmates who fought the visit's bosses with you, one row each (first character seen). */
+        private List<DpsHistory.PlayerRow> mates(DungeonVisits.Visit v) {
+            if (guildmates.isEmpty()) return List.of();
+            DpsHistory.Run run = DungeonVisits.run(v);
+            if (run == null) return List.of();
+            Map<String, DpsHistory.PlayerRow> out = new LinkedHashMap<>();
+            for (DpsHistory.Boss b : run.bosses) {
+                for (DpsHistory.PlayerRow p : b.players) {
+                    String key = p.name.toLowerCase(Locale.ROOT);
+                    if (!p.me && guildmates.contains(key)) out.putIfAbsent(key, p);
+                }
+            }
+            return new ArrayList<>(out.values());
         }
 
         private DungeonVisits.Visit dungeonAt(Point p) {
@@ -838,7 +882,9 @@ public class ProfileView extends SubTabs {
             for (Object[] d : dungeons) {
                 if (!((Rectangle) d[2]).contains(e.getPoint())) continue;
                 DungeonVisits.Visit v = (DungeonVisits.Visit) d[0];
-                return v.dungeon + ":  +" + NUM.format((long) d[1]) + " fame  ·  click to open it in Battles";
+                String with = (String) d[3];
+                return v.dungeon + ":  +" + NUM.format((long) d[1]) + " fame" + (with.isEmpty() ? "" : "  ·  with " + with)
+                        + "  ·  click to open it in Battles";
             }
             if (timeline != null) {
                 for (double[] b : timeline.breaks(2, getWidth() - 2)) {
@@ -901,7 +947,7 @@ public class ProfileView extends SubTabs {
                 String gap = IdleTimeline.gap((long) (b[1] - b[0]));   // under the axis, below the slashes
                 g2.drawString(gap, cx - fm.stringWidth(gap) / 2, getHeight() - 2);
             }
-            // the dungeons the main character gained fame in, above its line
+            // every dungeon, above the line where you left it; ones close together move right so none is hidden
             List<long[]> main = points(series.get(0).samples());
             long base = series.get(0).samples().get(0).fame;
             List<DungeonVisits.Visit> visits = new ArrayList<>(DungeonVisits.get().visits());
@@ -912,15 +958,27 @@ public class ProfileView extends SubTabs {
                 long end = DungeonVisits.end(v);
                 if (end < timeline.from || v.start > timeline.to) continue;
                 Long a = DungeonVisits.fameAt(main, v.start), b = DungeonVisits.fameAt(main, end);
-                if (a == null || b == null || b <= a) continue;
-                int x = (int) Math.round(timeline.x((v.start + end) / 2, left, right));
-                if (x - lastIcon < ICON) continue;
+                if (a == null || b == null) continue;
+                int x = Math.max((int) Math.round(timeline.x(end, left, right)), lastIcon + ICON + 2);
+                if (x + ICON / 2 > right) break;
                 Icon icon = icons.computeIfAbsent(v.dungeon, d -> ProfileView.dungeonIcon(d, ICON));
                 if (icon == null) continue;
                 int y = h - (int) (Math.max(0, b - base) * (h - 4 - TOP) / hi) - 2 - ICON - 2;
-                Rectangle r = new Rectangle(x - ICON / 2, Math.max(0, y), ICON, ICON);
+                Rectangle r = new Rectangle(x - ICON / 2, Math.max(MATE + 2, y), ICON, ICON);
                 icon.paintIcon(this, g2, r.x, r.y);
-                dungeons.add(new Object[]{v, b - a, r});
+                // the guildmates' characters side by side right above it
+                List<DpsHistory.PlayerRow> mates = mates(v);
+                StringBuilder with = new StringBuilder();
+                int mx = x - mates.size() * MATE / 2;
+                for (DpsHistory.PlayerRow p : mates) {
+                    Icon mate = mateIcons.computeIfAbsent(p.classType, t -> CharactersView.sprite(t, MATE));
+                    if (mate != null) mate.paintIcon(this, g2, mx, r.y - MATE - 1);
+                    mx += MATE;
+                    String cls = CharacterClass.getName(p.classType);
+                    with.append(with.isEmpty() ? "" : ", ").append(p.name).append(cls == null ? "" : " (" + cls + ")");
+                }
+                if (!mates.isEmpty()) r.add(new Rectangle(x - mates.size() * MATE / 2, r.y - MATE - 1, mates.size() * MATE, MATE));
+                dungeons.add(new Object[]{v, Math.max(0, b - a), r, with.toString()});
                 lastIcon = x;
             }
             g2.dispose();

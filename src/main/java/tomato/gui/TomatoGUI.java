@@ -168,6 +168,10 @@ public class TomatoGUI {
         lootgobbler.Updater.start();   // first check a few seconds after start, then every hour
         lootgobbler.ServerSync.get().start();          // syncs player data whenever logged in to a server
         lootgobbler.GobblerServer.get().reconnect();   // to the saved Loot Gobbler server, if any
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {   // keep the dungeon you are in, and upload it
+            lootgobbler.DungeonVisits.get().close();
+            lootgobbler.ServerSync.get().flush(5_000);
+        }, "save-on-close"));
     }
 
     /**

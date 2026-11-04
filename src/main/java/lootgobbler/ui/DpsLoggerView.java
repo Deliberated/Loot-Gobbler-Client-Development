@@ -52,6 +52,7 @@ public class DpsLoggerView extends JPanel {
     private Visit graphVisit;
     private boolean scrollToSelected;   // bring the selected row into view after the next rebuild
     private long selected = -1;
+    private long lastNowStart = -1;         // start of the dungeon in progress at the last refresh
     private String detailKey = "";          // what the details were last built from
     private boolean detailPending;          // a rebuild waits for a scrollbar drag to end   // start of the visit shown on the right; -1 = the newest
 
@@ -154,6 +155,11 @@ public class DpsLoggerView extends JPanel {
 
     private void refresh() {
         Visit now = DungeonVisits.get().current();
+        if (now != null && now.start != lastNowStart) {   // a new dungeon entered: show it, whatever was selected
+            selected = -1;
+            scrollToSelected = true;
+        }
+        lastNowStart = now == null ? -1 : now.start;
         if (now != null && !clock.isRunning()) clock.start();
         if (now == null) clock.stop();
         List<Visit> visits = DungeonVisits.get().visits();
@@ -308,16 +314,36 @@ public class DpsLoggerView extends JPanel {
         if (v.exalts == null || v.exalts.isEmpty()) {
             exalts.add(muted(current ? "No exaltation progress yet." : "No exaltation progress in this dungeon."));
         } else {
-            for (Exalt e : v.exalts) exalts.add(exaltRow(e));
+            for (Exalt e : merged(v)) exalts.add(exaltRow(e));
         }
         detail.add(CharactersView.box("Exaltations", Palette.PURPLE, exalts));
         detail.revalidate();
         detail.repaint();
     }
 
+    /** One per class and stat: several updates in one dungeon are added up. */
+    private static java.util.Collection<Exalt> merged(Visit v) {
+        java.util.Map<String, Exalt> merged = new java.util.LinkedHashMap<>();
+        for (Exalt e : v.exalts) {
+            Exalt m = merged.get(e.classType + ":" + e.stat);
+            if (m == null) {
+                m = new Exalt();
+                m.classType = e.classType;
+                m.stat = e.stat;
+                m.before = e.before;
+                m.after = e.after;
+                merged.put(e.classType + ":" + e.stat, m);
+            } else {
+                m.before = Math.min(m.before, e.before);
+                m.after = Math.max(m.after, e.after);
+            }
+        }
+        return merged.values();
+    }
+
     /**
-     * One reported exaltation progress: the class, the stat's potion, the progress before and after, and in gold if
-     * it completed an exaltation (with the stat's count of 5).
+     * One reported exaltation progress: the class, the stat's potion and the progress before and after; "Exalted"
+     * (in gold) if it reached the full 75 here, "Already exalted" (gold too) if it was there before.
      */
     private static JComponent exaltRow(Exalt e) {
         JPanel row = new JPanel(new BorderLayout(10, 0));
@@ -329,11 +355,16 @@ public class DpsLoggerView extends JPanel {
         row.add(who, BorderLayout.WEST);
         int n = e.earned();
         String stat = EXALT_STATS[e.stat];
-        JLabel what = new JLabel((n > 0 ? "Exaltation! " + stat + " " + ExaltStore.level(e.after) + " / " + ExaltStore.MAX_PER_STAT
-                : stat + " progress") + "   (" + e.before + " \u2192 " + e.after + ")",
-                ClassesView.potion(EXALT_POTION[e.stat], 20), SwingConstants.LEFT);
+        // "WIS 73/75 (+1)": the progress now out of the full 75, and how much this dungeon added
+        int full = ExaltStore.THRESHOLDS[ExaltStore.THRESHOLDS.length - 1];
+        String text = e.before >= full ? "Already exalted" : e.after >= full ? "Exalted"
+                : String.format(Locale.ROOT, "%s %d/%d (+%d)%s", stat, e.after, full, e.after - e.before,
+                n > 0 ? "  \u00b7  exaltation " + ExaltStore.level(e.after) + "/" + ExaltStore.MAX_PER_STAT + "!" : "");
+        JLabel what = new JLabel(text, ClassesView.potion(EXALT_POTION[e.stat], 20), SwingConstants.LEFT);
+        what.setToolTipText(e.before + " \u2192 " + e.after + " of " + full + " progress; exaltations come at "
+                + java.util.Arrays.toString(ExaltStore.THRESHOLDS));
         what.setIconTextGap(8);
-        if (n > 0) what.setForeground(Section.color("LootGobbler.gold", Palette.GOLD));
+        if (e.after >= full) what.setForeground(Section.color("LootGobbler.gold", Palette.GOLD));
         row.add(what, BorderLayout.CENTER);
         row.setAlignmentX(LEFT_ALIGNMENT);
         row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
@@ -390,8 +421,14 @@ public class DpsLoggerView extends JPanel {
                 + "  ·  " + DpsPanel.duration(v.duration());
     }
 
-    private void tick() {
-        if (nowWhen != null && nowVisit != null) nowWhen.setText(whenText(nowVisit, true));
+    private void tick() {   // the same line as the row was built with (time and fame), so nothing comes and goes
+        if (nowWhen != null && nowVisit != null) nowWhen.setText(rowText(nowVisit, true));
+    }
+
+    /** A row's second line: when and how long, and the fame gained if any. */
+    private String rowText(Visit v, boolean current) {
+        long gained = fame(v, current);
+        return whenText(v, current) + (gained > 0 ? "  ·  +" + String.format(Locale.ROOT, "%,d", gained) + " fame" : "");
     }
 
     /**
@@ -414,8 +451,7 @@ public class DpsLoggerView extends JPanel {
         JLabel name = new JLabel(v.dungeon);
         name.setFont(name.getFont().deriveFont(18f));
         if (current) name.setForeground(Palette.GOLD);
-        long gained = fame(v, current);
-        JLabel when = new JLabel(whenText(v, current) + (gained > 0 ? "  \u00B7  +" + String.format(Locale.ROOT, "%,d", gained) + " fame" : ""));
+        JLabel when = new JLabel(rowText(v, current));
         if (current) nowWhen = when;
         when.setForeground(current ? Palette.GOLD : Palette.MUTED);
         JPanel text = new JPanel(new GridLayout(2, 1));
@@ -429,13 +465,23 @@ public class DpsLoggerView extends JPanel {
             right = new JLabel("no boss fought");
             right.setForeground(Palette.MUTED);
         }
-        right.setBorder(new EmptyBorder(0, 0, 0, 6));
-        if (v.exalts != null && !v.exalts.isEmpty()) {   // exaltation progress made here
-            right.setIcon(ClassesView.potion(EXALT_POTION[v.exalts.get(0).stat], 20));
-            right.setHorizontalTextPosition(SwingConstants.LEFT);
-            right.setIconTextGap(10);
+        JPanel east = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+        east.setOpaque(false);
+        east.setBorder(new EmptyBorder(0, 0, 0, 6));
+        east.add(right);
+        if (v.exalts != null && !v.exalts.isEmpty()) {   // exaltation progress made here: each stat's potion, "2x" if twice
+            java.util.Map<Integer, Integer> perStat = new java.util.LinkedHashMap<>();
+            for (Exalt e : merged(v)) perStat.merge(e.stat, 1, Integer::sum);
+            perStat.forEach((stat, count) -> {
+                JLabel potion = new JLabel(count > 1 ? count + "x" : null, ClassesView.potion(EXALT_POTION[stat], 20),
+                        SwingConstants.LEFT);
+                potion.setHorizontalTextPosition(SwingConstants.LEFT);
+                potion.setIconTextGap(2);
+                potion.setBorder(new EmptyBorder(0, 8, 0, 0));
+                east.add(potion);
+            });
         }
-        row.add(right, BorderLayout.EAST);
+        row.add(east, BorderLayout.EAST);
 
         row.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         Clicks.onClick(row, () -> {

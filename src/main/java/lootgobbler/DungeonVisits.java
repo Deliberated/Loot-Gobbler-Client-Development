@@ -62,6 +62,7 @@ public final class DungeonVisits implements Syncable {
     private static final int MAX_VISITS = 500;
     private static final long LINK_SLACK_MS = 60_000;   // a run's start may be a little before the visit's
     private static final long EXALT_LATE_MS = 120_000;   // progress reported just after leaving still counts
+    private static final long EXALT_ENTRY_MS = 90_000;   // ... also as the next map loads, within this time
     private static final long HITS_INTERVAL_MS = 1000;
     private static final int MAX_HITS = 5000;   // per visit
     private long lastHits;
@@ -118,18 +119,7 @@ public final class DungeonVisits implements Syncable {
     public void entered(MapInfoPacket map) {
         long now = System.currentTimeMillis();
         synchronized (this) {
-            Visit left = current;
-            if (left != null) {
-                left.durationMs = Math.max(1, now - left.start);
-                DpsHistory.Run run = DpsHistory.get().latest();
-                if (run != null && !run.guildHall && run.dungeon.equals(left.dungeon) && run.start >= left.start - LINK_SLACK_MS) {
-                    left.runStart = run.start;
-                }
-                visits.add(0, left);
-                while (visits.size() > MAX_VISITS) visits.remove(visits.size() - 1);
-                save();
-            }
-            current = null;
+            finishCurrent(now);
             if (isDungeon(map)) {
                 Visit v = new Visit();
                 v.dungeon = map.name;
@@ -142,17 +132,59 @@ public final class DungeonVisits implements Syncable {
     }
 
     /**
+     * The app is closing: the dungeon you are in ends here and is saved, so it is not lost (it was only in memory)
+     * and can still be synced to your other clients.
+     */
+    public void close() {
+        boolean ended;
+        synchronized (this) {
+            ended = current != null;
+            if (ended) AppLog.log("game", "Dungeon visit ended by closing the app: " + current.dungeon);
+            finishCurrent(System.currentTimeMillis());
+        }
+        if (ended) fire();
+    }
+
+    /** Ends the visit in progress (if any): into the list, linked to its run if you fought a boss, and saved. */
+    private void finishCurrent(long now) {
+        Visit left = current;
+        current = null;
+        if (left == null) return;
+        left.durationMs = Math.max(1, now - left.start);
+        DpsHistory.Run run = DpsHistory.get().latest();
+        if (run != null && !run.guildHall && run.dungeon.equals(left.dungeon) && run.start >= left.start - LINK_SLACK_MS) {
+            left.runStart = run.start;
+        }
+        visits.add(0, left);
+        while (visits.size() > MAX_VISITS) visits.remove(visits.size() - 1);
+        save();
+    }
+
+    /**
      * The game reported new exaltation progress for a class (the values before and after, in ExaltStore's order).
-     * Credited to the dungeon you are in, or to the one you just left if the report came right after leaving.
+     * The game sends it right after a dungeon is left, i.e. while the next map loads: within the first
+     * EXALT_ENTRY_MS of a map entered straight after a dungeon, it belongs to that dungeon (e.g. Fungal Cavern's
+     * arrives as Crystal Cavern loads); later in a dungeon, to that one; outside dungeons, to the one left at most
+     * EXALT_LATE_MS ago.
      */
     public void exaltProgress(int classType, int[] before, int[] after) {
         if (before == null || after == null) return;
+        long now = System.currentTimeMillis();
         synchronized (this) {
-            Visit v = current;
-            if (v == null && !visits.isEmpty()) {
-                Visit last = visits.get(0);
-                if (System.currentTimeMillis() - (last.start + last.durationMs) < EXALT_LATE_MS) v = last;
+            Visit last = visits.isEmpty() ? null : visits.get(0);
+            long sinceLeft = last == null ? Long.MAX_VALUE : now - (last.start + last.durationMs);
+            Visit v;
+            if (current != null) {
+                boolean justEntered = now - current.start < EXALT_ENTRY_MS;
+                boolean straightFromDungeon = last != null && current.start - (last.start + last.durationMs) < EXALT_ENTRY_MS;
+                v = justEntered && straightFromDungeon ? last : current;
+            } else {
+                v = sinceLeft < EXALT_LATE_MS ? last : null;
             }
+            AppLog.log("game", "Exaltation update: class " + classType + " " + java.util.Arrays.toString(before) + " -> "
+                    + java.util.Arrays.toString(after) + "; in " + (current == null ? "no dungeon" : current.dungeon + " for "
+                    + (now - current.start) / 1000 + "s") + (last == null ? "" : "; left " + last.dungeon + " " + sinceLeft / 1000
+                    + "s ago") + " -> credited to " + (v == null ? "nothing" : v.dungeon));
             if (v == null) return;
             if (v.exalts == null) v.exalts = new ArrayList<>();
             for (int i = 0; i < Math.min(before.length, after.length); i++) {

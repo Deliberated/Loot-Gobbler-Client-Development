@@ -26,11 +26,11 @@ final class DamageGraph extends JComponent {
     private static final int PAD_LEFT = 44, PAD_RIGHT = 10, PAD_TOP = 28, PAD_BOTTOM = 20, ICON = 28;
     private static final Color BAR = new Color(0xE5636E), BIG = new Color(0xFF8A2A), DEALT = new Color(0xE8B83A),
             AMULET = new Color(0x3A9BFF);
-    private static final int BARS = 100;   // slices across the window: the bar thickness, whatever the slice size
+    private static final int BARS = 60;    // slices across the window: the bar thickness, whatever the slice size
     private static final int BUBBLE = 13, BUBBLE_ICON = 18;   // the off-screen teardrops: radius, enemy icon
     private final Visit visit;
     private final int windowMs;
-    private final long viewMs;   // the window shown: BARS slices (2 s slices: 3m 20s)
+    private final long viewMs;   // the window shown: BARS slices (2 s slices: 2 min)
     private final Map<Integer, Icon> icons = new HashMap<>(), smallIcons = new HashMap<>();
     private final JScrollBar bar = new JScrollBar(JScrollBar.HORIZONTAL);
     private long viewStart;                           // ms after entering, at the left edge
@@ -389,6 +389,17 @@ final class DamageGraph extends JComponent {
     }
 
     private static Icon bigIcon(int type, int size) {
+        Icon own = croppedIcon(type, size);
+        if (own != null) return own;
+        // a helper object (spawn portal, beam, invisible boss part): show the enemy it belongs to
+        for (int enemy : EnemySprites.candidates(type)) {
+            Icon icon = croppedIcon(enemy, size);
+            if (icon != null) return icon;
+        }
+        return null;
+    }
+
+    private static Icon croppedIcon(int type, int size) {
         Icon src = CharactersView.sprite(type, 64);
         if (src == null) return null;
         java.awt.image.BufferedImage img = new java.awt.image.BufferedImage(src.getIconWidth(), src.getIconHeight(),
@@ -396,10 +407,14 @@ final class DamageGraph extends JComponent {
         Graphics2D g = img.createGraphics();
         src.paintIcon(null, g, 0, 0);
         g.dispose();
-        int x0 = img.getWidth(), y0 = img.getHeight(), x1 = -1, y1 = -1;
+        int x0 = img.getWidth(), y0 = img.getHeight(), x1 = -1, y1 = -1, opaque = 0;
+        java.util.Set<Integer> colors = new java.util.HashSet<>();
         for (int y = 0; y < img.getHeight(); y++) {
             for (int x = 0; x < img.getWidth(); x++) {
-                if ((img.getRGB(x, y) >>> 24) < 30) continue;
+                int c = img.getRGB(x, y);
+                if ((c >>> 24) < 30) continue;
+                opaque++;
+                colors.add(c & 0xFFFFFF);
                 x0 = Math.min(x0, x);
                 y0 = Math.min(y0, y);
                 x1 = Math.max(x1, x);
@@ -408,6 +423,9 @@ final class DamageGraph extends JComponent {
         }
         if (x1 < 0) return null;
         int w = x1 - x0 + 1, h = y1 - y0 + 1;
+        // a placeholder, not a picture: one colour, or a plain filled square in its outline (e.g. the Oryx Minister
+        // Portal's white dot, the Sanctuary's black walls); scaled up it would only be a blank square
+        if (colors.size() <= 1 || colors.size() == 2 && opaque * 10 >= w * h * 9) return null;
         double scale = (double) size / Math.max(w, h);
         int dw = Math.max(1, (int) Math.round(w * scale)), dh = Math.max(1, (int) Math.round(h * scale));
         java.awt.image.BufferedImage out = new java.awt.image.BufferedImage(size, size, java.awt.image.BufferedImage.TYPE_INT_ARGB);

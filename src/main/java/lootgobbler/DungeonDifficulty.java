@@ -17,7 +17,18 @@ public final class DungeonDifficulty {
     private static final Pattern OBJECT = Pattern.compile("<Object [^>]*id=\"([^\"]+)\"[^>]*>(.*?)</Object>", Pattern.DOTALL);
     private static final Pattern DUNGEON_NAME = Pattern.compile("<DungeonName>([^<]+)</DungeonName>");
     private static final Pattern DIFFICULTY = Pattern.compile("<DungeonDifficulty>([0-9.]+)</DungeonDifficulty>");
-    private static final Pattern PORTAL = Pattern.compile("<Activate id=\"([^\"]+)\">CreatePortal</Activate>");
+    /** Dungeons the game files give no difficulty for (no key opens them), from the RealmEye wiki (Exalt 6.12, Jul 2026). */
+    private static final Map<String, Double> WITHOUT_KEY = Map.of(
+            "Oryx's Sanctuary", 9.5,
+            "Court of Oryx", 3.5,
+            "Oryx's Castle", 4.5,
+            "Oryx's Chamber", 4.5,
+            "Wine Cellar", 6.0,
+            "Crystal Cavern", 7.5,
+            "The Void", 8.5,
+            "Advanced Kogbold Steamworks", 9.0,
+            "Cultist Hideout", 7.0);
+    private static final Pattern PORTAL =Pattern.compile("<Activate id=\"([^\"]+)\">CreatePortal</Activate>");
     private static volatile Map<String, Double> byDungeon;
 
     private DungeonDifficulty() {
@@ -67,6 +78,7 @@ public final class DungeonDifficulty {
             if (dungeon == null && portal.endsWith(" Portal")) dungeon = portal.substring(0, portal.length() - 7);
             if (dungeon != null) out.putIfAbsent(dungeon, difficulty);
         });
+        WITHOUT_KEY.forEach(out::putIfAbsent);
         byDungeon = out;
     }
 }

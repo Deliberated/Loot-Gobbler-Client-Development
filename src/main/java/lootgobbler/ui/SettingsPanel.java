@@ -31,6 +31,8 @@ public class SettingsPanel extends JPanel {
         sections.add(Box.createVerticalStrut(8));
         sections.add(new Section("Startup Sound", Palette.GOLD, startupBody()));
         sections.add(Box.createVerticalStrut(8));
+        sections.add(new Section("Amulet Sound", Palette.GOLD, amuletSoundBody()));
+        sections.add(Box.createVerticalStrut(8));
         sections.add(new Section("Ping Lists", Palette.GOLD, pingListsBody()));
         sections.add(Box.createVerticalStrut(8));
         sections.add(new Section("Loot Filter", Palette.GOLD, filterBody()));
@@ -76,6 +78,53 @@ public class SettingsPanel extends JPanel {
         grid.add(toggle("Blue bag", "blueBagSound", false, v -> Sound.playBlueBagSound = v, Sound.bluebag));
         grid.add(toggle("Trade", "tradePing", false, v -> Sound.playTradeSound = v, Sound.trade));
         body.add(grid);
+        return body;
+    }
+
+    /**
+     * Sound played when your Amulet of Restoration fires: a WAV file of your choice, or none.
+     */
+    private JPanel amuletSoundBody() {
+        JPanel body = body();
+        JPanel hint = row();
+        hint.add(new JLabel("Played when your Amulet of Restoration saves you."));
+        body.add(hint);
+        JLabel current = new JLabel();
+        Runnable show = () -> {
+            String f = lootgobbler.AmuletSound.file();
+            current.setText(lootgobbler.AmuletSound.isOff() ? "Off"
+                    : f.isEmpty() ? "Default (amulet activation)" : new java.io.File(f).getName());
+            current.setToolTipText(f.isEmpty() ? null : f);
+        };
+        show.run();
+        JPanel pickRow = row();
+        pickRow.add(current);
+        pickRow.add(Box.createHorizontalStrut(12));
+        pickRow.add(button("Play", lootgobbler.AmuletSound::play));
+        pickRow.add(button("Choose...", () -> {
+            String f = lootgobbler.AmuletSound.file();
+            JFileChooser chooser = new JFileChooser(f.isEmpty() ? null : new java.io.File(f).getParentFile());
+            chooser.setDialogTitle("Sound for the Amulet of Restoration");
+            chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter("WAV sound (*.wav)", "wav"));
+            if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) return;
+            if (lootgobbler.AmuletSound.set(chooser.getSelectedFile().getAbsolutePath())) {
+                lootgobbler.AmuletSound.play();
+            } else {
+                JOptionPane.showMessageDialog(this, "This file cannot be played. Please choose a WAV file.",
+                        "Amulet Sound", JOptionPane.WARNING_MESSAGE);
+            }
+            show.run();
+        }));
+        pickRow.add(button("Default", () -> {
+            lootgobbler.AmuletSound.useDefault();
+            lootgobbler.AmuletSound.play();
+            show.run();
+        }));
+        pickRow.add(button("Off", () -> {
+            lootgobbler.AmuletSound.turnOff();
+            show.run();
+        }));
+        body.add(pickRow);
         return body;
     }
 

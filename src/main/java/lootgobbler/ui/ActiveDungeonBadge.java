@@ -19,7 +19,7 @@ import java.util.Map;
  * version of the portal's colors; hidden outside dungeons. A click opens the dungeon under Battles > Dungeons.
  */
 public final class ActiveDungeonBadge extends JPanel {
-    private static final int ICON = 22;
+    private static final int ICON = 26;   // the portal, cut to its pixels so it fills this
     private static final int GRAVESTONE = 1282;   // the game's plain gravestone: the difficulty's icon
     private static final Color FALLBACK = new Color(0x3A2C08);
     private final Map<String, Icon> icons = new HashMap<>();
@@ -36,7 +36,7 @@ public final class ActiveDungeonBadge extends JPanel {
     public ActiveDungeonBadge(Runnable open) {
         super(new BorderLayout());
         setOpaque(false);
-        setBorder(new EmptyBorder(4, 14, 4, 10));
+        setBorder(new EmptyBorder(3, 12, 3, 10));
         for (JLabel l : new JLabel[]{since, rank}) l.setForeground(new Color(0xF2ECDC));
         JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
         left.setOpaque(false);
@@ -62,6 +62,57 @@ public final class ActiveDungeonBadge extends JPanel {
         return getPreferredSize();
     }
 
+    /**
+     * Always the same width: enough for the longest it shows (duration over an hour, a rank, a difficulty), so the
+     * box does not grow and shrink as the time runs and the rank comes and goes.
+     */
+    @Override
+    public Dimension getPreferredSize() {
+        Dimension d = super.getPreferredSize();
+        return new Dimension(Math.max(d.width, fixedWidth()), d.height);
+    }
+
+    private int fixedWidth() {
+        Insets in = getInsets();
+        JLabel t = new JLabel("<html>Duration: <b>0:00:00</b></html>"), r = new JLabel("<html><b>Rank #00 / 00</b></html>");
+        t.setFont(since.getFont());
+        r.setFont(rank.getFont());
+        FontMetrics big = getFontMetrics(since.getFont().deriveFont(Font.BOLD, since.getFont().getSize2D() * 1.3f));
+        int hgap = 10;
+        return in.left + in.right + ICON + 3 * hgap + t.getPreferredSize().width + r.getPreferredSize().width
+                + 12 + big.stringWidth("10.5") + 5 + big.getAscent() + 4;   // the difficulty: number, gap, gravestone
+    }
+
+    /** A portal sprite cut to its visible pixels and scaled (crisp) to fit ICON, so it fills the box's height. */
+    private static Icon fit(Icon src) {
+        if (src == null || src.getIconWidth() <= 0) return src;
+        java.awt.image.BufferedImage img = new java.awt.image.BufferedImage(src.getIconWidth(), src.getIconHeight(),
+                java.awt.image.BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = img.createGraphics();
+        src.paintIcon(null, g, 0, 0);
+        g.dispose();
+        int x0 = img.getWidth(), y0 = img.getHeight(), x1 = -1, y1 = -1;
+        for (int y = 0; y < img.getHeight(); y++) {
+            for (int x = 0; x < img.getWidth(); x++) {
+                if ((img.getRGB(x, y) >>> 24) < 30) continue;
+                x0 = Math.min(x0, x);
+                y0 = Math.min(y0, y);
+                x1 = Math.max(x1, x);
+                y1 = Math.max(y1, y);
+            }
+        }
+        if (x1 < 0) return src;
+        int w = x1 - x0 + 1, h = y1 - y0 + 1;
+        double scale = (double) ICON / Math.max(w, h);
+        int dw = Math.max(1, (int) Math.round(w * scale)), dh = Math.max(1, (int) Math.round(h * scale));
+        java.awt.image.BufferedImage out = new java.awt.image.BufferedImage(ICON, ICON, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+        g = out.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+        g.drawImage(img.getSubimage(x0, y0, w, h), (ICON - dw) / 2, (ICON - dh) / 2, dw, dh, null);
+        g.dispose();
+        return new ImageIcon(out);
+    }
+
     private void refresh() {
         lootgobbler.DungeonVisits.Visit visit = lootgobbler.DungeonVisits.get().current();
         if (visit == null) {
@@ -75,7 +126,7 @@ public final class ActiveDungeonBadge extends JPanel {
         Run run = DpsHistory.get().live();
         Boss boss = run == null || run.guildHall || !run.dungeon.equals(visit.dungeon) ? null : run.mainBoss();
         PlayerRow me = boss == null ? null : boss.me();
-        Icon portal = icons.computeIfAbsent(visit.dungeon, d -> ProfileView.dungeonIcon(d, ICON));
+        Icon portal = icons.computeIfAbsent(visit.dungeon, d -> fit(ProfileView.dungeonIcon(d, 64)));
         icon.setIcon(portal);
         icon.setToolTipText(visit.dungeon);
         tint = tints.computeIfAbsent(visit.dungeon, d -> tint(portal));

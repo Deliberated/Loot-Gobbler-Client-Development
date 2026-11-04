@@ -142,6 +142,25 @@ public final class ServerSync {
         uploadListeners.add(listener);
     }
 
+    /**
+     * The app is closing: uploads what changed since the last upload right away (instead of within a minute, which
+     * would never come), waiting at most timeoutMs for it.
+     */
+    public void flush(long timeoutMs) {
+        synchronized (this) {
+            if (account.isEmpty() || phase == Phase.OTHER_ACCOUNT || kinds.stream().noneMatch(k -> k.dirty)) return;
+            if (scheduled != null) {
+                scheduled.cancel(false);
+                scheduled = null;
+            }
+        }
+        try {
+            exec.submit((Runnable) this::upload).get(timeoutMs, TimeUnit.MILLISECONDS);
+        } catch (Exception e) {
+            AppLog.log("server", "Upload on closing did not finish: " + e);
+        }
+    }
+
     /** Downloads, merges and uploads everything now. */
     public void syncNow() {
         exec.execute(this::fullSync);
