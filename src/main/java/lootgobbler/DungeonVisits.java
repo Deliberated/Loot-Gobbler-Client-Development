@@ -285,6 +285,44 @@ public final class DungeonVisits implements Syncable {
         for (Runnable r : hitListeners) r.run();
     }
 
+    /** Amulet marks no save stands behind (e.g. one whose save got lost) are dropped from the finished visits. */
+    public void keepAmuletSaves(java.util.function.LongPredicate isSave) {
+        boolean changed = false;
+        synchronized (this) {
+            for (Visit v : visits) {
+                if (v.amuletSaves == null || v.amuletSaves.length == 0) continue;
+                int[] kept = java.util.Arrays.stream(v.amuletSaves).filter(ms -> isSave.test(v.start + ms)).toArray();
+                if (kept.length == v.amuletSaves.length) continue;
+                v.amuletSaves = kept;
+                changed = true;
+            }
+            if (changed) save();
+        }
+        if (changed) fire();
+    }
+
+    /** An amulet save at this time turned out not to be one: its mark goes from the visit it happened in. */
+    public void amuletSaveRemoved(long t) {
+        boolean changed = false;
+        List<Visit> all;
+        synchronized (this) {
+            all = new ArrayList<>(visits);
+        }
+        if (current != null) all.add(current);
+        for (Visit v : all) {
+            if (v.amuletSaves == null || t < v.start || t > end(v) + 5000) continue;
+            int[] kept = java.util.Arrays.stream(v.amuletSaves).filter(ms -> Math.abs(v.start + ms - t) > 3000).toArray();
+            if (kept.length == v.amuletSaves.length) continue;
+            v.amuletSaves = kept;
+            changed = true;
+        }
+        if (!changed) return;
+        synchronized (this) {
+            save();
+        }
+        fire();
+    }
+
     /** The dungeon you are in now, or null. */
     public Visit current() {
         return current;
@@ -398,6 +436,10 @@ public final class DungeonVisits implements Syncable {
             java.util.Map<String, Integer> index = new java.util.HashMap<>();
             for (int i = 0; i < visits.size(); i++) index.put(visits.get(i).start + "|" + visits.get(i).dungeon, i);
             for (Visit t : theirs) {
+                if (t.amuletSaves != null) {   // no marks of saves that turned out not to be ones
+                    t.amuletSaves = java.util.Arrays.stream(t.amuletSaves)
+                            .filter(ms -> !AmuletSaves.get().removedAt(t.start + ms)).toArray();
+                }
                 Integer i = index.get(t.start + "|" + t.dungeon);
                 if (i == null) {
                     visits.add(t);
