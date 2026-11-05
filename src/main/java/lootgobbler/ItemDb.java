@@ -132,6 +132,12 @@ public final class ItemDb {
 
     private final Map<Integer, Item> items = new HashMap<>();
     private final List<Item> collectible;
+    private final Set<Integer> transformSkins = new HashSet<>();   // skins an ability turns you into for a while
+
+    /** A skin a player wears only while an ability transforms them (e.g. the Evolutionary Boar), not their own. */
+    public boolean isTransformSkin(int skin) {
+        return transformSkins.contains(skin);
+    }
 
     public static ItemDb get() {
         ItemDb db = instance;
@@ -236,6 +242,14 @@ public final class ItemDb {
                             if (inProjectile && cur.maxDamage < 0) cur.maxDamage = v;
                         }
                         default -> {
+                            // <OnSwitchAbilityActivate ... skin="0x7b11">SelfTransform</...> and the like
+                            String skin = r.getAttributeValue(null, "skin");
+                            if (skin != null) {
+                                try {
+                                    if (r.getElementText().trim().equals("SelfTransform")) transformSkins.add(Integer.decode(skin.trim()));
+                                } catch (Exception ignored) {   // not a plain text element, or not a number
+                                }
+                            }
                         }
                     }
                 } else if (ev == XMLStreamConstants.END_ELEMENT) {

@@ -549,6 +549,28 @@ public final class GobblerServer {
         return call("GET", "/guild/questmaps?limit=" + limit, null, QuestMaps.class);
     }
 
+    /**
+     * Your guildmates' looks in a run: what their own clients saved with their visit of that dungeon at that time
+     * (source "visit"), else how their character of that class looks now (source "character").
+     */
+    public static final class RunLooks {
+        public List<RunLook> looks = List.of();
+    }
+
+    public static final class RunLook {
+        public String player = "";
+        public int classType, skin, tex1, tex2;
+        public String source = "";   // "visit" or "character"
+        public boolean alive;
+        public long lastPlayed;
+    }
+
+    /** Looks of guildmates who may have been in this dungeon between from and to (epoch ms). */
+    public CompletableFuture<RunLooks> runLooks(String dungeon, long from, long to) {
+        return call("GET", "/guild/looks?dungeon=" + java.net.URLEncoder.encode(dungeon, java.nio.charset.StandardCharsets.UTF_8)
+                + "&from=" + from + "&to=" + to, null, RunLooks.class);
+    }
+
     public CompletableFuture<MemberProfile> memberProfile(long userId) {
         return call("GET", "/guild/members/" + userId, null, MemberProfile.class);
     }

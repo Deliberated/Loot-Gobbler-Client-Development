@@ -15,12 +15,14 @@ import java.util.Map;
 /**
  * A box in the title bar (after the menus) while you are in a dungeon, from the moment you enter it: the dungeon's
  * portal, "Duration: m:ss" (time in the dungeon), once you hit its main boss "Rank #x / y" (your place among everyone
- * who hit it), and at the right edge the game's difficulty rating (number and gravestone). Tinted in a darkened
+ * who hit it), and at the right edge the game's difficulty rating (number and gravestone), in Moonlight Village with
+ * the flames of the current phase left of it. Tinted in a darkened
  * version of the portal's colors; hidden outside dungeons. A click opens the dungeon under Battles > Dungeons.
  */
 public final class ActiveDungeonBadge extends JPanel {
     private static final int ICON = 26;   // the portal, cut to its pixels so it fills this
     private static final int GRAVESTONE = 1282;   // the game's plain gravestone: the difficulty's icon
+    private static final int FLAME = 20586;   // MV Spirit Projectile: a flame, the icon of a phase's flames
     private static final Color FALLBACK = new Color(0x3A2C08);
     private final Map<String, Icon> icons = new HashMap<>();
     private final Map<String, Color> tints = new HashMap<>();
@@ -28,6 +30,7 @@ public final class ActiveDungeonBadge extends JPanel {
     private final JLabel since = new JLabel();
     private final DifficultyMark difficulty = new DifficultyMark();
     private final JLabel rank = new JLabel();
+    private final JLabel flames = new JLabel();
     private final Timer clock = new Timer(1000, e -> updateSince());
     private long start;
     private String dungeon = "";
@@ -37,7 +40,7 @@ public final class ActiveDungeonBadge extends JPanel {
         super(new BorderLayout());
         setOpaque(false);
         setBorder(new EmptyBorder(3, 12, 3, 10));
-        for (JLabel l : new JLabel[]{since, rank}) l.setForeground(new Color(0xF2ECDC));
+        for (JLabel l : new JLabel[]{since, rank, flames}) l.setForeground(new Color(0xF2ECDC));
         JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
         left.setOpaque(false);
         left.add(icon);
@@ -46,7 +49,16 @@ public final class ActiveDungeonBadge extends JPanel {
         add(left, BorderLayout.CENTER);
         difficulty.setBorder(new EmptyBorder(0, 12, 0, 0));
         difficulty.lineOf = since;
-        add(difficulty, BorderLayout.EAST);   // at the right edge, as the game shows it: a big number and the gravestone
+        // Moonlight Village: "<flames><flame>" of the current phase, just left of the difficulty
+        flames.setHorizontalTextPosition(SwingConstants.LEFT);
+        flames.setIconTextGap(3);
+        flames.setToolTipText("Flames of the current phase");
+        flames.setVisible(false);
+        JPanel right = new JPanel(new BorderLayout());
+        right.setOpaque(false);
+        right.add(flames, BorderLayout.WEST);
+        right.add(difficulty, BorderLayout.EAST);   // at the right edge, as the game shows it: a big number and the gravestone
+        add(right, BorderLayout.EAST);
         setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         setToolTipText("Open this dungeon in Battles");
         Clicks.onClick(this, open);
@@ -80,7 +92,8 @@ public final class ActiveDungeonBadge extends JPanel {
         FontMetrics big = getFontMetrics(since.getFont().deriveFont(Font.BOLD, since.getFont().getSize2D() * 1.3f));
         int hgap = 10;
         return in.left + in.right + ICON + 3 * hgap + t.getPreferredSize().width + r.getPreferredSize().width
-                + 12 + big.stringWidth("10.5") + 5 + big.getAscent() + 4;   // the difficulty: number, gap, gravestone
+                + 12 + big.stringWidth("10.5") + 5 + big.getAscent() + 4   // the difficulty: number, gap, gravestone
+                + (flames.isVisible() ? flames.getPreferredSize().width : 0);
     }
 
     /** A portal sprite cut to its visible pixels and scaled (crisp) to fit ICON, so it fills the box's height. */
@@ -145,6 +158,7 @@ public final class ActiveDungeonBadge extends JPanel {
         if (me != null) rank.setText("<html><b>Rank #" + boss.rankOf(me) + " / " + boss.players.size() + "</b></html>");
         dungeon = visit.dungeon;
         start = visit.start;
+        updateFlames(visit);
         updateSince();
         if (!clock.isRunning()) clock.start();
         if (!isVisible()) {
@@ -154,11 +168,33 @@ public final class ActiveDungeonBadge extends JPanel {
         repaint();
     }
 
+    /** Moonlight Village: the flames the latest phase scored so far (they come in as it ends); hidden before one. */
+    private void updateFlames(lootgobbler.DungeonVisits.Visit visit) {
+        java.util.List<lootgobbler.DungeonVisits.MvPhase> phases = visit == null ? null : visit.mvPhases;
+        boolean show = visit != null && lootgobbler.MoonlightLog.DUNGEON.equals(visit.dungeon) && phases != null && !phases.isEmpty();
+        if (show) {
+            if (flames.getIcon() == null) {
+                flames.setFont(since.getFont().deriveFont(Font.BOLD, since.getFont().getSize2D() * 1.3f));
+                flames.setIcon(fit(CharactersView.sprite(FLAME, 40), flames.getFontMetrics(flames.getFont()).getAscent()));
+            }
+            String n = String.valueOf(phases.get(phases.size() - 1).flames);
+            if (!n.equals(flames.getText())) {
+                flames.setText(n);
+                revalidateParent();
+            }
+        }
+        if (show != flames.isVisible()) {
+            flames.setVisible(show);
+            revalidateParent();
+        }
+    }
+
     private void updateSince() {
         long s = Math.max(0, (System.currentTimeMillis() - start) / 1000);
         String time = s >= 3600 ? String.format("%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60)
                 : String.format("%d:%02d", s / 60, s % 60);
         since.setText("<html>Duration: <b>" + time + "</b></html>");
+        updateFlames(lootgobbler.DungeonVisits.get().current());   // flames are counted without a change event
         // the game's rating of the dungeon (loaded in the background, so it may come a moment later)
         Double d = lootgobbler.DungeonDifficulty.of(dungeon);
         difficulty.setVisible(d != null);

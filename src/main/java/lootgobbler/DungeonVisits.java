@@ -34,6 +34,12 @@ public final class DungeonVisits implements Syncable {
         }
     }
 
+    /** A character's look in a visit: player name, class, skin (0 = the class's own) and dyes (see Dyes). */
+    public static final class Look {
+        public String player = "";
+        public int classType, skin, tex1, tex2;
+    }
+
     public static final class Visit {
         public String dungeon = "";
         public long start;
@@ -51,6 +57,9 @@ public final class DungeonVisits implements Syncable {
         public List<MvPhase> mvPhases = new ArrayList<>();   // Moonlight Village: its boss phases in order (MoonlightLog)
         // whether it was completed can be told (visits from before this was kept cannot), and the game's "Victory"
         public boolean judged, victory;
+        // how your character looked in it (your guildmates' clients show you so): name, class, skin, dyes; null
+        // in visits from before this was kept
+        public Look look;
 
         public int hits() {
             return hitTime == null ? 0 : hitTime.length;
@@ -167,12 +176,27 @@ public final class DungeonVisits implements Syncable {
         if (ended) fire();
     }
 
+    /** Your character's look now (CharacterStore keeps it, not while transformed), or null before you played. */
+    private static Look lookNow() {
+        CharacterStore.Char c = CharacterStore.get().playing();
+        String name = CharacterStore.get().playerName();
+        if (c == null || name == null || c.classType <= 0) return null;
+        Look l = new Look();
+        l.player = name;
+        l.classType = c.classType;
+        l.skin = c.skin;
+        l.tex1 = c.tex1;
+        l.tex2 = c.tex2;
+        return l;
+    }
+
     /** Ends the visit in progress (if any): into the list, linked to its run if you fought a boss, and saved. */
     private void finishCurrent(long now) {
         Visit left = current;
         current = null;
         if (left == null) return;
         left.durationMs = Math.max(1, now - left.start);
+        left.look = lookNow();
         DpsHistory.Run run = DpsHistory.get().latest();
         if (run != null && !run.guildHall && run.dungeon.equals(left.dungeon) && run.start >= left.start - LINK_SLACK_MS) {
             left.runStart = run.start;

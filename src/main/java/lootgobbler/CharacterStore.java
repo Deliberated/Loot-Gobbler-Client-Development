@@ -270,10 +270,12 @@ public final class CharacterStore implements Syncable {
                 c.classType = p.objectType;
                 c.className = className(p.objectType);
                 int skin = intStat(p, StatType.SKIN_ID);
-                if (skin > 0) c.skin = skin;
-                StatData tex1 = p.stat.get(StatType.TEX1_STAT), tex2 = p.stat.get(StatType.TEX2_STAT);
-                if (tex1 != null) c.tex1 = liveTexture(tex1.statValue);
-                if (tex2 != null) c.tex2 = liveTexture(tex2.statValue);
+                if (!ItemDb.get().isTransformSkin(skin)) {   // not while an ability transforms you (no dyes then)
+                    if (skin > 0) c.skin = skin;
+                    StatData tex1 = p.stat.get(StatType.TEX1_STAT), tex2 = p.stat.get(StatType.TEX2_STAT);
+                    if (tex1 != null) c.tex1 = liveTexture(tex1.statValue);
+                    if (tex2 != null) c.tex2 = liveTexture(tex2.statValue);
+                }
                 int level = intStat(p, StatType.LEVEL_STAT);
                 if (level > 0) c.level = level;
                 int maxHp = intStat(p, StatType.MAX_HP_STAT);
@@ -561,6 +563,11 @@ public final class CharacterStore implements Syncable {
      */
     public String playerName() {
         return playerName;
+    }
+
+    /** The character you are playing (or last played), or null. */
+    public synchronized Char playing() {
+        return chars.get(currentCharId);
     }
 
     /**

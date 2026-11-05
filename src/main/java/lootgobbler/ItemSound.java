@@ -44,6 +44,19 @@ public final class ItemSound {
         return s == null ? "" : s.trim();
     }
 
+    /** Its own volume, 0 to 100 (100, the default: as loud as the other sounds). */
+    public int volume() {
+        try {
+            return Math.max(0, Math.min(100, Integer.parseInt(PropertiesManager.getProperty(key + "Volume").trim())));
+        } catch (Exception e) {
+            return 100;
+        }
+    }
+
+    public void setVolume(int v) {
+        PropertiesManager.setProperties(key + "Volume", String.valueOf(Math.max(0, Math.min(100, v))));
+    }
+
     public boolean isOff() {
         return OFF.equals(setting());
     }
@@ -96,6 +109,6 @@ public final class ItemSound {
             loaded = new Sound(path);
             loadedPath = path;
         }
-        if (loaded.isLoaded()) loaded.play();
+        if (loaded.isLoaded()) loaded.play(volume());
     }
 }

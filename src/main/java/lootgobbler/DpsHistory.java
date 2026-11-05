@@ -38,7 +38,8 @@ public final class DpsHistory implements Syncable {
 
         /** Sprite object id: the skin worn, or the class itself. */
         public int spriteId() {
-            return skin > 0 ? skin : classType;
+            // runs logged before transformations were skipped may hold one: the class then
+            return skin > 0 && !ItemDb.get().isTransformSkin(skin) ? skin : classType;
         }
 
         public String className() {
@@ -330,14 +331,31 @@ public final class DpsHistory implements Syncable {
         }
     }
 
-    /** The skin and dyes the player's character wears now, as the game sends them. */
+    /**
+     * The skin and dyes the player's character wears now, as the game sends them. Not while an ability transforms
+     * them (Evolutionary Boar...): that skin comes without dyes and would replace their own look.
+     */
     private static void look(PlayerRow p, Entity e) {
         packets.data.StatData skin = e.stat.get(packets.data.enums.StatType.SKIN_ID);
         packets.data.StatData tex1 = e.stat.get(packets.data.enums.StatType.TEX1_STAT), tex2 = e.stat.get(packets.data.enums.StatType.TEX2_STAT);
+        String key = p.name + "/" + p.classType;
+        if (skin != null && ItemDb.get().isTransformSkin(skin.statValue)) {   // transformed: their look from before
+            int[] seen = LOOKS.get(key);
+            if (seen != null) {
+                p.skin = seen[0];
+                p.tex1 = seen[1];
+                p.tex2 = seen[2];
+            }
+            return;
+        }
         if (skin != null && skin.statValue > 0) p.skin = skin.statValue;
         if (tex1 != null) p.tex1 = CharacterStore.liveTexture(tex1.statValue);
         if (tex2 != null) p.tex2 = CharacterStore.liveTexture(tex2.statValue);
+        LOOKS.put(key, new int[]{p.skin, p.tex1, p.tex2});
     }
+
+    // each player's last own look (name/class -> skin, tex1, tex2), for while an ability transforms them
+    private static final Map<String, int[]> LOOKS = new java.util.concurrent.ConcurrentHashMap<>();
 
     private static Run newRun(String dungeon, long durationMs) {
         Run run = new Run();

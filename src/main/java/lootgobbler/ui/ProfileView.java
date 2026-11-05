@@ -186,6 +186,7 @@ public class ProfileView extends SubTabs {
         for (int i = 0; i < Math.min(RECENT, runs.size()); i++) parts.add(runs.get(i).start);
         for (CharacterClass cls : CharacterClass.CHAR_CLASS_LIST)
             parts.add(ExaltStore.total(ExaltStore.get().progress(cls.getId())));
+        parts.add(amuletSaves());
         String state = parts.hashCode() + "";
         if (state.equals(shown)) return;
         shown = state;
@@ -227,7 +228,41 @@ public class ProfileView extends SubTabs {
         p.add(left(soft(exalted + " / " + classes + " classes exalted   ·   " + pets + " pets")));
         long last = chars.stream().mapToLong(c -> c.lastPlayed).max().orElse(0);
         if (last > 0) p.add(left(muted("Last played " + CharactersView.ago(last))));
-        return card(p);
+        JPanel both = new JPanel(new BorderLayout(16, 0));
+        both.setOpaque(false);
+        both.add(p, BorderLayout.CENTER);
+        both.add(amuletBadge(), BorderLayout.EAST);
+        return card(both);
+    }
+
+    private static final int AMULET = 23624;   // Amulet of Restoration (5337 is its shiny version)
+    private static final long AMULET_DAYS = 3;
+
+    private static int amuletSaves() {
+        return lootgobbler.AmuletSaves.get().countSince(System.currentTimeMillis() - AMULET_DAYS * 24 * 3600_000L);
+    }
+
+    /** The Amulet of Restoration and how often it saved you lately, at the right of the player card. */
+    private JComponent amuletBadge() {
+        int n = amuletSaves();
+        JLabel icon = new JLabel(CharactersView.sprite(AMULET, 56));
+        icon.setAlignmentX(CENTER_ALIGNMENT);
+        JLabel text = new JLabel("<html><div style='text-align:center'>saved you <b>" + n + "</b> time" + (n == 1 ? "" : "s")
+                + "<br>in the last " + AMULET_DAYS + " days</div></html>", SwingConstants.CENTER);
+        text.setForeground(Section.color("LootGobbler.inkSoft", Palette.MUTED));
+        text.setAlignmentX(CENTER_ALIGNMENT);
+        JPanel col = new JPanel();
+        col.setLayout(new BoxLayout(col, BoxLayout.Y_AXIS));
+        col.setOpaque(false);
+        col.setToolTipText("Your Amulet of Restoration kept you alive " + n + " time" + (n == 1 ? "" : "s")
+                + " in the last " + AMULET_DAYS + " days");
+        col.add(icon);
+        col.add(Box.createVerticalStrut(4));
+        col.add(text);
+        JPanel holder = new JPanel(new GridBagLayout());   // vertically centered beside the name
+        holder.setOpaque(false);
+        holder.add(col);
+        return holder;
     }
 
     /**

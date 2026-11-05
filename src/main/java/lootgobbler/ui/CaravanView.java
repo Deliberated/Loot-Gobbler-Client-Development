@@ -831,17 +831,19 @@ public class CaravanView extends JPanel {
         }
 
         private static final int GEM = 11;
+        private static final int LOOSE = 12;   // stones heaped without a chest
         /**
-         * The enchanted items' stones on the step, standing on (cx, y): up to 16 as a loose pile; 17 to 50 in a chest
-         * with a smaller pile looking out (one stone per 4 of a rarity); more in an open golden chest (one per 10).
+         * The enchanted items' stones on the step, standing on (cx, y): up to 12 as a loose pile; 13 to 50 in a chest
+         * with a smaller pile looking out, one stone for every full 4 of a rarity (4 purple: 1 purple, 7: still 1);
+         * more in an open golden chest, one for every full 10.
          */
         private void paintHoard(Graphics2D g2, List<Integer> stones, long seed, int cx, int y) {
             if (stones.isEmpty()) return;
-            int per = stones.size() <= 16 ? 1 : stones.size() <= 50 ? 4 : 10;
+            int per = stones.size() <= LOOSE ? 1 : stones.size() <= 50 ? 4 : 10;
             List<Integer> shown = new ArrayList<>();
             int[] count = new int[5];
             for (int s : stones) count[s]++;
-            for (int r = 1; r <= 4; r++) for (int i = 0; i < (count[r] + per - 1) / per; i++) shown.add(r);
+            for (int r = 1; r <= 4; r++) for (int i = 0; i < count[r] / per; i++) shown.add(r);
             if (per == 1) {
                 paintPile(g2, shown, seed, cx, y, 40);
                 return;

@@ -21,7 +21,7 @@ import java.util.List;
  * with progress, copy-as-text / copy-as-image and a recent list.
  */
 public class CollectionPanel extends JPanel {
-    private static final int ALL = 0, SHINY = 1, NORMAL = 2;
+    private static final int ALL = 0, SHINY = 1, NORMAL = 2, REUSABLE = 3;   // REUSABLE: used again and again (quick slot)
     private static final String[] VIEWS = {"grid", "st", "log"};
     private static final int RECENT = 8;
 
@@ -81,7 +81,8 @@ public class CollectionPanel extends JPanel {
         gridFilterPicker = new Segmented(true, 0, i -> {
             gridFilter = i;
             refresh();
-        }, "All", "Shiny", "Normal");
+        }, "All", "Shiny", "Normal", "Reusable");
+        gridFilterPicker.setToolTipText("Reusable: items used again and again from a quick slot, e.g. the Coral Juice Refinery");
         search.putClientProperty("JTextField.placeholderText", "Search items or enchants");
         search.putClientProperty("JTextField.showClearButton", true);
         search.setToolTipText("Item name, type (e.g. Katana, Ring), UT / ST / T14, or an enchantment on items you own");
@@ -494,11 +495,13 @@ public class CollectionPanel extends JPanel {
 
     private List<ItemDb.Item> filter(int mode) {
         if (mode == ALL) return universe;
+        if (mode == REUSABLE) return universe.stream().filter(i -> i.quickslotOnly).toList();
         return universe.stream().filter(i -> (mode == SHINY) == i.isShiny()).toList();
     }
 
     /**
-     * Items matching the search box: by name, type (slot), UT / ST / T14 tag, or an enchantment found on them.
+     * Items matching the search box: by name, type (slot), UT / ST / T14 tag, "reusable" / "quick slot" for the
+     * quick-slot items, or an enchantment found on them.
      */
     private List<ItemDb.Item> matching(List<ItemDb.Item> items, Map<Integer, CollectionStore.Entry> owned) {
         String q = search.getText().trim().toLowerCase(Locale.ROOT);
@@ -507,6 +510,7 @@ public class CollectionPanel extends JPanel {
                 || i.slotName().toLowerCase(Locale.ROOT).contains(q)
                 || i.tierTag().toLowerCase(Locale.ROOT).replace("(", "").replace(")", "").equals(q)
                 || (!i.tier.isEmpty() && q.equals("t" + i.tier))
+                || (i.quickslotOnly && ("reusable".startsWith(q) || "quick slot".startsWith(q) || "quickslot".startsWith(q)))
                 || hasEnchant(owned.get(i.id), q)).toList();
     }
 

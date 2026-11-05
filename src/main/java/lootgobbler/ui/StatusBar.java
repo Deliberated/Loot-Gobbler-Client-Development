@@ -197,6 +197,27 @@ public class StatusBar extends JPanel {
             return 0.35 + 0.65 * (0.5 - 0.5 * Math.cos(2 * Math.PI * t));
         }
 
+        /**
+         * A glint of light sliding across the button, left to right, every 3.2 s (it rests for the first half of
+         * each cycle): a slanted band, bright in the middle and fading to its edges, like light on a gold coin.
+         */
+        private void paintShine(Graphics2D g2, int w, int h) {
+            double t = ((System.currentTimeMillis() - glowStart) % 3200) / 3200.0;
+            if (t < 0.55 || t > 0.85) return;
+            double p = (t - 0.55) / 0.30;
+            p = p < 0.5 ? 2 * p * p : 1 - 2 * (1 - p) * (1 - p);   // ease in and out
+            int band = UIScale.scale(22), slant = h / 3;
+            int x = (int) Math.round(-band - slant + p * (w + 2 * band + 2 * slant));
+            Graphics2D s = (Graphics2D) g2.create();
+            s.clipRect(0, 0, w, h);
+            s.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            Color clear = new Color(255, 250, 225, 0), light = new Color(255, 250, 225, 215);
+            s.setPaint(new LinearGradientPaint(x, 0, x + band, 0, new float[]{0f, 0.45f, 0.55f, 1f},
+                    new Color[]{clear, light, light, clear}));
+            s.fillPolygon(new int[]{x + slant, x + band + slant, x + band - slant, x - slant}, new int[]{0, 0, h, h}, 4);
+            s.dispose();
+        }
+
         @Override
         public Dimension getPreferredSize() {
             Dimension d = super.getPreferredSize();
@@ -244,6 +265,7 @@ public class StatusBar extends JPanel {
                 g2.setColor(onGold);
                 g2.drawString(text, tx, ty);
             }
+            if (shown == Updater.State.AVAILABLE) paintShine(g2, w, h);
             g2.setColor(Color.BLACK);
             g2.drawRect(0, 0, w - 1, h - 1);
             g2.dispose();

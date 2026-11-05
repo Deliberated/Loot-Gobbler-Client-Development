@@ -47,6 +47,7 @@ public final class MoonlightLog {
     public static final int LANTERN = 20454;   // MV Lantern System
     // the dancers and Umi: Sage Genji, Dancer Miko, Drummer Kaguya, Kitsune Umi (no BOSS label in the game data)
     private static final Set<Integer> BOSSES = Set.of(20450, 20451, 20452, 20493);
+    public static final Set<Integer> DANCERS = Set.of(20450, 20451, 20452);   // the three before Umi
     public static final double NEAR = 1.75, RANGE = 3.5;   // tiles: the tutorial lantern's inner and outer ring
     private static final int FLAME = 20518;   // MV Total Counter: the flames a finished phase scores
     private static final int DANCING = 67108864, LANTERN_UP = 16777216;   // a boss's condition in its phases

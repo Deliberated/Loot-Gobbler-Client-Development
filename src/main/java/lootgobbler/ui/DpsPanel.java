@@ -4,6 +4,7 @@ import assets.ImageBuffer;
 import lootgobbler.DpsHistory;
 import lootgobbler.DungeonVisits;
 import lootgobbler.ItemDb;
+import lootgobbler.MoonlightLog;
 import lootgobbler.DpsHistory.Boss;
 import lootgobbler.DpsHistory.PlayerRow;
 import lootgobbler.DpsHistory.Run;
@@ -50,6 +51,10 @@ public class DpsPanel extends JPanel {
     private final JPanel past = column();
     private final Set<String> expanded = new HashSet<>();   // toggled boss blocks (see bossBlock)
     private Run selected;   // null = live
+    // LIVE on: between runs the last one stays in view (its last boss open) until the next run's first damage
+    private boolean hold = !"false".equals(util.PropertiesManager.getProperty("dpsHoldLast"));
+    private Run held;   // the run held in view now, or null
+    private long heldOpened;   // the held run whose last boss was opened
     private static final String[] SLOT_NAMES = {"Weapon", "Ability", "Armor", "Ring"};
 
     public DpsPanel() {
@@ -57,9 +62,15 @@ public class DpsPanel extends JPanel {
         setBorder(new EmptyBorder(8, 8, 8, 8));
 
         liveButton.setFocusable(false);
+        liveButton.setToolTipText("<html>On: follow the dungeon you are in, and keep the last run open until "
+                + "the next one deals damage.<br>Off: show only what you click.</html>");
         liveButton.addActionListener(e -> {
-            selected = null;
-            liveButton.setSelected(true);
+            // on (or back from a past run): follow live and hold; on -> off: no holding, the view stays where it is
+            boolean on = selected != null || !hold;
+            if (!on && held != null) selected = held;   // what was held stays, as if clicked
+            else if (on) selected = null;
+            hold = on;
+            util.PropertiesManager.setProperties("dpsHoldLast", String.valueOf(on));
             refresh();
         });
         add(header(), BorderLayout.NORTH);
@@ -100,9 +111,15 @@ public class DpsPanel extends JPanel {
     private void refresh() {
         List<Run> runs = DpsHistory.get().runs();
         if (selected != null && !runs.contains(selected)) selected = null;
-        liveButton.setSelected(selected == null);
+        liveButton.setSelected(selected == null && hold);
         Run live = DpsHistory.get().live();
-        renderRun(selected != null ? selected : live);
+        // holding: no damage in the new run yet, so the last run stays
+        held = selected == null && hold && (live == null || live.bosses.isEmpty()) && !runs.isEmpty() ? runs.get(0) : null;
+        if (held != null && heldOpened != held.start) {
+            heldOpened = held.start;
+            openLatest(held);
+        }
+        renderRun(selected != null ? selected : held != null ? held : live);
         renderPast(live, runs);
     }
 
@@ -117,13 +134,21 @@ public class DpsPanel extends JPanel {
             empty.setBorder(new EmptyBorder(14, 14, 14, 14));
             bosses.add(empty);
         } else {
-            title.setText(run.dungeon.toUpperCase(Locale.ROOT) + (selected == null ? "    (LIVE)" : "    (LOGGED RUN)"));
+            title.setText(run.dungeon.toUpperCase(Locale.ROOT) + (run == held ? "    (LAST RUN)"
+                    : selected == null ? "    (LIVE)" : "    (LOGGED RUN)"));
             // guild hall: your latest loadout, ranked against your other loadouts
             Boss main = run.guildHall ? run.bosses.get(run.bosses.size() - 1) : run.mainBoss();
             PlayerRow me = main == null ? null : main.me();
             yourDps.setText(me == null ? "0" : NUM.format(Math.round(main.dps(me))));
             rank.setText(me == null ? "-" : String.valueOf(run.guildHall ? loadoutRank(run, main) : main.rankOf(me)));
+            JComponent interim = run.guildHall ? null : dancersBar(visitOf(run, run == DpsHistory.get().live()));
             for (int i = run.bosses.size() - 1; i >= 0; i--) {   // the latest boss on top
+                // Moonlight Village: the three dancers' subtotal above them (under Umi)
+                if (interim != null && MoonlightLog.DANCERS.contains(run.bosses.get(i).objectType)) {
+                    bosses.add(interim);
+                    bosses.add(Box.createVerticalStrut(6));
+                    interim = null;
+                }
                 bosses.add(bossBlock(run, run.bosses.get(i), i));
                 bosses.add(Box.createVerticalStrut(6));
             }
@@ -135,7 +160,7 @@ public class DpsPanel extends JPanel {
     private JPanel bossBlock(Run run, Boss boss, int index) {
         // The live run's start is recomputed every second, so live blocks are keyed by the boss alone. Live bosses
         // start open, so their damage shows from the first hit; logged runs start collapsed.
-        boolean live = selected == null;
+        boolean live = run == DpsHistory.get().live();
         String key = live ? "live/" + boss.id + "/" + boss.objectType
                 : run.start + "/" + (boss.id != 0 ? boss.id : index);
         boolean open = live != expanded.contains(key);   // for live blocks the set holds the collapsed ones
@@ -240,6 +265,65 @@ public class DpsPanel extends JPanel {
     private static List<DungeonVisits.MvPhase> phasesOf(DungeonVisits.Visit v, int boss) {
         if (v == null || v.mvPhases == null) return List.of();
         return v.mvPhases.stream().filter(p -> p.boss == boss).toList();
+    }
+
+    /**
+     * Moonlight Village: the interim result of the three dancers (Kaguya, Genji, Miko) before Umi, their phases
+     * summed up: time, your damage and DPS, your share at the lanterns and the flames, also per dancer. Null when
+     * no dancer phase was seen.
+     */
+    private static JComponent dancersBar(DungeonVisits.Visit v) {
+        if (v == null || v.mvPhases == null) return null;
+        List<DungeonVisits.MvPhase> phases = v.mvPhases.stream().filter(p -> MoonlightLog.DANCERS.contains(p.boss)).toList();
+        if (phases.isEmpty()) return null;
+        long now = System.currentTimeMillis(), totalMs = 0, totalDmg = 0, lanternMs = 0, rangeMs = 0;
+        int flames = 0;
+        Map<Integer, Integer> perBoss = new LinkedHashMap<>();   // in the order fought
+        for (DungeonVisits.MvPhase p : phases) {
+            long ms = p.duration(now, v);
+            totalMs += ms;
+            totalDmg += dealt(v, p.startMs, p.startMs + ms);
+            lanternMs += p.lanternMs;
+            rangeMs += p.rangeMs;
+            flames += p.flames;
+            perBoss.merge(p.boss, p.flames, Integer::sum);
+        }
+        JLabel title = new JLabel("Dancers interim");
+        title.setFont(title.getFont().deriveFont(Font.BOLD, 16f));
+        title.setForeground(Palette.GOLD);
+        String lantern = lanternMs > 0 ? Math.round(100.0 * rangeMs / lanternMs) + "%" : "-";
+        JLabel stats = new JLabel(duration(totalMs) + "   ·   " + NUM.format(totalDmg) + " DMG   ·   "
+                + NUM.format(Math.round(totalDmg * 1000.0 / Math.max(1000, totalMs))) + " DPS   ·   at lantern "
+                + lantern + "   ·   " + flames + " flames");
+        stats.setFont(stats.getFont().deriveFont(15f));
+        StringBuilder tip = new StringBuilder("<html>Kaguya, Genji and Miko together, before Umi");
+        for (Map.Entry<Integer, Integer> e : perBoss.entrySet())
+            tip.append("<br>").append(PlayerRenderer.escape(bossName(e.getKey()))).append(": ").append(e.getValue()).append(" flames");
+        JPanel bar = new JPanel(new BorderLayout(16, 0)) {
+            @Override
+            protected void paintComponent(Graphics g) {
+                super.paintComponent(g);
+                g.setColor(Palette.GOLD);
+                g.fillRect(0, 0, 3, getHeight());   // a gold edge, set apart from the boss blocks
+            }
+        };
+        bar.setBackground(UIManager.getColor("Panel.background").brighter());
+        bar.setBorder(new EmptyBorder(8, 14, 8, 14));
+        bar.setAlignmentX(LEFT_ALIGNMENT);
+        bar.setToolTipText(tip.append("</html>").toString());
+        bar.add(title, BorderLayout.WEST);
+        bar.add(stats, BorderLayout.EAST);
+        bar.setMaximumSize(new Dimension(Integer.MAX_VALUE, bar.getPreferredSize().height));
+        return bar;
+    }
+
+    private static String bossName(int type) {
+        return switch (type) {
+            case 20450 -> "Sage Genji";
+            case 20451 -> "Dancer Miko";
+            case 20452 -> "Drummer Kaguya";
+            default -> String.valueOf(type);
+        };
     }
 
     private static final int PHASE_LANTERN = 6, PHASE_FLAMES = 7;   // columns of the phase table
@@ -395,7 +479,7 @@ public class DpsPanel extends JPanel {
     }
 
     private JPanel historyRow(Run r, boolean current) {
-        boolean isSelected = current ? selected == null : r == selected;
+        boolean isSelected = current ? selected == null && held == null : r == selected || r == held;
         Run target = current ? null : r;   // selecting the current run means following it live
         JLabel name = new JLabel(r.dungeon);
         name.setFont(name.getFont().deriveFont(18f));
@@ -465,12 +549,16 @@ public class DpsPanel extends JPanel {
     /** Shows a saved run (null: the live one), with its latest boss opened. */
     private void select(Run run) {
         selected = run;
-        if (run != null && !run.bosses.isEmpty()) {
-            int last = run.bosses.size() - 1;
-            Boss boss = run.bosses.get(last);
-            expanded.add(run.start + "/" + (boss.id != 0 ? boss.id : last));   // the key bossBlock uses for it
-        }
+        if (run != null) openLatest(run);
         refresh();
+    }
+
+    /** Opens a saved run's latest boss. */
+    private void openLatest(Run run) {
+        if (run.bosses.isEmpty()) return;
+        int last = run.bosses.size() - 1;
+        Boss boss = run.bosses.get(last);
+        expanded.add(run.start + "/" + (boss.id != 0 ? boss.id : last));   // the key bossBlock uses for it
     }
 
     /** Shows a saved run, as if picked in the Run History (e.g. from the Profile's recent runs). */
@@ -484,7 +572,7 @@ public class DpsPanel extends JPanel {
     }
 
     private void copyAll() {
-        Run run = selected != null ? selected : DpsHistory.get().live();
+        Run run = selected != null ? selected : held != null ? held : DpsHistory.get().live();
         if (run == null) return;
         StringBuilder sb = new StringBuilder();
         for (Boss b : run.bosses) sb.append(bossText(run, b)).append('\n');

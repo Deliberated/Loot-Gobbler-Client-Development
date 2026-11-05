@@ -11,7 +11,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 /**
  * The other members of your guild on the Loot Gobbler server (their names, lower case), loaded when you log in or
  * the server changes, and who of them were with you in a dungeon: the ones that fought its bosses with you, as the
- * run's damage table names them. Used on the Swing thread.
+ * run's damage table names them, in the look the server has for them (see withLooks). Used on the Swing thread.
  */
 final class Guildmates {
     private static final Guildmates INSTANCE = new Guildmates();
@@ -38,6 +38,7 @@ final class Guildmates {
     }
 
     private void load() {
+        runLooks.clear();   // another server or account: ask again
         GobblerServer.User me = server.user();
         if (me == null || server.state() != GobblerServer.State.ONLINE) {
             set(Set.of());
@@ -85,6 +86,62 @@ final class Guildmates {
                 if (!p.me && names.contains(key)) out.putIfAbsent(key, p);
             }
         }
-        return new ArrayList<>(out.values());
+        return out.isEmpty() ? List.of() : withLooks(v, new ArrayList<>(out.values()));
+    }
+
+    // per finished visit (dungeon/start): the guildmates' looks the server has for it, by lower-case name; an empty
+    // map while asking or when it has none
+    private final Map<String, Map<String, List<GobblerServer.RunLook>>> runLooks = new HashMap<>();
+
+    /**
+     * The rows in the look the server has for them: what their own client saved with their visit of this run (sure,
+     * even if an ability transformed them), else, if this client saw no look of theirs, their character of that
+     * class as it looks now (living and last played first). Asked once per visit; the views redraw when it comes.
+     */
+    private List<DpsHistory.PlayerRow> withLooks(DungeonVisits.Visit v, List<DpsHistory.PlayerRow> rows) {
+        if (v.durationMs <= 0 || server.state() != GobblerServer.State.ONLINE) return rows;   // in progress: not saved yet
+        String key = v.dungeon + "/" + v.start;
+        Map<String, List<GobblerServer.RunLook>> looks = runLooks.get(key);
+        if (looks == null) {
+            runLooks.put(key, Map.of());
+            server.runLooks(v.dungeon, v.start, v.start + v.durationMs).whenComplete((r, e) -> SwingUtilities.invokeLater(() -> {
+                if (e != null || r == null) return;   // stays empty until the server changes
+                Map<String, List<GobblerServer.RunLook>> byName = new HashMap<>();
+                for (GobblerServer.RunLook l : r.looks)
+                    byName.computeIfAbsent(l.player.toLowerCase(Locale.ROOT), k -> new ArrayList<>()).add(l);
+                runLooks.put(key, byName);
+                if (!byName.isEmpty()) for (Runnable listener : listeners) listener.run();
+            }));
+            return rows;
+        }
+        List<DpsHistory.PlayerRow> out = new ArrayList<>(rows.size());
+        for (DpsHistory.PlayerRow p : rows) {
+            GobblerServer.RunLook l = pick(looks.getOrDefault(p.name.toLowerCase(Locale.ROOT), List.of()), p);
+            if (l == null) {
+                out.add(p);
+                continue;
+            }
+            DpsHistory.PlayerRow c = new DpsHistory.PlayerRow();   // a copy: the run's own record stays as seen
+            c.name = p.name;
+            c.classType = p.classType;
+            c.damage = p.damage;
+            c.taken = p.taken;
+            c.died = p.died;
+            c.skin = l.skin;
+            c.tex1 = l.tex1;
+            c.tex2 = l.tex2;
+            out.add(c);
+        }
+        return out;
+    }
+
+    /** The look to show for a row: their visit's, else (only if none was seen here) a character of that class. */
+    private static GobblerServer.RunLook pick(List<GobblerServer.RunLook> looks, DpsHistory.PlayerRow p) {
+        for (GobblerServer.RunLook l : looks) if ("visit".equals(l.source) && l.classType == p.classType) return l;
+        boolean seen = p.skin > 0 && !lootgobbler.ItemDb.get().isTransformSkin(p.skin) || p.tex1 != 0 || p.tex2 != 0;
+        if (seen) return null;
+        return looks.stream().filter(l -> "character".equals(l.source) && l.classType == p.classType)
+                .max(Comparator.comparing((GobblerServer.RunLook l) -> l.alive).thenComparingLong(l -> l.lastPlayed))
+                .orElse(null);
     }
 }

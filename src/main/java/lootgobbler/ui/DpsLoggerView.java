@@ -509,26 +509,6 @@ public class DpsLoggerView extends JPanel {
         boolean notDone = !current && Boolean.FALSE.equals(DungeonVisits.completed(v));
         JPanel tile = new JPanel(new BorderLayout(10, 6)) {
             @Override
-            protected void paintChildren(Graphics g) {
-                super.paintChildren(g);
-                if (!notDone) return;
-                // "Not completed" over the middle of the box, on a dark band so it reads over the portal and potions
-                Graphics2D g2 = (Graphics2D) g.create();
-                g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-                g2.setFont(getFont().deriveFont(Font.BOLD, 18f));
-                FontMetrics fm = g2.getFontMetrics();
-                String text = "NOT COMPLETED";
-                int w = fm.stringWidth(text) + 24, h = fm.getHeight() + 6;
-                int x = (getWidth() - w) / 2, y = (getHeight() - h) / 2;
-                g2.setColor(new Color(0, 0, 0, 150));
-                g2.fillRect(x, y, w, h);
-                g2.setColor(new Color(0xD8, 0x5A, 0x4A));
-                g2.drawRect(x, y, w - 1, h - 1);
-                g2.drawString(text, x + 12, y + 3 + fm.getAscent());
-                g2.dispose();
-            }
-
-            @Override
             protected void paintComponent(Graphics g) {
                 Color accent = Section.color("LootGobbler.gold", Palette.GOLD);
                 Color header = Section.color("LootGobbler.header", Color.LIGHT_GRAY);
@@ -568,7 +548,7 @@ public class DpsLoggerView extends JPanel {
         head.setMaximumSize(new Dimension(Integer.MAX_VALUE, head.getPreferredSize().height));
         middle.add(left(head));
         middle.add(Box.createVerticalStrut(6));
-        middle.add(left(potions(v)));
+        middle.add(left(potionsAndAmulet(v)));
         top.add(middle, BorderLayout.CENTER);
         top.add(mates(v), BorderLayout.EAST);
         tile.add(top, BorderLayout.CENTER);
@@ -579,13 +559,28 @@ public class DpsLoggerView extends JPanel {
         name.setFont(name.getFont().deriveFont(20f));
         if (current) name.setForeground(Palette.GOLD);
         bottom.add(name, BorderLayout.CENTER);
+        // at the bottom right: "Not completed" (a small red-framed box), then the difficulty
+        JPanel right = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+        right.setOpaque(false);
+        if (notDone) {
+            JLabel open = new JLabel("NOT COMPLETED");
+            open.setFont(name.getFont().deriveFont(Font.BOLD, 13f));
+            open.setForeground(new Color(0xD8, 0x5A, 0x4A));
+            open.setOpaque(true);
+            open.setBackground(new Color(0, 0, 0, 90));
+            open.setBorder(BorderFactory.createCompoundBorder(new LineBorder(new Color(0xD8, 0x5A, 0x4A)), new EmptyBorder(1, 6, 1, 6)));
+            open.setToolTipText("You left before its boss was killed");
+            right.add(open);
+        }
         Double d = lootgobbler.DungeonDifficulty.of(v.dungeon);
         if (d != null) {
             ActiveDungeonBadge.DifficultyMark mark = new ActiveDungeonBadge.DifficultyMark();
             mark.set(d % 1 == 0 ? String.valueOf(d.intValue()) : String.valueOf(d), name.getFont().deriveFont(15f));
             mark.lineOf = name;   // standing on the name's line
-            bottom.add(mark, BorderLayout.EAST);
+            if (notDone) mark.setBorder(new EmptyBorder(0, 10, 0, 0));
+            right.add(mark);
         }
+        if (right.getComponentCount() > 0) bottom.add(right, BorderLayout.EAST);
         tile.add(bottom, BorderLayout.SOUTH);
 
         clickable(tile, () -> {
@@ -593,6 +588,35 @@ public class DpsLoggerView extends JPanel {
             refresh();
         });
         return tile;
+    }
+
+    private static final int AMULET = 23624, AMULET_ICON = 28;   // Amulet of Restoration
+
+    /**
+     * The potions, then the Amulet of Restoration if it saved you here. The potions keep the room of their fullest
+     * rows (four singles, two "Nx"), so the amulet always stands in the same place, clear of them.
+     */
+    private static JComponent potionsAndAmulet(Visit v) {
+        JComponent potions = potions(v);
+        int saves = v.amuletSaves == null ? 0 : v.amuletSaves.length;
+        if (saves == 0) return potions;
+        FontMetrics fm = potions.getFontMetrics(UIManager.getFont("Label.font"));
+        int singles = SINGLES * POTION + (SINGLES - 1) * 6;
+        int multis = MULTIS * (fm.stringWidth("99x") + 3 + POTION) + (MULTIS - 1) * 12;
+        JPanel room = new JPanel(new BorderLayout());
+        room.setOpaque(false);
+        room.add(potions, BorderLayout.WEST);
+        room.setPreferredSize(new Dimension(Math.max(singles, multis), Math.max(potions.getPreferredSize().height, AMULET_ICON)));
+        JLabel amulet = new JLabel(saves > 1 ? saves + "x" : null, CharactersView.sprite(AMULET, AMULET_ICON), SwingConstants.LEFT);
+        amulet.setHorizontalTextPosition(SwingConstants.LEFT);
+        amulet.setIconTextGap(3);
+        amulet.setToolTipText("Your Amulet of Restoration saved you here" + (saves > 1 ? " " + saves + " times" : ""));
+        JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        row.setOpaque(false);
+        row.add(room);
+        row.add(Box.createHorizontalStrut(10));
+        row.add(amulet);
+        return row;
     }
 
     /**

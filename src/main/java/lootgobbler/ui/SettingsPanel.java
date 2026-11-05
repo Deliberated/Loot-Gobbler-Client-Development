@@ -98,7 +98,34 @@ public class SettingsPanel extends JPanel {
         name.setFont(name.getFont().deriveFont(Font.BOLD, name.getFont().getSize2D() + 2));
         name.setForeground(Palette.GOLD);
         title.add(name);
-        body.add(title);
+        // its own volume, at the right: heard when let go
+        JLabel level = new JLabel();
+        JSlider volume = new JSlider(0, 100, sound.volume());
+        volume.setFocusable(false);
+        volume.setOpaque(false);
+        volume.setPreferredSize(new Dimension(150, volume.getPreferredSize().height));
+        volume.setToolTipText("Volume of this sound");
+        Runnable showLevel = () -> level.setText(volume.getValue() + "%");
+        showLevel.run();
+        level.setPreferredSize(new Dimension(level.getFontMetrics(level.getFont()).stringWidth("100%") + 4, level.getPreferredSize().height));
+        volume.addChangeListener(e -> {
+            showLevel.run();
+            if (volume.getValueIsAdjusting()) return;
+            sound.setVolume(volume.getValue());
+            sound.play();
+        });
+        JPanel right = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 4));
+        right.setOpaque(false);
+        right.add(new JLabel("Volume"));
+        right.add(volume);
+        right.add(level);
+        JPanel head = new JPanel(new BorderLayout());
+        head.setOpaque(false);
+        head.setAlignmentX(LEFT_ALIGNMENT);
+        head.add(title, BorderLayout.CENTER);
+        head.add(right, BorderLayout.EAST);
+        head.setMaximumSize(new Dimension(Integer.MAX_VALUE, head.getPreferredSize().height));
+        body.add(head);
         JPanel hint = row();
         hint.add(new JLabel(when));
         body.add(hint);

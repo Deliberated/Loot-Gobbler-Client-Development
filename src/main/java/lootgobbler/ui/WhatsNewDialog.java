@@ -18,13 +18,15 @@ import java.util.List;
 
 /**
  * Shown once after Loot Gobbler was updated (in-app or with a new setup): the version change and the release notes
- * of every version in between, from the GitHub releases.
+ * of every version in between, from the GitHub releases. Also opened from Info > Release Notes with every release.
  */
 public class WhatsNewDialog extends JDialog {
     private static final String KEY_LAST_RUN = "lastRunVersion";
+    private JEditorPane text;
 
+    /** from: the version updated from; null for every release (Info > Release Notes), notes null while loading. */
     private WhatsNewDialog(Window owner, String from, List<Notes> notes, String error) {
-        super(owner, "Loot Gobbler updated", ModalityType.APPLICATION_MODAL);
+        super(owner, from == null ? "Release Notes" : "Loot Gobbler updated", ModalityType.APPLICATION_MODAL);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
 
         JPanel box = new JPanel(new BorderLayout(0, 14));
@@ -34,7 +36,7 @@ public class WhatsNewDialog extends JDialog {
         JPanel head = new JPanel();
         head.setOpaque(false);
         head.setLayout(new BoxLayout(head, BoxLayout.Y_AXIS));
-        JLabel title = new JLabel("Loot Gobbler was updated!");
+        JLabel title = new JLabel(from == null ? "Release Notes" : "Loot Gobbler was updated!");
         title.setFont(new Font(Themes.HEAD_FONT, Font.PLAIN, 40));
         title.setForeground(ui("gold"));
         // old -> new; the arrow is drawn, the pixel font has no arrow character
@@ -56,10 +58,19 @@ public class WhatsNewDialog extends JDialog {
         title.setAlignmentX(LEFT_ALIGNMENT);
         head.add(title);
         head.add(Box.createVerticalStrut(4));
-        head.add(versionRow);
+        if (from != null) {
+            head.add(versionRow);
+        } else {   // every release: which one you have
+            JLabel yours = new JLabel("Every release, the latest first. You have " + Version.VERSION + ".");
+            yours.setFont(new Font(Themes.BODY_FONT, Font.PLAIN, 22));
+            yours.setForeground(ui("ink"));
+            yours.setAlignmentX(LEFT_ALIGNMENT);
+            head.add(yours);
+        }
         box.add(head, BorderLayout.NORTH);
 
-        JEditorPane text = new JEditorPane("text/html", html(notes, error));
+        text = new JEditorPane("text/html", notes == null ? "<html><body><p>Loading the release notes...</p></body></html>"
+                : html(notes, error));
         text.setEditable(false);
         text.setFocusable(false);   // read-only: no blinking caret (links still work)
         text.setOpaque(false);
@@ -73,13 +84,16 @@ public class WhatsNewDialog extends JDialog {
         scroll.setBorder(null);
         scroll.setOpaque(false);
         scroll.getViewport().setOpaque(false);
-        scroll.setPreferredSize(new Dimension(1050, 330));   // wide enough that most notes fit on one line
+        scroll.setPreferredSize(new Dimension(1050, from == null ? 520 : 330));   // wide enough that most notes fit on one line
         scroll.getVerticalScrollBar().setUnitIncrement(16);
         box.add(scroll, BorderLayout.CENTER);
 
-        JButton all = new JButton("ALL RELEASE NOTES");
-        all.addActionListener(e -> open(Updater.releasesPage()));
-        JButton ok = new JButton("NICE");
+        JButton all = new JButton(from == null ? "ON GITHUB" : "ALL RELEASE NOTES");
+        all.addActionListener(e -> {
+            if (from == null) open(Updater.releasesPage());
+            else showAll(owner);
+        });
+        JButton ok = new JButton(from == null ? "CLOSE" : "NICE");
         ok.putClientProperty("FlatLaf.styleClass", "primary");
         ok.addActionListener(e -> dispose());
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
@@ -133,6 +147,31 @@ public class WhatsNewDialog extends JDialog {
         }, "whats-new");
         t.setDaemon(true);
         t.start();
+    }
+
+    /**
+     * Info > Release Notes: every published release, the latest at the top. Opens at once and fills in when GitHub
+     * answers.
+     */
+    public static void showAll(Window owner) {
+        WhatsNewDialog dialog = new WhatsNewDialog(owner, null, null, null);
+        Thread t = new Thread(() -> {
+            List<Notes> notes = List.of();
+            String error = null;
+            try {
+                notes = Updater.releaseNotes("v0", "v999999");
+            } catch (Exception e) {
+                error = "The release notes could not be loaded right now. Check your connection, or open them on GitHub.";
+            }
+            String html = html(notes, error);
+            SwingUtilities.invokeLater(() -> {
+                dialog.text.setText(html);
+                SwingUtilities.invokeLater(() -> dialog.text.scrollRectToVisible(new Rectangle(0, 0, 1, 1)));
+            });
+        }, "release-notes");
+        t.setDaemon(true);
+        t.start();
+        dialog.setVisible(true);
     }
 
     /**

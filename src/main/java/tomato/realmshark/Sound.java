@@ -115,10 +115,14 @@ public class Sound {
     }
 
     private static void setVolume(Clip clip) {
+        setVolume(clip, volume);
+    }
+
+    private static void setVolume(Clip clip, float db) {
         if (!clip.isControlSupported(FloatControl.Type.MASTER_GAIN)) return;
         FloatControl volumeControl = (FloatControl) clip.getControl(FloatControl.Type.MASTER_GAIN);
         // volume 0 gives -Infinity dB, which the control rejects; clamp to the device's range
-        volumeControl.setValue(Math.max(volumeControl.getMinimum(), Math.min(volumeControl.getMaximum(), volume)));
+        volumeControl.setValue(Math.max(volumeControl.getMinimum(), Math.min(volumeControl.getMaximum(), db)));
     }
 
     /**
@@ -141,6 +145,22 @@ public class Sound {
             setVolume(soundClip);
             // A clip that played to the end can stay "active" on Windows and then ignores start();
             // stop and flush it before rewinding so every play is heard.
+            soundClip.stop();
+            soundClip.flush();
+            soundClip.setFramePosition(0);
+            soundClip.start();
+        } catch (Exception e) {
+            System.err.println("Could not play sound: " + e);
+        }
+    }
+
+    /**
+     * Plays loaded sound at a share of the volume (0 to 100; 100 = the volume set for all sounds).
+     */
+    public void play(int percent) {
+        if (soundClip == null || percent <= 0) return;
+        try {
+            setVolume(soundClip, volume + 20.0f * (float) Math.log10(Math.min(100, percent) / 100.0));
             soundClip.stop();
             soundClip.flush();
             soundClip.setFramePosition(0);

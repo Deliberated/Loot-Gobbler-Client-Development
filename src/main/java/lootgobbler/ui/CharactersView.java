@@ -405,11 +405,20 @@ public class CharactersView extends JPanel {
         stack.setOpaque(false);
         row.setAlignmentX(Component.LEFT_ALIGNMENT);
         stack.add(row);
-        if (c.quickslots != null) {   // under it, smaller: the three quick slots (once seen while playing)
+        // under it, smaller: the reusable quick-slot gear among the quick slots (Coral Juice Refinery...), not
+        // potions; once seen while playing
+        List<Integer> reusable = new ArrayList<>();
+        if (c.quickslots != null) {
+            for (int id : c.quickslots) {
+                lootgobbler.ItemDb.Item item = id > 0 ? lootgobbler.ItemDb.get().item(id) : null;
+                if (item != null && item.quickslotOnly) reusable.add(id);
+            }
+        }
+        if (!reusable.isEmpty()) {
             JPanel quick = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
             quick.setOpaque(false);
             quick.setBorder(new EmptyBorder(4, 0, 0, 0));
-            for (int id : c.quickslots) quick.add(quickSlot(id));
+            for (int id : reusable) quick.add(quickSlot(id));
             quick.setAlignmentX(Component.LEFT_ALIGNMENT);
             stack.add(quick);
         }
@@ -421,7 +430,7 @@ public class CharactersView extends JPanel {
 
     private static final int QUICK_SLOT = 34;
 
-    /** One quick slot under the loadout: its item (e.g. a Coral Juice Refinery or potions), or a faint empty box. */
+    /** One quick slot under the loadout: its item (e.g. a Coral Juice Refinery), or a faint empty box. */
     private static JLabel quickSlot(int id) {
         Icon item = id > 0 ? sprite(id, 30) : null;
         JLabel l = new JLabel(new Icon() {
