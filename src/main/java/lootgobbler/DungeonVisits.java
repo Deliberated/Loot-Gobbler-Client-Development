@@ -49,6 +49,8 @@ public final class DungeonVisits implements Syncable {
         public long lanternActiveMs, lanternRangeMs, lanternNearMs;
         public int[] amuletSaves = new int[0];   // when your amulet saved you, ms after entering (AmuletSaves)
         public List<MvPhase> mvPhases = new ArrayList<>();   // Moonlight Village: its boss phases in order (MoonlightLog)
+        // whether it was completed can be told (visits from before this was kept cannot), and the game's "Victory"
+        public boolean judged, victory;
 
         public int hits() {
             return hitTime == null ? 0 : hitTime.length;
@@ -143,6 +145,7 @@ public final class DungeonVisits implements Syncable {
                 Visit v = new Visit();
                 v.dungeon = map.name;
                 v.start = now;
+                v.judged = true;
                 current = v;
                 AppLog.log("game", "Dungeon visit started: " + map.name);
             }
@@ -321,6 +324,38 @@ public final class DungeonVisits implements Syncable {
             save();
         }
         fire();
+    }
+
+    /** A game notification: its "Victory" (shown when a dungeon is done, e.g. Moonlight Village) marks the visit. */
+    public void notification(packets.incoming.NotificationPacket p) {
+        Visit v = current;
+        if (v != null && p != null && p.effect == packets.data.enums.NotificationEffectType.Victory && !v.victory) {
+            v.victory = true;
+            AppLog.log("game", "Dungeon completed (Victory): " + v.dungeon);
+        }
+    }
+
+    /**
+     * Whether you completed a finished visit: the game said "Victory", or the run's main boss was left at 8% of its
+     * life or less (it died; when you leave a boss alive it keeps most of its life). null when it cannot be told.
+     * <p>
+     * Older visits did not keep the boss's last life; for them the damage everyone did to it stands in: at 88% of its
+     * life or more it died (finished runs come to 90-180%, others' heals and phases included). Only in groups of up to
+     * 15, where your client sees nearly all of the others' damage (in Oryx's Chamber with 25 it saw a fifth), and not
+     * for Moonlight Village, whose bosses never lose their life.
+     */
+    public static Boolean completed(Visit v) {
+        if (v == null) return null;
+        if (v.victory) return true;
+        DpsHistory.Run run = run(v);
+        DpsHistory.Boss main = run == null ? null : run.mainBoss();
+        if (main == null) return v.runStart == 0 ? false : null;   // no boss fought; null: its run is gone from the history
+        if (main.maxHp <= 0) return null;
+        if (main.endHp >= 0) return main.endHp <= main.maxHp * 0.08;
+        if (MoonlightLog.DUNGEON.equals(v.dungeon) || main.players.size() > 15) return null;
+        long damage = 0;
+        for (DpsHistory.PlayerRow p : main.players) damage += p.damage;
+        return damage >= main.maxHp * 0.88;
     }
 
     /** The dungeon you are in now, or null. */

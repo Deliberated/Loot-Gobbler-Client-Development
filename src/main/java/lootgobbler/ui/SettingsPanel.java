@@ -31,7 +31,7 @@ public class SettingsPanel extends JPanel {
         sections.add(Box.createVerticalStrut(8));
         sections.add(new Section("Startup Sound", Palette.GOLD, startupBody()));
         sections.add(Box.createVerticalStrut(8));
-        sections.add(new Section("Amulet Sound", Palette.GOLD, amuletSoundBody()));
+        sections.add(new Section("Item Sounds", Palette.GOLD, itemSoundsBody()));
         sections.add(Box.createVerticalStrut(8));
         sections.add(new Section("Ping Lists", Palette.GOLD, pingListsBody()));
         sections.add(Box.createVerticalStrut(8));
@@ -81,51 +81,81 @@ public class SettingsPanel extends JPanel {
         return body;
     }
 
-    /**
-     * Sound played when your Amulet of Restoration fires: a WAV file of your choice, or none.
-     */
-    private JPanel amuletSoundBody() {
+    /** Sounds for what items do, each in its own part: the Amulet of Restoration, the Coral Juice Refinery. */
+    private JPanel itemSoundsBody() {
         JPanel body = body();
+        itemSound(body, lootgobbler.ItemSound.AMULET, "Played when your Amulet of Restoration saves you.");
+        body.add(Box.createVerticalStrut(14));
+        itemSound(body, lootgobbler.ItemSound.REFINERY,
+                "Played when your Coral Juice Refinery can be used again (15 seconds after using it).");
+        return body;
+    }
+
+    /** One item's part: its name, when the sound plays, and the sound (a WAV file of your choice, or none). */
+    private void itemSound(JPanel body, lootgobbler.ItemSound sound, String when) {
+        JPanel title = row();
+        JLabel name = new JLabel(sound.item);
+        name.setFont(name.getFont().deriveFont(Font.BOLD, name.getFont().getSize2D() + 2));
+        name.setForeground(Palette.GOLD);
+        title.add(name);
+        body.add(title);
         JPanel hint = row();
-        hint.add(new JLabel("Played when your Amulet of Restoration saves you."));
+        hint.add(new JLabel(when));
         body.add(hint);
         JLabel current = new JLabel();
+        // the bundled sounds to pick from (only when there is more than one)
+        JComboBox<String> builtins = new JComboBox<>(sound.builtins.stream().map(lootgobbler.ItemSound.Builtin::name).toArray(String[]::new));
+        builtins.setFocusable(false);
+        boolean[] showing = {false};
         Runnable show = () -> {
-            String f = lootgobbler.AmuletSound.file();
-            current.setText(lootgobbler.AmuletSound.isOff() ? "Off"
-                    : f.isEmpty() ? "Default (amulet activation)" : new java.io.File(f).getName());
+            showing[0] = true;
+            String f = sound.file();
+            int b = sound.builtin();
+            current.setText(sound.isOff() ? "Off" : !f.isEmpty() ? new java.io.File(f).getName()
+                    : sound.builtins.size() > 1 ? "" : "Default (" + sound.builtins.get(0).name() + ")");
             current.setToolTipText(f.isEmpty() ? null : f);
+            builtins.setSelectedIndex(b >= 0 && !sound.isOff() ? b : -1);
+            showing[0] = false;
         };
+        builtins.addActionListener(e -> {
+            if (showing[0] || builtins.getSelectedIndex() < 0) return;
+            sound.useBuiltin(builtins.getSelectedIndex());
+            sound.play();   // hear the choice
+            show.run();
+        });
         show.run();
         JPanel pickRow = row();
+        if (sound.builtins.size() > 1) {
+            pickRow.add(builtins);
+            pickRow.add(Box.createHorizontalStrut(8));
+        }
         pickRow.add(current);
         pickRow.add(Box.createHorizontalStrut(12));
-        pickRow.add(button("Play", lootgobbler.AmuletSound::play));
+        pickRow.add(button("Play", sound::play));
         pickRow.add(button("Choose...", () -> {
-            String f = lootgobbler.AmuletSound.file();
+            String f = sound.file();
             JFileChooser chooser = new JFileChooser(f.isEmpty() ? null : new java.io.File(f).getParentFile());
-            chooser.setDialogTitle("Sound for the Amulet of Restoration");
+            chooser.setDialogTitle("Sound for the " + sound.item);
             chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter("WAV sound (*.wav)", "wav"));
             if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) return;
-            if (lootgobbler.AmuletSound.set(chooser.getSelectedFile().getAbsolutePath())) {
-                lootgobbler.AmuletSound.play();
+            if (sound.set(chooser.getSelectedFile().getAbsolutePath())) {
+                sound.play();
             } else {
                 JOptionPane.showMessageDialog(this, "This file cannot be played. Please choose a WAV file.",
-                        "Amulet Sound", JOptionPane.WARNING_MESSAGE);
+                        "Item Sounds", JOptionPane.WARNING_MESSAGE);
             }
             show.run();
         }));
         pickRow.add(button("Default", () -> {
-            lootgobbler.AmuletSound.useDefault();
-            lootgobbler.AmuletSound.play();
+            sound.useBuiltin(0);
+            sound.play();
             show.run();
         }));
         pickRow.add(button("Off", () -> {
-            lootgobbler.AmuletSound.turnOff();
+            sound.turnOff();
             show.run();
         }));
         body.add(pickRow);
-        return body;
     }
 
     /**

@@ -26,6 +26,7 @@ public final class ItemDb {
         public int minDamage = -1, maxDamage = -1, mpCost = -1, feedPower = -1;
         public boolean soulbound;
         public boolean chest;   // opens into an item when used (Eerie Music Box, mystery ST chests...)
+        public boolean quickslotOnly;   // used only from a quick slot, again and again (Coral Juice Refinery...)
         public final List<Stat> onEquip = new ArrayList<>();
         public Set<String> labels = Set.of();
         public int collectionIcon = Integer.MAX_VALUE;
@@ -54,11 +55,13 @@ public final class ItemDb {
          * Newer items (the Druid's sigils, event weapons, some shinies) lack the tab label, so a named UT or ST
          * item counts too, and so does an unnamed UT with a dungeon of origin (ORG_ label, e.g. Swarmlord's Sigil,
          * Corsair Ring); unnamed UTs without one are test entries and event reskins.
+         * Quick-slot gear is the exception among the consumables: items used only from a quick slot, again and again
+         * on a cooldown (Coral Juice Refinery, Miniature Alien Generator); they come last, as the Quick Slot category.
          */
         public boolean isCollectible() {
             boolean dungeonUt = isUT() && !labels.contains("RESKIN") && labels.stream().anyMatch(l -> l.startsWith("ORG_"));
             boolean utSt = labels.contains("TAB_UT") || labels.contains("TAB_ST") || (named && (isUT() || isST())) || dungeonUt;
-            return (utSt && slotType != 0 && slotType != 10) || isTopTier();
+            return (utSt && (slotType != 0 && slotType != 10 || quickslotOnly)) || isTopTier();
         }
 
         public boolean isTopTier() {
@@ -203,6 +206,7 @@ public final class ItemDb {
                     switch (n) {
                         case "Projectile" -> inProjectile = true;
                         case "Soulbound" -> cur.soulbound = true;
+                        case "OnlyUsableFromQuickslot" -> cur.quickslotOnly = true;
                         case "Chest" -> cur.chest = true;
                         case "ActivateOnEquip" -> {
                             String stat = r.getAttributeValue(null, "stat");

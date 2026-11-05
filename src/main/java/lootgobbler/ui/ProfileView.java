@@ -58,7 +58,6 @@ public class ProfileView extends SubTabs {
     private String guildName, guildNote = "";   // guildNote: why there is nothing to show; "" while loading
     private CaravanMember myWagon;
     private QuestMap questMap;
-    private Set<String> guildmates = Set.of();   // the other members' names, lower case (fame graph: who joined you)
     private int guildVersion;
     private boolean guildLoading, guildAgain, guildStale;
 
@@ -90,6 +89,10 @@ public class ProfileView extends SubTabs {
         new javax.swing.Timer(60_000, e -> later.run()).start();   // "x min ago" and the 24 hour window move on by themselves
 
         server.onChange(() -> SwingUtilities.invokeLater(this::loadGuild));
+        Guildmates.get().onChange(() -> {   // the fame graph shows who joined you
+            guildVersion++;
+            refresh();
+        });
         ServerSync.get().onUploaded(kind -> {   // your run or drops reached the server
             if (kind.equals("dps_history") || kind.equals("collection")) SwingUtilities.invokeLater(() -> {
                 if (isShowing()) loadGuild();
@@ -121,16 +124,6 @@ public class ProfileView extends SubTabs {
             return;
         }
         guildLoading = true;
-        server.leaderboard().whenComplete((b, e) -> SwingUtilities.invokeLater(() -> {
-            Set<String> mates = new HashSet<>();
-            if (e == null && b != null) {
-                for (GobblerServer.Member m : b.members) if (m.id != me.id) mates.add(m.ign.toLowerCase(Locale.ROOT));
-            }
-            if (mates.equals(guildmates)) return;
-            guildmates = mates;
-            guildVersion++;
-            refresh();
-        }));
         server.caravan("week").thenCombine(server.questMaps(1), (c, q) -> {
             CaravanMember mine = c.members.stream().filter(m -> m.id == me.id).findFirst().orElseGet(() -> {
                 CaravanMember m = new CaravanMember();   // nothing found this week yet
@@ -297,7 +290,7 @@ public class ProfileView extends SubTabs {
         List<Sample> total = total(gainers.isEmpty() ? List.of(c) : gainers, since);
         if (total.size() > 1) {
             text.add(Box.createVerticalStrut(6));
-            text.add(left(new FameGraph(List.of(new FameGraph.Series(total, gold(), 3f)), guildmates)));
+            text.add(left(new FameGraph(List.of(new FameGraph.Series(total, gold(), 3f)))));
             if (gainers.size() > 1) {   // which characters the total is made of
                 JPanel legend = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
                 legend.setOpaque(false);
@@ -819,13 +812,10 @@ public class ProfileView extends SubTabs {
 
         private final List<Series> series;   // the main one first
         private final IdleTimeline timeline;
-        private final Set<String> guildmates;   // lower case
         private final List<Object[]> dungeons = new ArrayList<>();   // {Visit, gained, Rectangle, mates} as last painted
         private final Map<String, Icon> icons = new HashMap<>();
-        private final Map<Integer, Icon> mateIcons = new HashMap<>();
 
-        FameGraph(List<Series> series, Set<String> guildmates) {
-            this.guildmates = guildmates;
+        FameGraph(List<Series> series) {
             this.series = series.stream().filter(s -> s.samples().size() > 1).toList();
             long t0 = Long.MAX_VALUE, t1 = Long.MIN_VALUE;
             List<Long> changes = new ArrayList<>();
@@ -856,21 +846,6 @@ public class ProfileView extends SubTabs {
             List<long[]> out = new ArrayList<>(ss.size());
             for (Sample x : ss) out.add(new long[]{x.t, x.fame});
             return out;
-        }
-
-        /** The guildmates who fought the visit's bosses with you, one row each (first character seen). */
-        private List<DpsHistory.PlayerRow> mates(DungeonVisits.Visit v) {
-            if (guildmates.isEmpty()) return List.of();
-            DpsHistory.Run run = DungeonVisits.run(v);
-            if (run == null) return List.of();
-            Map<String, DpsHistory.PlayerRow> out = new LinkedHashMap<>();
-            for (DpsHistory.Boss b : run.bosses) {
-                for (DpsHistory.PlayerRow p : b.players) {
-                    String key = p.name.toLowerCase(Locale.ROOT);
-                    if (!p.me && guildmates.contains(key)) out.putIfAbsent(key, p);
-                }
-            }
-            return new ArrayList<>(out.values());
         }
 
         private DungeonVisits.Visit dungeonAt(Point p) {
@@ -994,11 +969,11 @@ public class ProfileView extends SubTabs {
                 }
                 // the guildmates' characters (of all the group's runs) side by side right above it
                 Map<String, DpsHistory.PlayerRow> mates = new LinkedHashMap<>();
-                for (DungeonVisits.Visit v : group) for (DpsHistory.PlayerRow p : mates(v)) mates.putIfAbsent(p.name.toLowerCase(Locale.ROOT), p);
+                for (DungeonVisits.Visit v : group) for (DpsHistory.PlayerRow p : Guildmates.get().with(v)) mates.putIfAbsent(p.name.toLowerCase(Locale.ROOT), p);
                 StringBuilder with = new StringBuilder();
                 int mx = x - mates.size() * MATE / 2;
                 for (DpsHistory.PlayerRow p : mates.values()) {
-                    Icon mate = mateIcons.computeIfAbsent(p.classType, t -> CharactersView.sprite(t, MATE));
+                    Icon mate = Guildmates.get().look(p, MATE);   // their skin and dyes then
                     if (mate != null) mate.paintIcon(this, g2, mx, r.y - MATE - 1);
                     mx += MATE;
                     String cls = CharacterClass.getName(p.classType);

@@ -171,7 +171,7 @@ public final class ActiveDungeonBadge extends JPanel {
      * A dungeon's difficulty as the game shows it: a big bold number and the gravestone right after it, both
      * standing on the same line (the gravestone's visible bottom on the number's baseline, not its padded box).
      */
-    private static final class DifficultyMark extends JComponent {
+    static final class DifficultyMark extends JComponent {
         private static final int GAP = 5;   // as in the game
         private String text = "";
         private Icon grave;

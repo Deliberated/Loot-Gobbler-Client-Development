@@ -400,10 +400,53 @@ public class CharactersView extends JPanel {
         if (c.extender) row.add(slot(CharacterStore.EXTENDER_ITEM, null, "Backpack Extender", false));
         else if (c.backpack) row.add(slot(CharacterStore.BACKPACK_ITEM, null, "Backpack", false));
         else row.add(slot(-1, null, "Backpack", false));
+        JPanel stack = new JPanel();
+        stack.setLayout(new BoxLayout(stack, BoxLayout.Y_AXIS));
+        stack.setOpaque(false);
+        row.setAlignmentX(Component.LEFT_ALIGNMENT);
+        stack.add(row);
+        if (c.quickslots != null) {   // under it, smaller: the three quick slots (once seen while playing)
+            JPanel quick = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+            quick.setOpaque(false);
+            quick.setBorder(new EmptyBorder(4, 0, 0, 0));
+            for (int id : c.quickslots) quick.add(quickSlot(id));
+            quick.setAlignmentX(Component.LEFT_ALIGNMENT);
+            stack.add(quick);
+        }
         JPanel center = new JPanel(new GridBagLayout());   // vertically centered
         center.setOpaque(false);
-        center.add(row);
+        center.add(stack);
         return center;
+    }
+
+    private static final int QUICK_SLOT = 34;
+
+    /** One quick slot under the loadout: its item (e.g. a Coral Juice Refinery or potions), or a faint empty box. */
+    private static JLabel quickSlot(int id) {
+        Icon item = id > 0 ? sprite(id, 30) : null;
+        JLabel l = new JLabel(new Icon() {
+            @Override
+            public void paintIcon(Component comp, Graphics g, int x, int y) {
+                if (item != null) {
+                    item.paintIcon(comp, g, x + (QUICK_SLOT - item.getIconWidth()) / 2, y + (QUICK_SLOT - item.getIconHeight()) / 2);
+                } else {
+                    g.setColor(new Color(0, 0, 0, 40));
+                    g.fillRect(x + 4, y + 4, QUICK_SLOT - 8, QUICK_SLOT - 8);
+                }
+            }
+
+            @Override
+            public int getIconWidth() {
+                return QUICK_SLOT;
+            }
+
+            @Override
+            public int getIconHeight() {
+                return QUICK_SLOT;
+            }
+        });
+        l.setToolTipText(id > 0 ? "Quick slot: " + itemName(id) : "Quick slot: empty");
+        return id > 0 ? ItemLinks.link(l, id) : l;
     }
 
     /**

@@ -537,7 +537,8 @@ public class DpsPanel extends JPanel {
 
     static String duration(long ms) {
         long s = ms / 1000;
-        return s >= 60 ? (s / 60) + "m " + (s % 60) + "s" : s + "s";
+        // as a clock: 4:28, and 1:02:05 past an hour
+        return s >= 3600 ? String.format("%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) : String.format("%d:%02d", s / 60, s % 60);
     }
 
     private static Icon bossIcon(int objectType) {

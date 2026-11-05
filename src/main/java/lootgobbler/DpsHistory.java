@@ -33,6 +33,13 @@ public final class DpsHistory implements Syncable {
         public int taken;
         public boolean died;
         public boolean me;
+        // the look the character had in this run: skin (0 = the class's own) and dye textures (0 = none, see Dyes)
+        public int skin, tex1, tex2;
+
+        /** Sprite object id: the skin worn, or the class itself. */
+        public int spriteId() {
+            return skin > 0 ? skin : classType;
+        }
 
         public String className() {
             String n = CharacterClass.getName(classType);
@@ -46,6 +53,7 @@ public final class DpsHistory implements Syncable {
         public int objectType;
         public int[] loadout;   // guild hall: your weapon, ability, armor, ring for this block (-1 = empty)
         public int maxHp;
+        public int endHp = -1;   // its life when the run was saved (about 0 if it died); -1 = not kept (older runs)
         public long fightMs;
         public List<PlayerRow> players = new ArrayList<>();
 
@@ -299,12 +307,14 @@ public final class DpsHistory implements Syncable {
                 b.id = e.id;
                 b.objectType = e.objectType;
                 b.maxHp = e.maxHp();
+                b.endHp = e.hp();
                 b.fightMs = Math.max(0, e.getFightDuration());
                 for (Damage d : e.getPlayerDamageList()) {
                     if (d == null || d.owner == null || d.damage <= 0) continue;
                     PlayerRow p = new PlayerRow();
                     p.name = d.owner.name() == null ? "?" : d.owner.name();
                     p.classType = d.owner.objectType;
+                    look(p, d.owner);
                     p.damage = d.damage;
                     p.taken = d.owner.damageTaken(e)[0];
                     p.died = DeathParser.isDead(deathMap, p.name);
@@ -318,6 +328,15 @@ public final class DpsHistory implements Syncable {
             // fight data changes while being read; skip this snapshot
             return null;
         }
+    }
+
+    /** The skin and dyes the player's character wears now, as the game sends them. */
+    private static void look(PlayerRow p, Entity e) {
+        packets.data.StatData skin = e.stat.get(packets.data.enums.StatType.SKIN_ID);
+        packets.data.StatData tex1 = e.stat.get(packets.data.enums.StatType.TEX1_STAT), tex2 = e.stat.get(packets.data.enums.StatType.TEX2_STAT);
+        if (skin != null && skin.statValue > 0) p.skin = skin.statValue;
+        if (tex1 != null) p.tex1 = CharacterStore.liveTexture(tex1.statValue);
+        if (tex2 != null) p.tex2 = CharacterStore.liveTexture(tex2.statValue);
     }
 
     private static Run newRun(String dungeon, long durationMs) {

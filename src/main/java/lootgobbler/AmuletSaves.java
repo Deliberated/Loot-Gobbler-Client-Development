@@ -215,7 +215,7 @@ public final class AmuletSaves implements Syncable {
             save();
         }
         DungeonVisits.get().amuletSaved(now);
-        AmuletSound.play();   // the sound you chose for it, if any
+        ItemSound.AMULET.play();   // the sound you chose for it, if any
         AppLog.log("game", "Amulet saved you (" + s.dungeon + "): " + message);
         fire();
     }

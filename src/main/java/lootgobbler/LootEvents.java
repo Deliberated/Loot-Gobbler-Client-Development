@@ -148,6 +148,9 @@ public final class LootEvents {
     /** The collectible copy in each slot (equipment, inventory, backpack) as of the last scan, by slot index. */
     private static volatile Map<Integer, CollectionStore.Find> slotCopies = Map.of();
     private static volatile Map<Integer, Integer> slotItems = Map.of();
+    /** Your three quick slots' item stats, and the slot numbers they get here (after every real slot). */
+    public static final StatType[] QUICKSLOTS = {StatType.POTION_ONE_TYPE, StatType.POTION_TWO_TYPE, StatType.POTION_THREE_TYPE};
+    private static final int QUICKSLOT_FIRST = 1000;
 
     /**
      * The copy of the item in a slot of yours as of the last inventory scan (its enchantments and whether the
@@ -192,6 +195,17 @@ public final class LootEvents {
             held.computeIfAbsent(sd.statValue, k -> new ArrayList<>()).add(f);
             copies.put(i, f);
             items.put(i, sd.statValue);
+        }
+        // the three quick slots (their own stats, not inventory slots): quick-slot gear such as the Coral Juice Refinery
+        for (int k = 0; k < QUICKSLOTS.length; k++) {
+            StatData sd = player.stat.get(QUICKSLOTS[k]);
+            ItemDb.Item item = sd == null || sd.statValue < 1 ? null : db.item(sd.statValue);
+            if (item == null || !item.isCollectible()) continue;
+            CollectionStore.Find f = CollectionStore.Find.of(CollectionStore.INVENTORY, -1, "", "Quick slot");
+            f.seasonal = player.isSeasonal();
+            held.computeIfAbsent(sd.statValue, x -> new ArrayList<>()).add(f);
+            copies.put(QUICKSLOT_FIRST + k, f);
+            items.put(QUICKSLOT_FIRST + k, sd.statValue);
         }
         slotCopies = copies;
         slotItems = items;

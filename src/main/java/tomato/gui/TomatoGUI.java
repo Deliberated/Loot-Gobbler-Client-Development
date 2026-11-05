@@ -129,6 +129,7 @@ public class TomatoGUI {
         DpsDisplayOptions.loadProfileFilter();
         lootgobbler.PacketDebug.install();
         lootgobbler.ItemUse.install();   // forged and fed items leave the collection
+        lootgobbler.RefineryCooldown.install();   // a sound when the Coral Juice Refinery is ready again
         lootgobbler.DungeonDifficulty.preload();
         lootgobbler.SpriteMemory.start();   // drops RealmShark's decoded sprite sheets (300+ MB) when idle   // the title bar's dungeon box shows how hard a dungeon is
         jMenuBar = menuBar.make();

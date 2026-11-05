@@ -30,7 +30,8 @@ import java.util.Map;
 public class DpsLoggerView extends JPanel {
     private static final String[] PAGES = {"Dungeons", "DPS"};
     private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("d MMM, HH:mm", Locale.ENGLISH);
-    private static final int ICON = 34;
+    private static final int ICON = 64, POTION = 22, MATE = 30, MATES = 4, SINGLES = 4, MULTIS = 2;
+    private static final int TILE_MIN_WIDTH = 400, GAP = 8;
     // ExaltStore's stat order (dex, spd, vit, wis, def, att, mana, life): names, and the potion index ClassesView uses
     private static final String[] EXALT_STATS = {"DEX", "SPD", "VIT", "WIS", "DEF", "ATT", "MP", "HP"};
     private static final int[] EXALT_POTION = {5, 4, 6, 7, 3, 2, 1, 0};
@@ -39,7 +40,10 @@ public class DpsLoggerView extends JPanel {
     private final CardLayout pages = new CardLayout();
     private final JPanel views = new JPanel(pages);
     private final Segmented picker;
-    private final JPanel list = new JPanel();
+    private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("d MMM yyyy", Locale.ENGLISH);
+    private final JPanel list = new JPanel();   // per day: its date over a gold line, then its boxes
+    private final List<JPanel> dayGrids = new ArrayList<>();
+    private JScrollPane listScroll;
     private final Map<String, Icon> icons = new HashMap<>();
     private final Timer clock = new Timer(1000, e -> tick());   // the visit in progress counts up
     private JLabel nowWhen;   // the time line of the visit in progress
@@ -70,7 +74,7 @@ public class DpsLoggerView extends JPanel {
 
         list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
         list.setOpaque(false);
-        list.setBorder(new EmptyBorder(8, 8, 8, 8));
+        list.setBorder(new EmptyBorder(4, 10, 10, 10));
         JButton clear = new JButton("CLEAR ALL");
         clear.putClientProperty("FlatLaf.styleClass", "danger");
         clear.setFocusable(false);
@@ -80,10 +84,22 @@ public class DpsLoggerView extends JPanel {
                 DungeonVisits.get().clear();
             }
         });
-        Section dungeons = new Section("Dungeons", Palette.BLUE, FitWidthPanel.scroll(list, 24)).actions(clear);
+        listScroll = FitWidthPanel.scroll(list, 24);
+        listScroll.getViewport().addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent e) {
+                updateColumns();
+            }
+        });
+        Section dungeons = new Section("Dungeons", Palette.BLUE, listScroll).actions(clear);
         detail.setLayout(new BoxLayout(detail, BoxLayout.Y_AXIS));
         detail.setOpaque(false);
         SideSplit split = new SideSplit(dungeons, FitWidthPanel.scroll(detail, 24), "dungeonDetail", 420, 300);
+        split.setSnap(listScroll.getViewport(), (width, nearest) -> {   // settle where the boxes fill whole columns
+            float cols = (width - 20 + GAP) / (float) (TILE_MIN_WIDTH + GAP);
+            int n = Math.max(1, nearest ? Math.round(cols) : (int) cols);
+            return n * (TILE_MIN_WIDTH + GAP) - GAP + 20;
+        });
         views.setOpaque(false);
         views.add(split, PAGES[0]);
         views.add(dps, PAGES[1]);
@@ -92,6 +108,7 @@ public class DpsLoggerView extends JPanel {
         Runnable later = ViewRefresh.of(this, this::refresh);   // only while it can be seen, once per burst
         DungeonVisits.get().onChange(later);
         DpsHistory.get().onChange(later);
+        Guildmates.get().onChange(later);   // who of your guild was with you
         // new hits in the dungeon you are in: only its graph (if shown) follows, not the whole list
         DungeonVisits.get().onHits(() -> SwingUtilities.invokeLater(() -> {
             if (!graphs.isEmpty() && graphVisit == DungeonVisits.get().current()) {
@@ -165,6 +182,7 @@ public class DpsLoggerView extends JPanel {
         List<Visit> visits = DungeonVisits.get().visits();
         List<Run> runs = DpsHistory.get().runs();
         list.removeAll();
+        dayGrids.clear();
         nowWhen = null;
         nowVisit = now;
         // the selected visit, else the one in progress, else the newest
@@ -178,21 +196,27 @@ public class DpsLoggerView extends JPanel {
             empty.setForeground(Palette.MUTED);
             list.add(empty);
         }
+        java.time.LocalDate day = null;
+        JPanel grid = null;
         if (now != null) {
             Run live = DpsHistory.get().live();
             boolean fought = live != null && !live.guildHall && live.dungeon.equals(now.dungeon) && live.mainBoss() != null;
-            list.add(row(now, fought ? live : null, true, now.start == shownStart));
-            list.add(Box.createVerticalStrut(4));
+            day = dayOf(now);
+            grid = dayGrid(day);
+            grid.add(tile(now, fought ? live : null, true, now.start == shownStart));
         }
         Run shownRun = null;
         for (Visit v : visits) {
             Run run = null;
             if (v.runStart != 0) for (Run r : runs) if (r.start == v.runStart) run = r;
             if (v == shown) shownRun = run;
-            list.add(row(v, run, false, v == shown));
+            if (!dayOf(v).equals(day)) {   // newest first: a new day starts its own group
+                day = dayOf(v);
+                grid = dayGrid(day);
+            }
+            grid.add(tile(v, run, false, v == shown));
         }
-        list.revalidate();
-        list.repaint();
+        updateColumns();
         if (shown == now && now != null) {
             Run live = DpsHistory.get().live();
             shownRun = live != null && !live.guildHall && live.dungeon.equals(now.dungeon) && live.mainBoss() != null ? live : null;
@@ -416,80 +440,226 @@ public class DpsLoggerView extends JPanel {
         return fame.computeIfAbsent(v.start, k -> DungeonVisits.fameGained(v));
     }
 
+    private static java.time.LocalDate dayOf(Visit v) {
+        return Instant.ofEpochMilli(v.start).atZone(ZoneId.systemDefault()).toLocalDate();
+    }
+
+    /** A day's group in the list: its date over a gold line, and an empty grid for its boxes (returned). */
+    private JPanel dayGrid(java.time.LocalDate day) {
+        JLabel date = new JLabel(DAY.format(day));
+        date.setFont(date.getFont().deriveFont(18f));
+        date.setForeground(Section.color("LootGobbler.gold", Palette.GOLD));
+        date.setBorder(new EmptyBorder(list.getComponentCount() == 0 ? 4 : 18, 4, 4, 0));
+        list.add(left(date));
+        JComponent line = new JComponent() {   // a gold line that stops short of both edges
+            @Override
+            protected void paintComponent(Graphics g) {
+                g.setColor(Section.color("LootGobbler.gold", Palette.GOLD));
+                g.fillRect(4, 1, getWidth() - 8, 2);
+            }
+        };
+        line.setPreferredSize(new Dimension(10, 4));
+        line.setMaximumSize(new Dimension(Integer.MAX_VALUE, 4));
+        list.add(left(line));
+        list.add(Box.createVerticalStrut(8));
+        JPanel grid = new JPanel(new GridLayout(0, 1, GAP, GAP)) {
+            @Override
+            public Dimension getMaximumSize() {   // never stretched taller than its boxes
+                return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+            }
+        };
+        grid.setOpaque(false);
+        list.add(left(grid));
+        dayGrids.add(grid);
+        return grid;
+    }
+
+    /** A box's time: how long the visit took (counting up, with NOW, for the one in progress). */
+    private static String durationText(Visit v, boolean current) {
+        return (current ? "NOW  ·  " : "") + DpsPanel.duration(v.duration());
+    }
+
     private static String whenText(Visit v, boolean current) {
         return (current ? "NOW  ·  since " : "") + WHEN.format(Instant.ofEpochMilli(v.start).atZone(ZoneId.systemDefault()))
                 + "  ·  " + DpsPanel.duration(v.duration());
     }
 
-    private void tick() {   // the same line as the row was built with (time and fame), so nothing comes and goes
-        if (nowWhen != null && nowVisit != null) nowWhen.setText(rowText(nowVisit, true));
+    private void tick() {   // the same line as the box was built with, so nothing comes and goes
+        if (nowWhen != null && nowVisit != null) nowWhen.setText(durationText(nowVisit, true));
     }
 
-    /** A row's second line: when and how long, and the fame gained if any. */
-    private String rowText(Visit v, boolean current) {
-        long gained = fame(v, current);
-        return whenText(v, current) + (gained > 0 ? "  ·  +" + String.format(Locale.ROOT, "%,d", gained) + " fame" : "");
+    /** As many columns of boxes as fit the list's width. */
+    private void updateColumns() {
+        int width = listScroll.getViewport().getWidth();
+        if (width > 0) {   // 0 while hidden; recomputed when shown
+            int cols = Math.max(1, (width - 20 + GAP) / (TILE_MIN_WIDTH + GAP));
+            for (JPanel grid : dayGrids) ((GridLayout) grid.getLayout()).setColumns(cols);
+        }
+        list.revalidate();
+        list.repaint();
     }
 
     /**
-     * One visit: portal, dungeon, when and how long, your rank if you fought a boss and a potion if you made
-     * exaltation progress. A click shows it on the right (framed in gold); the one in progress has a gold name.
+     * One visit as a box: the portal on the left and the dungeon's name under it, your rank and how long at the top, the exaltation progress made in it (single steps in the upper row, stats that went up more than
+     * once with "3x" in the lower one), the characters of the guildmates who were with you on the right (at most
+     * four), and the dungeon's difficulty at the bottom right. A click shows it on the right (the box framed in
+     * gold); the one in progress has a gold name.
      */
-    private JPanel row(Visit v, Run run, boolean current, boolean isSelected) {
-        JPanel row = DpsPanel.row(true);
+    private JPanel tile(Visit v, Run run, boolean current, boolean isSelected) {
+        boolean notDone = !current && Boolean.FALSE.equals(DungeonVisits.completed(v));
+        JPanel tile = new JPanel(new BorderLayout(10, 6)) {
+            @Override
+            protected void paintChildren(Graphics g) {
+                super.paintChildren(g);
+                if (!notDone) return;
+                // "Not completed" over the middle of the box, on a dark band so it reads over the portal and potions
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+                g2.setFont(getFont().deriveFont(Font.BOLD, 18f));
+                FontMetrics fm = g2.getFontMetrics();
+                String text = "NOT COMPLETED";
+                int w = fm.stringWidth(text) + 24, h = fm.getHeight() + 6;
+                int x = (getWidth() - w) / 2, y = (getHeight() - h) / 2;
+                g2.setColor(new Color(0, 0, 0, 150));
+                g2.fillRect(x, y, w, h);
+                g2.setColor(new Color(0xD8, 0x5A, 0x4A));
+                g2.drawRect(x, y, w - 1, h - 1);
+                g2.drawString(text, x + 12, y + 3 + fm.getAscent());
+                g2.dispose();
+            }
+
+            @Override
+            protected void paintComponent(Graphics g) {
+                Color accent = Section.color("LootGobbler.gold", Palette.GOLD);
+                Color header = Section.color("LootGobbler.header", Color.LIGHT_GRAY);
+                g.setColor(isSelected ? Palette.mix(accent, header, 0.3) : header);
+                g.fillRect(0, 0, getWidth(), getHeight());
+                g.setColor(isSelected ? accent : Color.BLACK);
+                g.drawRect(0, 0, getWidth() - 1, getHeight() - 1);
+                if (isSelected) g.drawRect(1, 1, getWidth() - 3, getHeight() - 3);
+            }
+        };
+        tile.setOpaque(false);
+        tile.setBorder(new EmptyBorder(8, 8, 8, 10));
         if (isSelected && scrollToSelected) {
             scrollToSelected = false;
-            SwingUtilities.invokeLater(() -> row.scrollRectToVisible(new Rectangle(0, 0, row.getWidth(), row.getHeight())));
+            SwingUtilities.invokeLater(() -> tile.scrollRectToVisible(new Rectangle(0, 0, tile.getWidth(), tile.getHeight())));
         }
-        if (isSelected) {
-            row.setBorder(BorderFactory.createCompoundBorder(new LineBorder(Palette.GOLD, 2), new EmptyBorder(4, 8, 4, 6)));
-        }
-        JLabel icon = new JLabel(icons.computeIfAbsent(v.dungeon, d -> ProfileView.dungeonIcon(d, ICON)));
-        icon.setPreferredSize(new Dimension(ICON, ICON));
-        row.add(icon, BorderLayout.WEST);
 
-        JLabel name = new JLabel(v.dungeon);
-        name.setFont(name.getFont().deriveFont(18f));
-        if (current) name.setForeground(Palette.GOLD);
-        JLabel when = new JLabel(rowText(v, current));
+        JPanel top = new JPanel(new BorderLayout(10, 0));
+        top.setOpaque(false);
+        JLabel icon = new JLabel(icons.computeIfAbsent(v.dungeon,
+                d -> ActiveDungeonBadge.fit(ProfileView.dungeonIcon(d, 64), ICON)));
+        icon.setPreferredSize(new Dimension(ICON, ICON));
+        icon.setVerticalAlignment(SwingConstants.TOP);
+        top.add(icon, BorderLayout.WEST);
+
+        JPanel middle = column();
+        JPanel head = new JPanel(new BorderLayout(12, 0));   // the time gets "..." rather than a line of its own
+        head.setOpaque(false);
+        JLabel rank = run != null ? DpsPanel.runRank(run) : null;
+        if (rank == null) rank = muted("no boss");
+        rank.setFont(rank.getFont().deriveFont(16f));
+        head.add(rank, BorderLayout.WEST);
+        JLabel when = new JLabel(durationText(v, current));   // the day stands over the group
         if (current) nowWhen = when;
         when.setForeground(current ? Palette.GOLD : Palette.MUTED);
-        JPanel text = new JPanel(new GridLayout(2, 1));
-        text.setOpaque(false);
-        text.add(name);
-        text.add(when);
-        row.add(text, BorderLayout.CENTER);
+        head.add(when, BorderLayout.CENTER);
+        head.setMaximumSize(new Dimension(Integer.MAX_VALUE, head.getPreferredSize().height));
+        middle.add(left(head));
+        middle.add(Box.createVerticalStrut(6));
+        middle.add(left(potions(v)));
+        top.add(middle, BorderLayout.CENTER);
+        top.add(mates(v), BorderLayout.EAST);
+        tile.add(top, BorderLayout.CENTER);
 
-        JLabel right = run != null ? DpsPanel.runRank(run) : null;
-        if (right == null) {
-            right = new JLabel("no boss fought");
-            right.setForeground(Palette.MUTED);
+        JPanel bottom = new JPanel(new BorderLayout(8, 0));
+        bottom.setOpaque(false);
+        JLabel name = new JLabel(v.dungeon);
+        name.setFont(name.getFont().deriveFont(20f));
+        if (current) name.setForeground(Palette.GOLD);
+        bottom.add(name, BorderLayout.CENTER);
+        Double d = lootgobbler.DungeonDifficulty.of(v.dungeon);
+        if (d != null) {
+            ActiveDungeonBadge.DifficultyMark mark = new ActiveDungeonBadge.DifficultyMark();
+            mark.set(d % 1 == 0 ? String.valueOf(d.intValue()) : String.valueOf(d), name.getFont().deriveFont(15f));
+            mark.lineOf = name;   // standing on the name's line
+            bottom.add(mark, BorderLayout.EAST);
         }
-        JPanel east = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
-        east.setOpaque(false);
-        east.setBorder(new EmptyBorder(0, 0, 0, 6));
-        east.add(right);
-        // exaltation progress made here: each stat's potion, with "3x" in front when it went up by 3 (over all classes)
-        if (v.exalts != null && !v.exalts.isEmpty()) {
-            java.util.Map<Integer, Integer> perStat = new java.util.LinkedHashMap<>();
-            for (Exalt e : merged(v)) perStat.merge(e.stat, Math.max(1, e.after - e.before), Integer::sum);
-            perStat.forEach((stat, count) -> {
-                JLabel potion = new JLabel(count > 1 ? count + "x" : null, ClassesView.potion(EXALT_POTION[stat], 20),
-                        SwingConstants.LEFT);
-                potion.setHorizontalTextPosition(SwingConstants.LEFT);
-                potion.setIconTextGap(2);
-                potion.setBorder(new EmptyBorder(0, 8, 0, 0));
-                east.add(potion);
-            });
-        }
-        row.add(east, BorderLayout.EAST);
+        tile.add(bottom, BorderLayout.SOUTH);
 
-        row.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        Clicks.onClick(row, () -> {
+        clickable(tile, () -> {
             selected = v.start;
             refresh();
         });
-        row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
-        return row;
+        return tile;
+    }
+
+    /**
+     * The exaltation progress made in a visit, per stat over all classes: the stats that went up once in the upper
+     * row (at most four), the ones that went up more often below with "3x" in front (at most two).
+     */
+    private static JComponent potions(Visit v) {
+        JPanel rows = column();
+        if (v.exalts == null || v.exalts.isEmpty()) return rows;
+        Map<Integer, Integer> perStat = new java.util.LinkedHashMap<>();
+        for (Exalt e : merged(v)) perStat.merge(e.stat, Math.max(1, e.after - e.before), Integer::sum);
+        JPanel singles = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0)), multis = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        singles.setOpaque(false);
+        multis.setOpaque(false);
+        StringBuilder tip = new StringBuilder("<html>Exaltation progress here:");
+        perStat.forEach((stat, count) -> {
+            tip.append("<br>").append(EXALT_STATS[stat]).append(" +").append(count);
+            JPanel row = count > 1 ? multis : singles;
+            if (row.getComponentCount() >= (count > 1 ? MULTIS : SINGLES)) return;
+            JLabel potion = new JLabel(count > 1 ? count + "x" : null, ClassesView.potion(EXALT_POTION[stat], POTION), SwingConstants.LEFT);
+            potion.setHorizontalTextPosition(SwingConstants.LEFT);
+            potion.setIconTextGap(3);
+            if (row.getComponentCount() > 0) potion.setBorder(new EmptyBorder(0, count > 1 ? 12 : 6, 0, 0));   // both rows start flush
+            row.add(potion);
+        });
+        if (singles.getComponentCount() > 0) rows.add(left(singles));
+        if (singles.getComponentCount() > 0 && multis.getComponentCount() > 0) rows.add(Box.createVerticalStrut(4));
+        if (multis.getComponentCount() > 0) rows.add(left(multis));
+        rows.setToolTipText(tip + "</html>");
+        return rows;
+    }
+
+    /** The characters of the guildmates who were with you, two by two (at most four; the tooltip names all). */
+    private static JComponent mates(Visit v) {
+        List<lootgobbler.DpsHistory.PlayerRow> mates = Guildmates.get().with(v);
+        JPanel out = column();   // rows of two, each against the box's right edge (a lone one too)
+        if (mates.isEmpty()) return out;
+        StringBuilder tip = new StringBuilder("<html>With you:");
+        JPanel row = null;
+        for (int i = 0; i < mates.size(); i++) {
+            lootgobbler.DpsHistory.PlayerRow p = mates.get(i);
+            String cls = tomato.realmshark.enums.CharacterClass.getName(p.classType);
+            tip.append("<br>").append(p.name).append(cls == null ? "" : " (" + cls + ")");
+            if (i >= MATES) continue;
+            if (i % 2 == 0) {
+                if (row != null) out.add(Box.createVerticalStrut(2));
+                row = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+                row.setOpaque(false);
+                row.setAlignmentX(RIGHT_ALIGNMENT);
+                out.add(row);
+            }
+            JLabel sprite = new JLabel(Guildmates.get().look(p, MATE));   // their skin and dyes then
+            if (i % 2 == 1) sprite.setBorder(new EmptyBorder(0, 2, 0, 0));
+            row.add(sprite);
+        }        out.setToolTipText(tip + "</html>");   // all of them, also the ones past the first four
+        return out;
+    }
+
+    private static <T extends JComponent> T left(T c) {
+        c.setAlignmentX(LEFT_ALIGNMENT);
+        return c;
+    }
+
+    /** Clicks anywhere on c (also on its labels, which would otherwise take the click) run action. */
+    private static void clickable(JComponent c, Runnable action) {
+        c.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Clicks.onClick(c, action);
+        for (Component child : c.getComponents()) if (child instanceof JComponent j) clickable(j, action);
     }
 }

@@ -55,6 +55,7 @@ public final class CharacterStore implements Syncable {
         public int[] enchants;         // enchantment slots (rarity) per equipment slot; null = unknown
         public int[][] enchantIds;     // per equipment slot: enchantment ids, -1 = empty slot; null = unknown
         public int[] slots;            // every slot from the last char list: equipment, inventory, backpack; null = unknown
+        public int[] quickslots;       // the three quick slots' items (-1 = empty), seen while playing; null = unknown
         public int[][] slotEnchantIds; // per slot of "slots": enchantment ids
         public List<Sample> samples = new ArrayList<>();
 
@@ -291,6 +292,14 @@ public final class CharacterStore implements Syncable {
                     c.extender = pack.statValue > 8;
                 }
                 readEquipment(p, c);
+                int[] quick = new int[LootEvents.QUICKSLOTS.length];
+                boolean seen = false;
+                for (int k = 0; k < quick.length; k++) {
+                    StatData q = p.stat.get(LootEvents.QUICKSLOTS[k]);
+                    quick[k] = q == null || q.statValue < 1 ? -1 : q.statValue;
+                    seen |= q != null;
+                }
+                if (seen) c.quickslots = quick;
                 if (readSlots(p, c, pack == null ? -1 : pack.statValue)) lastSave = 0;   // save the new packs soon
                 c.alive = true;
                 c.diedBy = null;
@@ -351,13 +360,14 @@ public final class CharacterStore implements Syncable {
         return c.classType + "|" + c.level + "|" + c.fame + "|" + c.skin + "|" + c.tex1 + "|" + c.tex2 + "|" + c.seasonal
                 + "|" + c.crucible + "|" + c.ritual + "|" + c.statsMaxed + "|" + c.backpack + "|" + c.extender + "|" + c.alive
                 + "|" + Arrays.toString(c.equipment) + "|" + Arrays.deepToString(c.enchantIds) + "|" + Arrays.toString(c.slots)
+                + "|" + Arrays.toString(c.quickslots)
                 + "|" + Arrays.deepToString(c.slotEnchantIds);
     }
 
     /**
      * A dye stat from the game: a texture code (type in the high byte), or else a dye/cloth item type.
      */
-    private static int liveTexture(int value) {
+    static int liveTexture(int value) {
         return value == 0 || (value >>> 24) != 0 ? value : Dyes.texture(value);
     }
 

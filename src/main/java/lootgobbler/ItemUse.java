@@ -82,6 +82,7 @@ public final class ItemUse {
                 int slot = b.getInt(), item = b.getInt();
                 ItemDb.Item it = ItemDb.get().item(item);
                 AppLog.log("items", "Use request: slot " + slot + ": " + name(item) + " (" + item + ")");
+                RefineryCooldown.used(item, "use request, slot " + slot);
                 if (it != null && it.isCollectible()) using.put(slot, new Used(item, LootEvents.copyInSlot(slot, item)));
             } else {
                 boolean ok = b.get() == 1;

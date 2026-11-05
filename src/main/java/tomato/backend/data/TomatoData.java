@@ -1100,6 +1100,7 @@ public class TomatoData {
     public void notification(NotificationPacket packet) {
         lootgobbler.MoonlightLog.get().message(this, "notification", packet);
         lootgobbler.AmuletSaves.get().notification(this, packet);   // logged; amulet saves counted
+        lootgobbler.DungeonVisits.get().notification(packet);   // "Victory": the dungeon was completed
         if (packet.effect == NotificationEffectType.PlayerDeath) {
             deathNotifications.add(packet);
         }
