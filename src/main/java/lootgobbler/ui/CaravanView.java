@@ -315,11 +315,17 @@ public class CaravanView extends JPanel {
         for (CaravanItem it : best.subList(0, Math.min(4, best.size()))) {
             JLabel name = new JLabel(itemName(it.itemId), CharactersView.sprite(it.itemId, 36), SwingConstants.LEFT);
             name.setIconTextGap(12);
-            JLabel sub = muted(ItemScore.format(points(it)) + " pts  ·  " + it.bag + " bag"
-                    + (it.where == null || it.where.isBlank() ? "" : "  ·  " + it.where) + "  ·  " + ago(it.time));
+            JLabel pts = muted(ItemScore.format(points(it)) + " pts");
+            pts.setToolTipText(ItemScore.breakdown(it.itemId, it.where, it.enchants));   // what the points are made of
+            JPanel sub = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+            sub.setOpaque(false);
+            sub.add(pts);
+            sub.add(muted("  ·  " + it.bag + " bag" + (it.where == null || it.where.isBlank() ? "" : "  ·  " + it.where)
+                    + "  ·  " + ago(it.time)));
             sub.setBorder(new EmptyBorder(0, 48, 0, 0));
             if (mine(m)) {   // click: the item in Inventory (other players' items do nothing for now)
                 p.add(left(ItemLinks.link(name, it.itemId)));
+                ItemLinks.link(pts, it.itemId);   // the tooltip catches the clicks on the points
                 p.add(left(ItemLinks.link(sub, it.itemId)));
             } else {
                 p.add(left(name));

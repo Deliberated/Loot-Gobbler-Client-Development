@@ -81,13 +81,16 @@ public class SettingsPanel extends JPanel {
         return body;
     }
 
-    /** Sounds for what items do, each in its own part: the Amulet of Restoration, the Coral Juice Refinery. */
+    /** Sounds for what items do, each in its own part: the Amulet of Restoration and the quickslot items' cooldowns. */
     private JPanel itemSoundsBody() {
         JPanel body = body();
         itemSound(body, lootgobbler.ItemSound.AMULET, "Played when your Amulet of Restoration saves you.");
         body.add(Box.createVerticalStrut(14));
         itemSound(body, lootgobbler.ItemSound.REFINERY,
                 "Played when your Coral Juice Refinery can be used again (15 seconds after using it).");
+        body.add(Box.createVerticalStrut(14));
+        itemSound(body, lootgobbler.ItemSound.ALIEN,
+                "Played when your Miniature Alien Generator can be used again (45 seconds after using it).");
         return body;
     }
 

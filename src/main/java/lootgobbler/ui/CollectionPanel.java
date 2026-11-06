@@ -287,6 +287,7 @@ public class CollectionPanel extends JPanel {
         f.enchantIds = removal.enchantIds != null ? removal.enchantIds : was.enchantIds;
         f.enchants = removal.enchantIds != null ? removal.enchants : was.enchants;
         f.seasonal = removal.seasonal != null ? removal.seasonal : was.seasonal;
+        f.seen = removal.seen != null ? removal.seen : was.seen;
         return f;
     }
 
@@ -404,38 +405,41 @@ public class CollectionPanel extends JPanel {
     }
 
     /**
-     * One find of the history: icon with enchantment diamonds, where it came from, seasonal or not, its
-     * enchantments and how long ago.
+     * One find of the history: icon with enchantment diamonds; where it came from with seasonal or not on the same
+     * line and its enchantments below; the character (in its skin and dyes) or vault chest it was seen in last; and
+     * how long ago.
      *
      * @param note a small grey addition after the place (e.g. "was: Inventory" for a used copy), or null
      */
     private static JPanel findRow(int itemId, CollectionStore.Find f, String note) {
         String how = how(f);
-        // one line each, plain text: in a narrow window the place is cut short ("..."), never the lines below it
-        JLabel what = leftAligned(new JLabel(how));
+        // one line: the place (cut short with "..." in a narrow window), then seasonal or not and a grey note
+        JLabel what = new JLabel(how);
         what.setToolTipText(how);
+        what.setMinimumSize(new Dimension(30, what.getPreferredSize().height));
+        JPanel line = new JPanel();
+        line.setLayout(new BoxLayout(line, BoxLayout.X_AXIS));
+        line.setOpaque(false);
+        line.add(what);
+        // seasonal or not: teal like the Characters tab's seasonal tag, red for non-seasonal
+        if (f.seasonal != null) {
+            JLabel season = new JLabel(f.seasonal ? "(seasonal)" : "(non-seasonal)");
+            season.setForeground(f.seasonal ? new Color(0x2BD8B0) : new Color(0xE5636E));
+            season.setToolTipText(f.seasonal ? "Found on a seasonal character" : "Found on a non-seasonal character");
+            season.setBorder(new EmptyBorder(0, 10, 0, 0));
+            line.add(season);
+        }
+        if (note != null) {
+            JLabel gone = new JLabel("  · " + note);
+            gone.setForeground(Palette.MUTED);
+            line.add(gone);
+        }
+        line.add(Box.createHorizontalGlue());
+        line.setMaximumSize(new Dimension(Integer.MAX_VALUE, line.getPreferredSize().height));
         JPanel text = new JPanel();
         text.setLayout(new BoxLayout(text, BoxLayout.Y_AXIS));
         text.setOpaque(false);
-        text.add(what);
-        // seasonal or not: teal like the Characters tab's seasonal tag, red for non-seasonal; then a grey note
-        if (f.seasonal != null || note != null) {
-            JPanel tags = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
-            tags.setOpaque(false);
-            if (f.seasonal != null) {
-                JLabel season = new JLabel(f.seasonal ? "(seasonal)" : "(non-seasonal)");
-                season.setForeground(f.seasonal ? new Color(0x2BD8B0) : new Color(0xE5636E));
-                season.setToolTipText(f.seasonal ? "Found on a seasonal character" : "Found on a non-seasonal character");
-                tags.add(season);
-            }
-            if (note != null) {
-                JLabel gone = new JLabel((f.seasonal != null ? "  · " : "· ") + note);
-                gone.setForeground(Palette.MUTED);
-                tags.add(gone);
-            }
-            tags.setMaximumSize(new Dimension(Integer.MAX_VALUE, tags.getPreferredSize().height));
-            text.add(leftAligned(tags));
-        }
+        text.add(leftAligned(line));
         int count = f.enchantIds != null ? f.enchantIds.size() : Math.max(0, f.enchants);
         if (f.enchantIds != null && f.enchantIds.stream().anyMatch(id -> id >= 0)) {
             text.add(Box.createVerticalStrut(4));
@@ -465,14 +469,64 @@ public class CollectionPanel extends JPanel {
         if (titleFont != null) ago.setFont(titleFont.deriveFont(titleFont.getStyle()));
         ago.setForeground(new Color(0xF5C542));
         if (f.time != null) ago.setToolTipText(f.time.replace('T', ' '));
+        // the time in a column of its own width, so the "seen" tiles of all rows line up
+        ago.setHorizontalAlignment(SwingConstants.RIGHT);
+        ago.setPreferredSize(new Dimension(ago.getFontMetrics(ago.getFont()).stringWidth("999 days") + 4,
+                ago.getPreferredSize().height));
+        JPanel right = new JPanel(new BorderLayout(16, 0));
+        right.setOpaque(false);
+        right.add(seenTile(f.seen), BorderLayout.WEST);
+        right.add(ago, BorderLayout.EAST);
         JPanel row = new JPanel(new BorderLayout(8, 0));
         row.setOpaque(false);
+        row.setBorder(new EmptyBorder(4, 0, 4, 0));
         row.add(icon, BorderLayout.WEST);
         row.add(middle, BorderLayout.CENTER);
-        row.add(ago, BorderLayout.EAST);
+        row.add(right, BorderLayout.EAST);
         row.setAlignmentX(LEFT_ALIGNMENT);
         row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
         return row;
+    }
+
+    private static final int SEEN_TILE = 52, SEEN_SPRITE = 44;
+    private static final int VAULT_CHEST = 0x0504;
+
+    /**
+     * Where the copy was seen last: the character in its skin and dyes as it looked then, or a vault chest, on the
+     * row's own background; an empty space (same size, so the rows line up) until it has been seen with this version.
+     */
+    private static JComponent seenTile(CollectionStore.Seen seen) {
+        Icon sprite = null;
+        String tip = "Not seen since Loot Gobbler started remembering where copies are";
+        if (seen != null && seen.charId > 0) {
+            int sprite0 = seen.skin > 0 && !ItemDb.get().isTransformSkin(seen.skin) ? seen.skin : seen.classType;
+            try {
+                sprite = lootgobbler.Dyes.icon(sprite0, seen.tex1, seen.tex2, SEEN_SPRITE);
+            } catch (Exception e) {
+                sprite = CharactersView.sprite(sprite0, SEEN_SPRITE);
+            }
+            tip = "Last seen on your " + (seen.place.isEmpty() ? "character" : seen.place)
+                    + (seen.seasonal ? " (seasonal)" : "") + " #" + seen.charId;
+        } else if (seen != null) {
+            sprite = CharactersView.sprite(VAULT_CHEST, SEEN_SPRITE);
+            tip = "Last seen in your " + seen.place.toLowerCase(Locale.ROOT);
+        }
+        Icon shown = sprite;
+        JLabel tile = new JLabel() {
+            @Override
+            protected void paintComponent(Graphics g) {
+                if (shown != null) shown.paintIcon(this, g, (SEEN_TILE - shown.getIconWidth()) / 2, (SEEN_TILE - shown.getIconHeight()) / 2);
+            }
+        };
+        Dimension d = new Dimension(SEEN_TILE, SEEN_TILE);
+        tile.setPreferredSize(d);
+        tile.setMinimumSize(d);
+        tile.setMaximumSize(d);
+        if (shown != null) tile.setToolTipText(tip);
+        JPanel holder = new JPanel(new GridBagLayout());   // centered in the row's height
+        holder.setOpaque(false);
+        holder.add(tile);
+        return holder;
     }
 
     /**

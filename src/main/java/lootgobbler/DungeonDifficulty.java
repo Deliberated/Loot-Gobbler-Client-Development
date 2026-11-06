@@ -28,6 +28,31 @@ public final class DungeonDifficulty {
             "The Void", 8.5,
             "Advanced Kogbold Steamworks", 9.0,
             "Cultist Hideout", 7.0);
+    /**
+     * Places the game files give no difficulty for (not dungeons, hidden parts, events), as set for the item scores.
+     * These win over the game files.
+     */
+    private static final Map<String, Double> SET = Map.ofEntries(
+            Map.entry("Realm of the Mad God", 5.0),
+            Map.entry("Random Realm", 5.0),
+            Map.entry("Vault", 0.0),
+            Map.entry("Legacy Heroic Abyss of Demons", 5.0),
+            Map.entry("Legacy Bilgewater's Grotto", 5.5),
+            Map.entry("Consolation of Draconis", 0.0),
+            Map.entry("The Inner Sanctum", 5.0),
+            Map.entry("The Inner Workings", 0.0),
+            Map.entry("Hidden Interregnum", 7.0),
+            Map.entry("The Ivory Wyvern", 6.0),
+            Map.entry("Remnant of the Void", 8.5),
+            Map.entry("LOD Rock Dragon", 6.0),
+            Map.entry("Exalted Kitchen", 0.0),
+            Map.entry("Chicken Chamber", 0.0),
+            Map.entry("Oryx Mania Sanctuary", 9.5),
+            Map.entry("Oryx Horde", 7.0),
+            Map.entry("Rainbow Road", 0.0),
+            Map.entry("Santa Workshop", 0.0),
+            Map.entry("Dreamscape Labyrinth", 0.0),
+            Map.entry("Wine Cellar Short", 6.0));
     private static final Pattern PORTAL =Pattern.compile("<Activate id=\"([^\"]+)\"[^>]*>CreatePortal</Activate>");   // may carry more attributes (readonlymods...)
     private static volatile Map<String, Double> byDungeon;
 
@@ -79,6 +104,16 @@ public final class DungeonDifficulty {
             if (dungeon != null && difficulty > 0) out.putIfAbsent(dungeon, difficulty);   // 0: no rating (event dungeons)
         });
         WITHOUT_KEY.forEach(out::putIfAbsent);
+        // parts and old versions of a dungeon count as the dungeon: "Haunted Cemetery Gates", "Legacy Undead Lair"
+        for (String dungeon : portalToDungeon.values()) {
+            if (out.containsKey(dungeon)) continue;
+            String base = dungeon.startsWith("Legacy ") ? dungeon.substring(7)
+                    : dungeon.contains("Haunted Cemetery") ? "Haunted Cemetery" : null;
+            if (base != null && out.containsKey(base)) out.put(dungeon, out.get(base));
+        }
+        Double tomb = out.get("Tomb of the Ancients");   // the heroic tomb: 1.5 harder than the normal one
+        if (tomb != null) out.putIfAbsent("Tomb of the Ancients (Heroic)", tomb + 1.5);
+        out.putAll(SET);
         byDungeon = out;
     }
 }

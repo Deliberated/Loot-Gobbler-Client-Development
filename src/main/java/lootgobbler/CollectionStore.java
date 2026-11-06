@@ -46,6 +46,7 @@ public final class CollectionStore implements Syncable {
         public String bag = "";
         public List<Integer> enchantIds;   // null if unknown (older finds, inventory)
         public Boolean seasonal;   // found on a seasonal character; null if unknown (older finds)
+        public Seen seen;          // where this copy was seen last (a character or a vault chest); null if not yet
 
         public static Find of(String source, int enchants, String where, String bag) {
             Find f = new Find();
@@ -62,6 +63,40 @@ public final class CollectionStore implements Syncable {
             Find f = of(source, enchantIds == null ? -1 : enchantIds.size(), where, bag);
             f.enchantIds = enchantIds;
             return f;
+        }
+    }
+
+    /**
+     * Where a copy was seen last: on a character (its id and look then, so it still shows after the character is
+     * gone) or in a container of the vault (charId 0, place "Vault chest", "Gift chest", ...).
+     */
+    public static final class Seen {
+        public int charId;
+        public String place = "";
+        public int classType, skin, tex1, tex2;
+        public boolean seasonal;
+
+        public static Seen vault(String place) {
+            Seen s = new Seen();
+            s.place = place == null || place.isBlank() ? "Vault" : place;
+            return s;
+        }
+
+        public static Seen character(CharacterStore.Char c) {
+            Seen s = new Seen();
+            s.charId = c.charId;
+            s.place = c.className;
+            s.classType = c.classType;
+            s.skin = c.skin;
+            s.tex1 = c.tex1;
+            s.tex2 = c.tex2;
+            s.seasonal = c.seasonal;
+            return s;
+        }
+
+        boolean same(Seen o) {
+            return o != null && charId == o.charId && place.equals(o.place) && classType == o.classType && skin == o.skin
+                    && tex1 == o.tex1 && tex2 == o.tex2 && seasonal == o.seasonal;
         }
     }
 
@@ -167,19 +202,30 @@ public final class CollectionStore implements Syncable {
             for (Map.Entry<Integer, List<Find>> h : held.entrySet()) {
                 List<Find> copies = h.getValue();
                 Entry e = entries.get(h.getKey());
-                int known = e == null ? 0 : e.held();   // copies forged or fed away are not in the vault any more
                 if (e != null && fillEnchants(e, copies)) changed = true;
                 if (e != null && fillSeasonal(e, copies)) changed = true;
-                if (copies.size() <= known) continue;
+                // new copies: those no recorded copy can be (see unmatched), and at least as many as are seen here
+                // beyond the copies on record (copies forged or fed away are not held any more)
+                java.util.Map<Find, Find> pairs = new java.util.IdentityHashMap<>();   // held copy -> its record
+                List<Find> fresh = e == null ? copies : unmatched(e, copies, pairs);
+                for (java.util.Map.Entry<Find, Find> p : pairs.entrySet()) {   // where each recorded copy is now
+                    Seen now = p.getKey().seen;
+                    if (now != null && !now.same(p.getValue().seen)) {
+                        p.getValue().seen = now;
+                        changed = true;
+                    }
+                }
+                int n = Math.max(fresh.size(), copies.size() - (e == null ? 0 : e.held()));
+                if (n <= 0) continue;
                 if (e == null) {
                     e = new Entry();
                     e.first = copies.get(0).time;
                     entries.put(h.getKey(), e);
                 }
-                // the new copies are the ones the history does not show yet, so each keeps its own place and enchantments
-                List<Find> fresh = notInHistory(e, copies);
-                int n = copies.size() - known;
-                for (int i = 0; i < n; i++) addHistory(e, i < fresh.size() ? fresh.get(i) : copies.get(copies.size() - n + i));
+                // each new copy keeps its own place and enchantments
+                List<Find> others = new ArrayList<>(copies);
+                others.removeAll(fresh);
+                for (int i = 0; i < n; i++) addHistory(e, i < fresh.size() ? fresh.get(i) : others.get(i - fresh.size()));
                 e.last = copies.get(copies.size() - 1).time;
                 added += n;
                 e.count += n;
@@ -191,24 +237,69 @@ public final class CollectionStore implements Syncable {
     }
 
     /**
-     * Held copies that the history does not account for yet: copies are paired with history finds of the same
-     * enchantments first, then with finds of the same source whose enchantments are unknown.
+     * The held copies (all of one place: a character or the vault) that no copy on record can be, so they are new.
+     * Copies are told apart by what does not change: a copy on record can only be a held one if it has no more
+     * enchantment slots (slots are never taken away), and a non-seasonal one never a seasonal copy (only seasonal
+     * items turn non-seasonal, when the season ends). Each copy on record stands for one held copy at most. Copies
+     * forged or fed away are taken out first; copies the history no longer lists (trimmed, or from before it) can
+     * be any copy. Pairs are made the surest way first: the same enchantments, the same slots, fewer slots, unknown.
      */
-    private static List<Find> notInHistory(Entry e, List<Find> copies) {
+    private static List<Find> unmatched(Entry e, List<Find> copies, java.util.Map<Find, Find> pairs) {
+        List<Find> records = new ArrayList<>();
+        List<Find> removals = new ArrayList<>();
+        for (Find f : e.history()) (isRemoval(f) ? removals : records).add(f);
+        int wild = Math.max(0, e.count - records.size());   // obtained copies the history does not list
+        for (Find r : removals) {   // a copy gone: the record it most likely was
+            Find gone = best(records, r);
+            if (gone != null) records.remove(gone);
+            else if (wild > 0) wild--;
+        }
         List<Find> rest = new ArrayList<>(copies);
-        List<Find> unknown = new ArrayList<>();
-        for (Find f : e.history()) {
-            if (isRemoval(f)) continue;
-            if (f.enchantIds == null) {
-                unknown.add(f);
-                continue;
+        rest.sort(java.util.Comparator.comparingInt(CollectionStore::slots));   // fewest slots first, so they get the fitting records
+        for (int pass = 0; pass < 4; pass++) {
+            for (java.util.Iterator<Find> it = rest.iterator(); it.hasNext(); ) {
+                Find c = it.next();
+                Find match = null;
+                for (Find f : records) {
+                    if (fits(c, f, pass)) {
+                        match = f;
+                        break;
+                    }
+                }
+                if (match != null) {
+                    records.remove(match);
+                    it.remove();
+                    pairs.put(c, match);
+                }
             }
-            rest.stream().filter(c -> f.enchantIds.equals(c.enchantIds)).findFirst().ifPresent(rest::remove);
         }
-        for (Find f : unknown) {
-            rest.stream().filter(c -> c.source.equals(f.source)).findFirst().ifPresent(rest::remove);
-        }
-        return rest;
+        return rest.subList(Math.min(rest.size(), wild), rest.size());   // the unlisted copies can be any of the rest
+    }
+
+    /** A held copy's enchantment slots, -1 if unknown. */
+    private static int slots(Find f) {
+        return f.enchantIds != null ? f.enchantIds.size() : f.enchants;
+    }
+
+    /**
+     * Whether the record can be the held copy, at a pass: 0 the same enchantments, 1 the same slots, 2 fewer slots
+     * on record, 3 slots unknown on either side.
+     */
+    private static boolean fits(Find copy, Find record, int pass) {
+        if (Boolean.TRUE.equals(copy.seasonal) && Boolean.FALSE.equals(record.seasonal)) return false;
+        int c = slots(copy), r = slots(record);
+        return switch (pass) {
+            case 0 -> copy.enchantIds != null && copy.enchantIds.equals(record.enchantIds);
+            case 1 -> c >= 0 && c == r;
+            case 2 -> c >= 0 && r >= 0 && r < c;
+            default -> c < 0 || r < 0;
+        };
+    }
+
+    /** The record that a removed copy most likely was (the surest pair, as in unmatched); null if none fits. */
+    private static Find best(List<Find> records, Find removed) {
+        for (int pass = 0; pass < 4; pass++) for (Find f : records) if (fits(removed, f, pass)) return f;
+        return records.isEmpty() ? null : records.get(0);
     }
 
     /**
@@ -307,7 +398,10 @@ public final class CollectionStore implements Syncable {
             if (e == null || e.held() == 0) return false;
             Find f = copy != null && copy.enchantIds != null ? Find.of(source, copy.enchantIds, where, "")
                     : Find.of(source, -1, where, "");
-            if (copy != null) f.seasonal = copy.seasonal;
+            if (copy != null) {
+                f.seasonal = copy.seasonal;
+                f.seen = copy.seen;   // where it was used up from
+            }
             addHistory(e, f);
             save();
         }

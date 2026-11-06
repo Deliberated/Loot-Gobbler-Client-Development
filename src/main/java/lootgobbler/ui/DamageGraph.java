@@ -13,8 +13,8 @@ import java.util.Map;
  * Damage in a dungeon per time slice (2 seconds), mirrored around one line: above it the damage you dealt (gold, the
  * biggest slice just below the top), below it the damage you took (the bottom being your whole life, marked in thirds
  * on the left). Slices taking 30% of your life or 300 damage are orange, with the icon of the enemy that dealt most of
- * it on the floor of the graph. Always a window of 100 slices (so the bars are the same width in every dungeon), scrolled with the
- * bar under it (see withScrollbar) and starting at the latest end; dangerous slices outside the window show as a
+ * it on the floor of the graph. Every slice is SLICE_PX wide, whatever the dungeon and the window size: a wider window
+ * shows more of them. Scrolled with the bar under it (see withScrollbar) and starting at the latest end; dangerous slices outside the window show as a
  * teardrop at that edge with the nearest one's enemy (click: scroll to it). Reads the visit on every paint, so the
  * dungeon in progress follows along on repaint().
  */
@@ -26,11 +26,12 @@ final class DamageGraph extends JComponent {
     private static final int PAD_LEFT = 44, PAD_RIGHT = 10, PAD_TOP = 28, PAD_BOTTOM = 20, ICON = 28;
     private static final Color BAR = new Color(0xE5636E), BIG = new Color(0xFF8A2A), DEALT = new Color(0xE8B83A),
             AMULET = new Color(0x3A9BFF);
-    private static final int BARS = 60;    // slices across the window: the bar thickness, whatever the slice size
+    private static final int BARS = 60;    // slices shown until the graph knows its width
+    private static final int SLICE_PX = 14;   // one slice's width (the bar and a 1 px gap)
     private static final int BUBBLE = 13, BUBBLE_ICON = 18;   // the off-screen teardrops: radius, enemy icon
     private final Visit visit;
     private final int windowMs;
-    private final long viewMs;   // the window shown: BARS slices (2 s slices: 2 min)
+    private long viewMs;   // the window shown: as many slices as fit the width
     private final Map<Integer, Icon> icons = new HashMap<>(), smallIcons = new HashMap<>();
     private final JScrollBar bar = new JScrollBar(JScrollBar.HORIZONTAL);
     private long viewStart;                           // ms after entering, at the left edge
@@ -87,6 +88,16 @@ final class DamageGraph extends JComponent {
             int target = leftBubble != null && leftBubble.contains(e.getPoint()) ? leftTarget
                     : rightBubble != null && rightBubble.contains(e.getPoint()) ? rightTarget : -1;
             if (target >= 0) bar.setValue((int) Math.max(0, ((long) target * windowMs - viewMs / 2) / 1000));
+        });
+        addComponentListener(new java.awt.event.ComponentAdapter() {   // resized: more or fewer slices, same width
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent e) {
+                long fit = (long) Math.max(1, (getWidth() - PAD_LEFT - PAD_RIGHT + SLICE_PX - 1) / SLICE_PX) * windowMs;
+                if (fit != viewMs) {
+                    viewMs = fit;
+                    update(false);
+                }
+            }
         });
         update(true);
     }
@@ -193,14 +204,13 @@ final class DamageGraph extends JComponent {
     }
 
     private int x(long t) {
-        int w = getWidth() - PAD_LEFT - PAD_RIGHT;
-        return PAD_LEFT + (int) Math.round((double) (t - viewStart) / viewMs * w);
+        return PAD_LEFT + (int) Math.round((double) (t - viewStart) * SLICE_PX / windowMs);
     }
 
     /** The slice at a screen x, or -1 left of the plot. */
     private int sliceAt(int x) {
         if (x < PAD_LEFT) return -1;
-        long t = viewStart + (long) (x - PAD_LEFT) * viewMs / Math.max(1, getWidth() - PAD_LEFT - PAD_RIGHT);
+        long t = viewStart + (long) (x - PAD_LEFT) * windowMs / SLICE_PX;
         return (int) (t / windowMs);
     }
 

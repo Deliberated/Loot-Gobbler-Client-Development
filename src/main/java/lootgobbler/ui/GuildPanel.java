@@ -256,14 +256,14 @@ public class GuildPanel extends SubTabs {
 
     private JComponent dropRow(GuildDrop d) {
         ItemDb.Item item = ItemDb.get().item(d.itemId);
-        JLabel name = new JLabel(item != null && !item.name.isEmpty() ? item.name : "Item " + d.itemId, itemIcon(d.itemId),
-                SwingConstants.LEFT);
+        int enchants = d.enchantIds != null ? d.enchantIds.size() : d.enchants;
+        Image img = CollectionGrid.icon(d.itemId);
+        JLabel name = new JLabel(item != null && !item.name.isEmpty() ? item.name : "Item " + d.itemId,
+                img == null ? null : EnchantBadge.icon(img, 40, enchants, 8), SwingConstants.LEFT);   // rarity as its marker
         name.setIconTextGap(10);
         name.setFont(name.getFont().deriveFont(18f));
-        int enchants = d.enchantIds != null ? d.enchantIds.size() : d.enchants;
         String where = d.where == null || d.where.isBlank() ? "" : " - " + d.where;
-        JLabel sub = muted(d.ign + where + " - " + dropTime(d.time) + (enchants > 0 ? " - " + enchants + " enchant"
-                + (enchants == 1 ? "" : "s") : ""));
+        JLabel sub = muted(d.ign + where + " - " + dropTime(d.time));
         sub.setBorder(new EmptyBorder(0, 50, 0, 0));
         JPanel text = new JPanel(new GridLayout(2, 1));
         text.setOpaque(false);
@@ -273,6 +273,9 @@ public class GuildPanel extends SubTabs {
         points.setFont(new Font(lootgobbler.Themes.HEAD_FONT, Font.PLAIN, 30));
         points.setForeground(Section.color("LootGobbler.gold", Palette.GOLD));
         points.setBorder(new EmptyBorder(0, 12, 0, 8));
+        points.setToolTipText(lootgobbler.ItemScore.breakdown(d.itemId, d.where, enchants));
+        points.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Clicks.onClick(points, () -> openMember(d.userId, true));   // the tooltip catches the row's clicks here
         JPanel content = new JPanel(new BorderLayout());
         content.setOpaque(false);
         content.add(text, BorderLayout.CENTER);

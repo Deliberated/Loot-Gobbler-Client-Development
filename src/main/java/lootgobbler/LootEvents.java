@@ -173,6 +173,8 @@ public final class LootEvents {
         // enchant codes for every slot (equipment, inventory, backpack), same per-slot list loot bags use
         StatData udata = player.stat.get(StatType.UNIQUE_DATA_STRING);
         String[] codes = udata == null || udata.stringStatValue == null ? new String[0] : udata.stringStatValue.split(",", -1);
+        CharacterStore.Char me = CharacterStore.get().playing();   // the copies are seen on this character, as it looks now
+        CollectionStore.Seen here = me != null && me.charId == player.charId() ? CollectionStore.Seen.character(me) : null;
         for (int i = 0; i < 28; i++) {
             boolean backpack = i >= 12;
             int stat = backpack ? StatType.BACKPACK_0_STAT.get() + (i - 12) : StatType.INVENTORY_0_STAT.get() + i;
@@ -192,6 +194,7 @@ public final class LootEvents {
                     ? CollectionStore.Find.of(CollectionStore.INVENTORY, ids, "", "Inventory")
                     : CollectionStore.Find.of(CollectionStore.INVENTORY, -1, "", "Inventory");
             f.seasonal = player.isSeasonal();
+            f.seen = here;
             held.computeIfAbsent(sd.statValue, k -> new ArrayList<>()).add(f);
             copies.put(i, f);
             items.put(i, sd.statValue);
@@ -203,6 +206,7 @@ public final class LootEvents {
             if (item == null || !item.isCollectible()) continue;
             CollectionStore.Find f = CollectionStore.Find.of(CollectionStore.INVENTORY, -1, "", "Quick slot");
             f.seasonal = player.isSeasonal();
+            f.seen = here;
             held.computeIfAbsent(sd.statValue, x -> new ArrayList<>()).add(f);
             copies.put(QUICKSLOT_FIRST + k, f);
             items.put(QUICKSLOT_FIRST + k, sd.statValue);
@@ -292,6 +296,7 @@ public final class LootEvents {
                     ? CollectionStore.Find.of(CollectionStore.VAULT, enchantIds(enchants[i]), "Vault", label)
                     : CollectionStore.Find.of(CollectionStore.VAULT, -1, "Vault", label);
             f.seasonal = seasonal;
+            f.seen = CollectionStore.Seen.vault(label);
             finds.computeIfAbsent(ids[i], k -> new ArrayList<>()).add(f);
         }
         return count;

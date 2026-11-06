@@ -46,11 +46,16 @@ public final class EnchantBadge {
      * An item icon with the rarity marker drawn over it.
      */
     public static Icon icon(Image item, int size, int enchants) {
+        return icon(item, size, enchants, size >= 64 ? 10 : 5);
+    }
+
+    /** An item icon with the rarity marker at the given scale hint (see draw). */
+    public static Icon icon(Image item, int size, int enchants, int badge) {
         return new Icon() {
             @Override
             public void paintIcon(Component c, Graphics g, int x, int y) {
                 if (item != null) g.drawImage(item, x, y, size, size, null);
-                draw((Graphics2D) g, x + size - 1, y + size - 1, enchants, size >= 64 ? 10 : 5);
+                draw((Graphics2D) g, x + size - 1, y + size - 1, enchants, badge);
             }
 
             @Override

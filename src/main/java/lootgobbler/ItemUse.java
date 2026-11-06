@@ -64,9 +64,11 @@ public final class ItemUse {
      * Packets the game uses for forging items away and feeding them (seen in November 2026), which RealmShark does
      * not know yet, so they arrive here raw (see PacketDebug.problem). After the 5 header bytes (length, id):
      * <ul>
-     * <li>195, request: byte 1, int object id (yours), int slot, int item type being used up;</li>
-     * <li>196, answer: byte success, byte 1, int object id, int slot, int item type now in the slot (-1 = empty).</li>
+     * <li>195, request: byte count, then per item: int object id (yours), int slot, int item type being used up;</li>
+     * <li>196, answer: byte success, byte count, then per item: int object id, int slot, int item type now in the slot
+     * (-1 = empty).</li>
      * </ul>
+     * Feeding several items to a pet at once sends them all in one request (count 2 and more).
      * They do not say whether the item went into the forge or to a pet.
      */
     static final int USE_REQUEST = 195, USE_RESULT = 196;
@@ -77,22 +79,28 @@ public final class ItemUse {
             java.nio.ByteBuffer b = java.nio.ByteBuffer.wrap(data);   // big endian, like all game packets
             b.position(5);
             if (type == USE_REQUEST) {
-                b.get();
-                b.getInt();
-                int slot = b.getInt(), item = b.getInt();
-                ItemDb.Item it = ItemDb.get().item(item);
-                AppLog.log("items", "Use request: slot " + slot + ": " + name(item) + " (" + item + ")");
-                RefineryCooldown.used(item, "use request, slot " + slot);
-                if (it != null && it.isCollectible()) using.put(slot, new Used(item, LootEvents.copyInSlot(slot, item)));
+                int count = b.get() & 0xFF;
+                for (int i = 0; i < count && b.remaining() >= 12; i++) {
+                    b.getInt();
+                    int slot = b.getInt(), item = b.getInt();
+                    ItemDb.Item it = ItemDb.get().item(item);
+                    AppLog.log("items", "Use request: slot " + slot + ": " + name(item) + " (" + item + ")");
+                    ItemCooldowns.used(item, "use request, slot " + slot);
+                    if (it != null && it.isCollectible()) using.put(slot, new Used(item, LootEvents.copyInSlot(slot, item)));
+                }
             } else {
                 boolean ok = b.get() == 1;
-                b.get();
-                b.getInt();
-                int slot = b.getInt(), now = b.getInt();
-                Used u = using.remove(slot);
-                AppLog.log("items", "Use result: " + (ok ? "success" : "failed") + ", slot " + slot + " now "
-                        + (now == -1 ? "empty" : name(now)));
-                if (ok && u != null && now != u.id()) remove(List.of(u), CollectionStore.CONSUMED, "Forge or pet");
+                int count = b.get() & 0xFF;
+                List<Used> gone = new ArrayList<>();
+                for (int i = 0; i < count && b.remaining() >= 12; i++) {
+                    b.getInt();
+                    int slot = b.getInt(), now = b.getInt();
+                    Used u = using.remove(slot);
+                    AppLog.log("items", "Use result: " + (ok ? "success" : "failed") + ", slot " + slot + " now "
+                            + (now == -1 ? "empty" : name(now)));
+                    if (ok && u != null && now != u.id()) gone.add(u);
+                }
+                remove(gone, CollectionStore.CONSUMED, "Forge or pet");
             }
         } catch (Exception e) {
             AppLog.log("items", "Could not read packet " + type + ": " + e);

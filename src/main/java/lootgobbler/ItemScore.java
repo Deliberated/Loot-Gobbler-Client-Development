@@ -76,6 +76,26 @@ public final class ItemScore {
         return Math.round(sum * 10) / 10.0;
     }
 
+    /**
+     * What an item's points are made of, for a tooltip: its feed power, the dungeon's difficulty and its rarity, the
+     * names on the left and the values on the right.
+     */
+    public static String breakdown(int itemId, String where, int enchants) {
+        ItemDb.Item item = ItemDb.get().item(itemId);
+        Double difficulty = DungeonDifficulty.of(where);
+        int rarity = Math.max(0, Math.min(4, enchants));
+        String rarityText = enchants < 0 ? "Unknown (0)" : lootgobbler.ui.EnchantBadge.RARITY[rarity] + " (" + rarity + ")";
+        return "<html><table cellpadding=0 cellspacing=0>"
+                + row("FP", item == null || item.feedPower < 0 ? "0" : String.format(Locale.ENGLISH, "%,d", item.feedPower))
+                + row("Difficulty", difficulty == null ? "Unknown (0)" : format(difficulty))
+                + row("Rarity", rarityText)
+                + "</table></html>";
+    }
+
+    private static String row(String key, String value) {
+        return "<tr><td align=left>" + key + ":</td><td align=right style='padding-left:16px'>" + value + "</td></tr>";
+    }
+
     /** "12.5", or "24" for a whole number (thousands grouped). */
     public static String format(double points) {
         double tenths = Math.round(points * 10) / 10.0;

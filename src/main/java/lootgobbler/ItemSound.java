@@ -18,13 +18,20 @@ public final class ItemSound {
     /** Your Amulet of Restoration saved you (AmuletSaves). */
     public static final ItemSound AMULET = new ItemSound("amuletSoundFile", "Amulet of Restoration",
             List.of(new Builtin("sound/amulet_activation.wav", "Amulet activation")));
-    /** Your Coral Juice Refinery can be used again (RefineryCooldown): five quiet cues to choose from (Bubble first). */
+    /** Your Coral Juice Refinery can be used again (ItemCooldowns): five quiet cues to choose from (Bubble first). */
     public static final ItemSound REFINERY = new ItemSound("refinerySoundFile", "Coral Juice Refinery", List.of(
             new Builtin("sound/refinery_bubble.wav", "Bubble"),
             new Builtin("sound/refinery_chime.wav", "Chime"),
             new Builtin("sound/refinery_ping.wav", "Ping"),
             new Builtin("sound/refinery_droplet.wav", "Droplet"),
             new Builtin("sound/refinery_shell.wav", "Shell")));
+    /** Your Miniature Alien Generator can be used again (ItemCooldowns): five alien-tech cues (Warp first). */
+    public static final ItemSound ALIEN = new ItemSound("alienSoundFile", "Miniature Alien Generator", List.of(
+            new Builtin("sound/alien_warp.wav", "Warp"),
+            new Builtin("sound/alien_beacon.wav", "Beacon"),
+            new Builtin("sound/alien_saucer.wav", "Saucer"),
+            new Builtin("sound/alien_arpeggio.wav", "Arpeggio"),
+            new Builtin("sound/alien_signal.wav", "Signal")));
 
     private static final String OFF = "off", BUILTIN = "builtin:";
     private final String key;   // setting: "" or unset = the first builtin; "builtin:<name>"; "off"; or a WAV file's path
