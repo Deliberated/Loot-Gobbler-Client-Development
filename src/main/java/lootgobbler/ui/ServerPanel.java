@@ -50,6 +50,10 @@ public class ServerPanel extends JPanel {
     private final JLabel accountFeedback = feedback();
     private final JLabel moderationFeedback = feedback();
     private final JLabel tokensFeedback = feedback();
+    private final JPanel scoringBody = body();
+    private final JLabel scoringFeedback = feedback();
+    private final JSpinner feedWeight = weightSpinner(), difficultyWeight = weightSpinner(), rarityWeight = weightSpinner();
+    private final Section scoring;
     private final JPanel testResults = column();   // checklist from the last "Test connection"
 
     // Kept across rebuilds, so typed text survives a status change.
@@ -80,6 +84,10 @@ public class ServerPanel extends JPanel {
                 .actions(button("Refresh", null, this::refreshModeration));
         tokens = new Section("Moderator Tokens", Palette.PURPLE, tokensBody);
         pool = new Section("Quest Pool", Palette.GREEN, poolBody).actions(button("Refresh", null, this::refreshModeration));
+        scoring = new Section("Item Scores", Palette.GOLD, scoringBody);
+        buildScoring();
+        showWeights();
+        lootgobbler.ItemScore.get().onChange(() -> SwingUtilities.invokeLater(this::showWeights));
 
         JPanel sections = new JPanel();
         sections.setLayout(new BoxLayout(sections, BoxLayout.Y_AXIS));
@@ -95,6 +103,8 @@ public class ServerPanel extends JPanel {
         sections.add(tokens);
         sections.add(Box.createVerticalStrut(8));
         sections.add(pool);
+        sections.add(Box.createVerticalStrut(8));
+        sections.add(scoring);
 
         JPanel holder = new JPanel(new BorderLayout());   // keeps sections at their natural height
         holder.add(sections, BorderLayout.NORTH);
@@ -120,11 +130,13 @@ public class ServerPanel extends JPanel {
             questPool = List.of();
             lastIssued = null;
             if (mod) refreshModeration();
+            if (mod && u.atLeastAdmin()) lootgobbler.ItemScore.get().reload();
         }
         sync.setVisible(u != null);
         moderation.setVisible(mod);
         tokens.setVisible(mod && u.atLeastAdmin());
         pool.setVisible(mod && u.atLeastAdmin());
+        scoring.setVisible(mod && u.atLeastAdmin());
 
         buildConnection();
         buildAccount();
@@ -556,6 +568,58 @@ public class ServerPanel extends JPanel {
         }
         act(server.approveQuest(q.id, scope, points), poolFeedback,
                 "\"" + q.title + "\" is now a " + scope + " quest.");
+    }
+
+    // --- item scores ---
+
+    /**
+     * Admins (not moderators) set how much each part of an item's score counts, 0 to 1 each. The guild views
+     * (loot caravan, recent drops, leaderboard) use them for everyone.
+     */
+    private void buildScoring() {
+        scoringBody.add(left(muted("Every found item gets points: feed power weight × feed power / 100 + difficulty weight "
+                + "× dungeon difficulty + rarity weight × rarity (0-4), rounded to one decimal.")));
+        scoringBody.add(left(muted("The loot caravan, recent drops and leaderboard in the Guild tab show them, for everyone on this server.")));
+        scoringBody.add(Box.createVerticalStrut(6));
+        scoringBody.add(formRow("Feed power", feedWeight));
+        scoringBody.add(formRow("Difficulty", difficultyWeight));
+        scoringBody.add(formRow("Rarity", rarityWeight));
+        JPanel actions = row();
+        actions.add(button("Save", "primary", this::saveScoring));
+        actions.add(button("Reset", null, this::showWeights));
+        scoringBody.add(actions);
+        scoringBody.add(scoringFeedback);
+    }
+
+    /** Shows the weights in use (after loading, saving or Reset). */
+    private void showWeights() {
+        GobblerServer.ScoreWeights w = lootgobbler.ItemScore.get().weights();
+        feedWeight.setValue(w.feedPower);
+        difficultyWeight.setValue(w.difficulty);
+        rarityWeight.setValue(w.rarity);
+    }
+
+    private void saveScoring() {
+        GobblerServer.ScoreWeights w = new GobblerServer.ScoreWeights();
+        w.feedPower = ((Number) feedWeight.getValue()).doubleValue();
+        w.difficulty = ((Number) difficultyWeight.getValue()).doubleValue();
+        w.rarity = ((Number) rarityWeight.getValue()).doubleValue();
+        scoringFeedback.setText("Saving...");
+        server.putScoring(w).whenComplete((saved, e) -> SwingUtilities.invokeLater(() -> {
+            if (e != null) {
+                scoringFeedback.setText(GobblerServer.message(e));
+                return;
+            }
+            lootgobbler.ItemScore.get().set(saved);
+            scoringFeedback.setText("Saved. The Guild tab shows the new scores.");
+        }));
+    }
+
+    private static JSpinner weightSpinner() {
+        JSpinner s = new JSpinner(new SpinnerNumberModel(1.0, 0.0, 1.0, 0.05));
+        s.setEditor(new JSpinner.NumberEditor(s, "0.00"));
+        s.setPreferredSize(new Dimension(90, s.getPreferredSize().height));
+        return s;
     }
 
     // --- moderator tokens ---

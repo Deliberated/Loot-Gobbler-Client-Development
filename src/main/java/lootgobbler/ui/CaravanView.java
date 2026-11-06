@@ -7,6 +7,7 @@ import lootgobbler.GobblerServer.Caravan;
 import lootgobbler.GobblerServer.CaravanItem;
 import lootgobbler.GobblerServer.CaravanMember;
 import lootgobbler.ItemDb;
+import lootgobbler.ItemScore;
 import lootgobbler.ServerSync;
 import lootgobbler.Themes;
 
@@ -26,8 +27,9 @@ import java.util.List;
 
 /**
  * Guild > Loot Caravan: a night road where every guild member drives a wagon piled with the items they found in
- * the chosen range, sitting up front as their most played character. The member who found the most items leads, right
- * behind the pack ox; members with fewer than five items walk behind the caravan with a backpack. Clicking a member
+ * the chosen range, sitting up front as their most played character. The member with the highest score (the points
+ * of their items, see ItemScore) leads, right behind the pack ox, with the score on their wagon; members with fewer
+ * than five items walk behind the caravan with a backpack. Clicking a member
  * shows their items per bag color and best finds below the picture.
  * <p>
  * Your own drops land on your wagon the moment they drop and are uploaded within seconds; guildies' drops show up
@@ -100,6 +102,9 @@ public class CaravanView extends JPanel {
         ServerSync.get().onUploaded(kind -> {   // your drops reached the server
             if (kind.equals("collection")) SwingUtilities.invokeLater(this::changed);
         });
+        ItemScore.get().onChange(() -> SwingUtilities.invokeLater(() -> {   // an admin changed the weights
+            if (caravan != null) show(caravan);
+        }));
         new javax.swing.Timer(QuestMapView.POLL_MS, e -> {   // guildies' drops
             if (isShowing()) load();
         }).start();
@@ -131,14 +136,27 @@ public class CaravanView extends JPanel {
         item.bag = bagName(find.bag);
         item.time = find.time;
         item.where = find.where;
+        item.enchants = find.enchantIds != null ? find.enchantIds.size() : find.enchants;
         m.items = new ArrayList<>(m.items);
         m.items.add(0, item);
+        if (!m.tally.isEmpty() || m.total == 0) {   // older servers send no tally: the score comes from the items then
+            m.tally = new ArrayList<>(m.tally);
+            GobblerServer.Tally t = m.tally.stream().filter(x -> x.itemId == itemId && x.enchants == item.enchants
+                    && Objects.equals(x.where, item.where)).findFirst().orElse(null);
+            if (t == null) {
+                t = new GobblerServer.Tally();
+                t.itemId = itemId;
+                t.where = item.where;
+                t.enchants = item.enchants;
+                m.tally.add(t);
+            }
+            t.count++;
+        }
         if (m.items.size() > 120) m.items.remove(m.items.size() - 1);
         m.byBag = new HashMap<>(m.byBag);
         m.byBag.merge(item.bag, 1, Integer::sum);
         m.total++;
         m.lastDrop = find.time;
-        members.sort(Comparator.comparingInt((CaravanMember x) -> -x.total).thenComparing(x -> x.ign.toLowerCase(Locale.ROOT)));
         caravan.members = members;
         show(caravan);
     }
@@ -188,7 +206,8 @@ public class CaravanView extends JPanel {
 
     private void show(Caravan c) {
         caravan = c;
-        String json = GSON.toJson(c);
+        c.members = byScore(c.members);
+        String json = GSON.toJson(c) + GSON.toJson(ItemScore.get().weights());
         if (json.equals(shown)) return;
         shown = json;
         section.setTitle("Loot Caravan - " + c.guild);
@@ -200,6 +219,26 @@ public class CaravanView extends JPanel {
         scene.picked = picked;
         scene.setMembers(c.members);
         showDetail();
+    }
+
+    /** Highest score first, then most items, then by name. */
+    private static List<CaravanMember> byScore(List<CaravanMember> members) {
+        List<CaravanMember> out = new ArrayList<>(members);
+        out.sort(Comparator.comparingDouble((CaravanMember x) -> -score(x)).thenComparingInt(x -> -x.total)
+                .thenComparing(x -> x.ign.toLowerCase(Locale.ROOT)));
+        return out;
+    }
+
+    /** A member's points in the range: their tally, or the items listed if the server sends no tally. */
+    static double score(CaravanMember m) {
+        if (!m.tally.isEmpty()) return ItemScore.get().total(m.tally);
+        double sum = 0;
+        for (CaravanItem it : m.items) sum += points(it);
+        return Math.round(sum * 10) / 10.0;
+    }
+
+    static double points(CaravanItem it) {
+        return ItemScore.get().of(it.itemId, it.where, it.enchants);
     }
 
     private void pick(CaravanMember m) {
@@ -226,8 +265,8 @@ public class CaravanView extends JPanel {
         JPanel p = column();
         int place = caravan.members.indexOf(m) + 1;
         String rangeText = RANGE_LABELS[Arrays.asList(RANGES).indexOf(range)].toUpperCase(Locale.ROOT);
-        JLabel where = new JLabel((m.total >= WALK_BELOW ? "WAGON #" + place : "ON FOOT  ·  " + m.total
-                + (m.total == 1 ? " ITEM" : " ITEMS")) + "  ·  " + rangeText);
+        JLabel where = new JLabel((m.total >= WALK_BELOW ? "WAGON #" + place : "ON FOOT") + "  ·  " + NUM.format(m.total)
+                + (m.total == 1 ? " ITEM" : " ITEMS") + "  ·  " + rangeText);
         where.putClientProperty("FlatLaf.styleClass", "small");
         where.setForeground(Palette.MUTED);
         p.add(left(where));
@@ -235,6 +274,10 @@ public class CaravanView extends JPanel {
         name.setFont(new Font(Themes.HEAD_FONT, Font.PLAIN, 44));
         name.setForeground(Section.color("LootGobbler.gold", Palette.GOLD));
         p.add(left(name));
+        JLabel points = new JLabel(ItemScore.whole(score(m)) + " points");
+        points.setFont(new Font(Themes.HEAD_FONT, Font.PLAIN, 30));
+        points.setToolTipText("The points of all items found in this range");
+        p.add(left(points));
         String played = m.character == null ? "Most played: unknown"
                 : "Most played: " + m.character.className + "  ·  " + NUM.format(m.character.fame) + " fame";
         p.add(left(new JLabel(played)));
@@ -257,7 +300,7 @@ public class CaravanView extends JPanel {
     }
 
     /**
-     * The items of the range that give the most pet feed power; newest first among equals.
+     * The items of the range worth the most points; newest first among equals.
      */
     private JComponent bestFinds(CaravanMember m) {
         JPanel p = column();
@@ -267,13 +310,13 @@ public class CaravanView extends JPanel {
         p.add(left(head));
         p.add(Box.createVerticalStrut(4));
         List<CaravanItem> best = new ArrayList<>(m.items);
-        best.sort(Comparator.comparingInt((CaravanItem it) -> -feedPower(it.itemId)));   // stable: keeps newest first
+        best.sort(Comparator.comparingDouble((CaravanItem it) -> -points(it)));   // stable: keeps newest first
         if (best.isEmpty()) p.add(left(muted("Nothing found in this range.")));
         for (CaravanItem it : best.subList(0, Math.min(4, best.size()))) {
             JLabel name = new JLabel(itemName(it.itemId), CharactersView.sprite(it.itemId, 36), SwingConstants.LEFT);
             name.setIconTextGap(12);
-            JLabel sub = muted(it.bag + " bag" + (it.where == null || it.where.isBlank() ? "" : "  ·  " + it.where)
-                    + "  ·  " + ago(it.time));
+            JLabel sub = muted(ItemScore.format(points(it)) + " pts  ·  " + it.bag + " bag"
+                    + (it.where == null || it.where.isBlank() ? "" : "  ·  " + it.where) + "  ·  " + ago(it.time));
             sub.setBorder(new EmptyBorder(0, 48, 0, 0));
             if (mine(m)) {   // click: the item in Inventory (other players' items do nothing for now)
                 p.add(left(ItemLinks.link(name, it.itemId)));
@@ -298,14 +341,6 @@ public class CaravanView extends JPanel {
         return BAG_COLORS.getOrDefault(bag, new Color(0x9A815A));
     }
 
-    /**
-     * How much the item feeds a pet; 0 if unknown.
-     */
-    private static int feedPower(int id) {
-        ItemDb.Item info = ItemDb.get().item(id);
-        return info == null ? 0 : Math.max(0, info.feedPower);
-    }
-
     /** Whether this member is you. */
     private boolean mine(CaravanMember m) {
         GobblerServer.User me = server.user();
@@ -313,7 +348,7 @@ public class CaravanView extends JPanel {
     }
 
     /** A pile item's area in the scene, and whether it lies on your wagon. */
-    private record ItemHit(Rectangle area, int itemId, boolean mine) {
+    private record ItemHit(Rectangle area, int itemId, double points, boolean mine) {
     }
 
     private static String itemName(int id) {
@@ -400,6 +435,7 @@ public class CaravanView extends JPanel {
         private static final int FIT_MARGIN = 120;    // free space left and right of an enlarged caravan
         private AffineTransform view = new AffineTransform();   // caravan coordinates -> screen, as last drawn
         private boolean anyClick;
+        private int plateW;   // the widest score plate, as last drawn
         private final javax.swing.Timer timer = new javax.swing.Timer(70, e -> {
             phase++;
             repaint();
@@ -470,11 +506,12 @@ public class CaravanView extends JPanel {
         @Override
         public String getToolTipText(MouseEvent e) {
             ItemHit item = itemAt(e.getPoint());
-            if (item != null) return itemName(item.itemId()) + (item.mine() ? "  (click: show in Inventory)" : "");
+            if (item != null) return itemName(item.itemId()) + "  ·  " + ItemScore.format(item.points()) + " pts"
+                    + (item.mine() ? "  (click: show in Inventory)" : "");
             CaravanMember m = at(e.getPoint());
             if (m == null) return null;
             String cls = m.character == null ? "" : " (" + m.character.className + ")";
-            return m.ign + cls + ": " + m.total + (m.total == 1 ? " item" : " items");
+            return m.ign + cls + ": " + ItemScore.whole(score(m)) + " points, " + m.total + (m.total == 1 ? " item" : " items");
         }
 
         /** A point on screen in the caravan's own (unzoomed) coordinates, where the hit areas are. */
@@ -523,7 +560,7 @@ public class CaravanView extends JPanel {
         }
 
         private static String walkerTag(CaravanMember m) {
-            return m.ign + " · " + m.total;
+            return m.ign + " · " + plate(m);
         }
 
         /**
@@ -559,8 +596,11 @@ public class CaravanView extends JPanel {
             int x = PAD;
             paintOx(g2, x, ground);
             x += OX_W;
-            int leader = riders.isEmpty() ? 1 : Math.max(1, riders.get(0).items.size());
-            double scale = Math.max(1, leader / (double) MAX_PILE);   // the leader's pile fills a wagon
+            int biggest = Math.max(1, riders.stream().mapToInt(r -> r.items.size()).max().orElse(1));
+            double scale = Math.max(1, biggest / (double) MAX_PILE);   // the biggest pile fills a wagon
+            g2.setFont(PLATE_FONT);
+            plateW = 0;   // every score plate as wide as the widest, so they line up
+            for (CaravanMember r : riders) plateW = Math.max(plateW, g2.getFontMetrics().stringWidth(plate(r)) + 10);
             for (int i = 0; i < riders.size(); i++) {
                 g2.setColor(INK);
                 int bar = i == 0 ? BAR : STEP_W + BAR;   // the bar runs under the step of the wagon in front
@@ -646,7 +686,21 @@ public class CaravanView extends JPanel {
             List<CaravanItem> loot = new ArrayList<>(m.items);
             loot.sort(Comparator.comparingInt(CaravanView::rarity));
             int n = Math.min(loot.size(), Math.max(1, (int) Math.round(loot.size() / scale)));
-            List<CaravanItem> pile = new ArrayList<>(loot.subList(0, n));
+            // a pile too big for the wagon: every item once (rarest first) with its copies as a number, instead of
+            // leaving copies out (three kimonos showed as one)
+            Map<Integer, Integer> copies = new HashMap<>();
+            List<CaravanItem> pile;
+            if (n < loot.size()) {
+                Map<Integer, CaravanItem> once = new LinkedHashMap<>();
+                for (CaravanItem it : loot) {
+                    once.putIfAbsent(it.itemId, it);
+                    copies.merge(it.itemId, 1, Integer::sum);
+                }
+                pile = new ArrayList<>(once.values());
+                if (pile.size() > n) pile = new ArrayList<>(pile.subList(0, n));
+            } else {
+                pile = new ArrayList<>(loot);
+            }
             Collections.reverse(pile);   // drawn from the bottom up
             int pileX = x + 52, pileW = PILE_COLS * (ITEM + ITEM_GAP);
             int top = bedY;
@@ -658,9 +712,11 @@ public class CaravanView extends JPanel {
                 int ix = rowX + col * (ITEM + ITEM_GAP), iy = bedY - (row + 1) * (ITEM + ITEM_GAP) + lootBob;
                 top = Math.min(top, iy);
                 CaravanItem it = pile.get(i);
-                itemHits.add(new ItemHit(new Rectangle(ix, iy, ITEM, ITEM), it.itemId, paintingMine));
+                itemHits.add(new ItemHit(new Rectangle(ix, iy, ITEM, ITEM), it.itemId, points(it), paintingMine));
                 Icon icon = items.computeIfAbsent(it.itemId, id -> CharactersView.sprite(id, ITEM));
                 if (icon != null) icon.paintIcon(this, g2, ix + (ITEM - icon.getIconWidth()) / 2, iy + (ITEM - icon.getIconHeight()) / 2);
+                int c = copies.getOrDefault(it.itemId, 1);
+                if (c > 1) paintCopies(g2, String.valueOf(c), ix + ITEM, iy + ITEM);
             }
 
             // the step at the back with the stones of the enchanted items
@@ -679,16 +735,16 @@ public class CaravanView extends JPanel {
             String name = m.ign;
             while (fm.stringWidth(name) > WAGON_W - 20 && name.length() > 3) name = name.substring(0, name.length() - 1);
             g2.setColor(new Color(0x1A120A));
-            if (!anyClick) {   // the place, painted on the body left of the name (not on the Profile's single wagon)
-                String rank = "#" + (index + 1);
+            if (!anyClick) {   // the score, painted on the body left of the name (not on the Profile's single wagon)
+                String rank = plate(m);
                 Color plate = index == 0 ? Section.color("LootGobbler.gold", Palette.GOLD) : index == 1 ? FLAG_2 : index == 2 ? FLAG_3 : BONE;
-                int rw = fm.stringWidth(rank) + 10;
+                int rw = Math.max(plateW, fm.stringWidth(rank) + 10);
                 g2.setColor(plate);
                 g2.fillRect(x + 6, bedY + 5, rw, 21);
                 g2.setColor(INK);
                 g2.drawRect(x + 6, bedY + 5, rw - 1, 20);
                 g2.setColor(new Color(0x1A120A));
-                g2.drawString(rank, x + 11, bedY + 22);
+                g2.drawString(rank, x + 6 + (rw - fm.stringWidth(rank)) / 2, bedY + 22);
                 int free = WAGON_W - rw - 20;
                 while (fm.stringWidth(name) > free && name.length() > 3) name = name.substring(0, name.length() - 1);
                 g2.drawString(name, x + rw + 10 + (free - fm.stringWidth(name)) / 2, bedY + 22);
@@ -705,6 +761,24 @@ public class CaravanView extends JPanel {
             wheel(g2, x + 15 + 19, ground - 19);
             wheel(g2, x + WAGON_W - 15 - 19, ground - 19);
             hits.add(Map.entry(new Rectangle(x, top, WAGON_W, ground - top), m));
+        }
+
+        /** The score on a wagon's plate, in whole points. */
+        private static String plate(CaravanMember m) {
+            return ItemScore.whole(score(m));
+        }
+
+        /** A small count at an item's bottom right corner (right, bottom), outlined so it reads on any sprite. */
+        private static void paintCopies(Graphics2D g2, String text, int right, int bottom) {
+            Graphics2D g = (Graphics2D) g2.create();
+            g.setFont(FLAG_FONT.deriveFont(13f));
+            FontMetrics fm = g.getFontMetrics();
+            int x = right - fm.stringWidth(text) + 2, y = bottom + 2;
+            g.setColor(INK);
+            for (int dx = -1; dx <= 1; dx++) for (int dy = -1; dy <= 1; dy++) g.drawString(text, x + dx, y + dy);
+            g.setColor(Color.WHITE);
+            g.drawString(text, x, y);
+            g.dispose();
         }
 
         private static final Color[] STONE = {null, new Color(0x4CD15A), new Color(0x3FB6F2), new Color(0xB05CF0), new Color(0xF2C232)};
@@ -817,7 +891,7 @@ public class CaravanView extends JPanel {
 
         /** MOCKUP: one loot item at (x, y), turned by angle, with its hit area. */
         private void lootItem(Graphics2D g2, int itemId, int x, int y, double angle) {
-            itemHits.add(new ItemHit(new Rectangle(x, y, ITEM, ITEM), itemId, paintingMine));
+            itemHits.add(new ItemHit(new Rectangle(x, y, ITEM, ITEM), itemId, ItemScore.get().of(itemId, "", 0), paintingMine));
             Icon icon = items.computeIfAbsent(itemId, id -> CharactersView.sprite(id, ITEM));
             if (icon == null) return;
             Graphics2D g = (Graphics2D) g2.create();

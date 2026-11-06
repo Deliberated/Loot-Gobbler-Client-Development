@@ -28,7 +28,7 @@ public final class DungeonDifficulty {
             "The Void", 8.5,
             "Advanced Kogbold Steamworks", 9.0,
             "Cultist Hideout", 7.0);
-    private static final Pattern PORTAL =Pattern.compile("<Activate id=\"([^\"]+)\">CreatePortal</Activate>");
+    private static final Pattern PORTAL =Pattern.compile("<Activate id=\"([^\"]+)\"[^>]*>CreatePortal</Activate>");   // may carry more attributes (readonlymods...)
     private static volatile Map<String, Double> byDungeon;
 
     private DungeonDifficulty() {
@@ -76,7 +76,7 @@ public final class DungeonDifficulty {
         keyPortals.forEach((portal, difficulty) -> {
             String dungeon = portalToDungeon.get(portal);
             if (dungeon == null && portal.endsWith(" Portal")) dungeon = portal.substring(0, portal.length() - 7);
-            if (dungeon != null) out.putIfAbsent(dungeon, difficulty);
+            if (dungeon != null && difficulty > 0) out.putIfAbsent(dungeon, difficulty);   // 0: no rating (event dungeons)
         });
         WITHOUT_KEY.forEach(out::putIfAbsent);
         byDungeon = out;

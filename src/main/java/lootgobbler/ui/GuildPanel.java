@@ -48,6 +48,8 @@ public class GuildPanel extends SubTabs {
     private final Section memberSection;
     private final JPanel memberBody = column();
     private long shownMember = -1;
+    private Leaderboard lastBoard;   // as last shown, to redraw with new score weights
+    private List<GuildDrop> lastDrops;
     private boolean loading;
 
     public GuildPanel() {
@@ -73,9 +75,14 @@ public class GuildPanel extends SubTabs {
             if (isShowing()) refresh();
         }));
         message(leaderboardBody, "Open this tab while logged in to a server to see your guild.");
+        lootgobbler.ItemScore.get().onChange(() -> SwingUtilities.invokeLater(() -> {   // an admin changed the weights
+            if (lastBoard != null) showLeaderboard(lastBoard);
+            if (lastDrops != null) showDrops(lastDrops);
+        }));
     }
 
     private void refresh() {
+        lootgobbler.ItemScore.get().reload();
         caravan.load();
         questMap.load();
         if (loading) return;
@@ -86,7 +93,7 @@ public class GuildPanel extends SubTabs {
             return;
         }
         loading = true;
-        CompletableFuture<Leaderboard> board = server.leaderboard();
+        CompletableFuture<Leaderboard> board = server.leaderboard().thenCompose(this::withScores);
         CompletableFuture<GobblerServer.GuildDrops> drops = server.guildDrops(DROP_LIMIT);
         CompletableFuture.allOf(board, drops).whenComplete((v, e) -> SwingUtilities.invokeLater(() -> {
             loading = false;
@@ -100,6 +107,37 @@ public class GuildPanel extends SubTabs {
             showDrops(drops.join().drops);
             if (shownMember >= 0) openMember(shownMember, false);
         }));
+    }
+
+    /**
+     * Servers from before item scores send no tally with the leaderboard: then each member's all-time caravan
+     * (its tally, or at least the items it lists) stands in for it.
+     */
+    private CompletableFuture<Leaderboard> withScores(Leaderboard board) {
+        if (board.members.stream().anyMatch(m -> !m.tally.isEmpty())) return CompletableFuture.completedFuture(board);
+        return server.caravan("all").handle((c, e) -> {
+            if (c == null) return board;
+            for (Member m : board.members) {
+                for (GobblerServer.CaravanMember cm : c.members) {
+                    if (cm.id != m.id) continue;
+                    if (!cm.tally.isEmpty()) {
+                        m.tally = cm.tally;
+                        continue;
+                    }
+                    List<GobblerServer.Tally> tally = new ArrayList<>();
+                    for (GobblerServer.CaravanItem it : cm.items) {
+                        GobblerServer.Tally t = new GobblerServer.Tally();
+                        t.itemId = it.itemId;
+                        t.where = it.where;
+                        t.enchants = it.enchants;
+                        t.count = 1;
+                        tally.add(t);
+                    }
+                    m.tally = tally;
+                }
+            }
+            return board;
+        });
     }
 
     /**
@@ -121,9 +159,10 @@ public class GuildPanel extends SubTabs {
     // --- leaderboard ---
 
     private void showLeaderboard(Leaderboard board) {
+        lastBoard = board;
         leaderboardSection.setTitle("Leaderboard - " + board.guild + " (" + board.members.size() + ")");
         leaderboardBody.removeAll();
-        String[] columns = {"#", "Player", "Rank", "Points", "Items", "Finds", "Fame", "Exalts", "Chars", "Maxed", "Last active"};
+        String[] columns = {"#", "Player", "Rank", "Score", "Items", "Finds", "Fame", "Exalts", "Chars", "Maxed", "Last active"};
         DefaultTableModel model = new DefaultTableModel(columns, 0) {
             @Override
             public boolean isCellEditable(int r, int c) {
@@ -132,13 +171,16 @@ public class GuildPanel extends SubTabs {
 
             @Override
             public Class<?> getColumnClass(int c) {   // numbers sort as numbers
-                return c == 1 ? String.class : Long.class;
+                return c == 1 ? String.class : c == 3 ? Double.class : Long.class;
             }
         };
-        List<Member> members = board.members;
+        // highest score first (the # follows it); ties by name
+        List<Member> members = new ArrayList<>(board.members);
+        members.sort(Comparator.comparingDouble((Member m) -> -lootgobbler.ItemScore.get().total(m.tally))
+                .thenComparing(m -> m.ign.toLowerCase(Locale.ROOT)));
         for (int i = 0; i < members.size(); i++) {
             Member m = members.get(i);
-            model.addRow(new Object[]{(long) i + 1, m.ign, (long) m.guildRank, (long) m.points, (long) m.items, (long) m.finds, m.fame,
+            model.addRow(new Object[]{(long) i + 1, m.ign, (long) m.guildRank, lootgobbler.ItemScore.get().total(m.tally), (long) m.items, (long) m.finds, m.fame,
                     (long) m.exalts, (long) m.characters, (long) m.maxed, m.lastActive});
         }
         JTable table = new JTable(model);
@@ -149,6 +191,7 @@ public class GuildPanel extends SubTabs {
         table.getTableHeader().setReorderingAllowed(false);
         table.setDefaultRenderer(Object.class, new BoardRenderer(PlayerProfile.get().current().ign));
         table.setDefaultRenderer(Long.class, new BoardRenderer(PlayerProfile.get().current().ign));
+        table.setDefaultRenderer(Double.class, new BoardRenderer(PlayerProfile.get().current().ign));
         table.getColumnModel().getColumn(0).setMaxWidth(44);
         table.setToolTipText("Click a player to open their profile. Click a column title to sort.");
         table.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
@@ -162,7 +205,7 @@ public class GuildPanel extends SubTabs {
         holder.add(table, BorderLayout.CENTER);
         leaderboardBody.add(left(holder));
         leaderboardBody.add(Box.createVerticalStrut(8));
-        leaderboardBody.add(muted("Points: quest points this month. Items: different UT/ST items. Finds: all copies. Fame, Chars and Maxed count "
+        leaderboardBody.add(muted("Score: the points of all items ever found. Items: different UT/ST items. Finds: all copies. Fame, Chars and Maxed count "
                 + "living characters. Exalts over all classes."));
         leaderboardBody.revalidate();
         leaderboardBody.repaint();
@@ -185,7 +228,8 @@ public class GuildPanel extends SubTabs {
             Object shown = value;
             if (col == 2 && value instanceof Long rank) shown = PlayerProfile.rankName(rank.intValue());
             if (col == 10 && value instanceof Long t) shown = t == 0 ? "-" : CharactersView.ago(t);
-            if (value instanceof Long n && col >= 3 && col <= 9) shown = NUM.format(n);
+            if (value instanceof Long n && col >= 4 && col <= 9) shown = NUM.format(n);
+            if (value instanceof Double d) shown = lootgobbler.ItemScore.format(d);
             super.getTableCellRendererComponent(table, shown, selected, false, row, column);
             setBorder(new EmptyBorder(0, 8, 0, 8));
             setHorizontalAlignment(col == 1 || col == 2 || col == 10 ? LEFT : RIGHT);
@@ -202,6 +246,7 @@ public class GuildPanel extends SubTabs {
     // --- recent drops ---
 
     private void showDrops(List<GuildDrop> drops) {
+        lastDrops = drops;
         dropsBody.removeAll();
         if (drops.isEmpty()) dropsBody.add(muted("No drops yet."));
         for (GuildDrop d : drops) dropsBody.add(dropRow(d));
@@ -224,7 +269,15 @@ public class GuildPanel extends SubTabs {
         text.setOpaque(false);
         text.add(name);
         text.add(sub);
-        JComponent row = card(text);
+        JLabel points = new JLabel(lootgobbler.ItemScore.format(lootgobbler.ItemScore.get().of(d.itemId, d.where, enchants)) + " pts");
+        points.setFont(new Font(lootgobbler.Themes.HEAD_FONT, Font.PLAIN, 30));
+        points.setForeground(Section.color("LootGobbler.gold", Palette.GOLD));
+        points.setBorder(new EmptyBorder(0, 12, 0, 8));
+        JPanel content = new JPanel(new BorderLayout());
+        content.setOpaque(false);
+        content.add(text, BorderLayout.CENTER);
+        content.add(points, BorderLayout.EAST);
+        JComponent row = card(content);
         row.setToolTipText("Open " + d.ign + "'s profile");
         row.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         Clicks.onClick(row, () -> openMember(d.userId, true));

@@ -411,16 +411,31 @@ public class CollectionPanel extends JPanel {
      */
     private static JPanel findRow(int itemId, CollectionStore.Find f, String note) {
         String how = how(f);
-        // seasonal or not, behind the place: teal like the Characters tab's seasonal tag, red for non-seasonal
-        String season = f.seasonal == null ? "" : f.seasonal
-                ? "  <font color='#2BD8B0'>(seasonal)</font>" : "  <font color='#E5636E'>(non-seasonal)</font>";
-        String goneNote = note == null ? "" : "  <font color='#938B79'>· " + escapeHtml(note) + "</font>";
-        JLabel what = leftAligned(new JLabel("<html>" + escapeHtml(how) + season + goneNote + "</html>"));
-        if (f.seasonal != null) what.setToolTipText(f.seasonal ? "Found on a seasonal character" : "Found on a non-seasonal character");
+        // one line each, plain text: in a narrow window the place is cut short ("..."), never the lines below it
+        JLabel what = leftAligned(new JLabel(how));
+        what.setToolTipText(how);
         JPanel text = new JPanel();
         text.setLayout(new BoxLayout(text, BoxLayout.Y_AXIS));
         text.setOpaque(false);
         text.add(what);
+        // seasonal or not: teal like the Characters tab's seasonal tag, red for non-seasonal; then a grey note
+        if (f.seasonal != null || note != null) {
+            JPanel tags = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+            tags.setOpaque(false);
+            if (f.seasonal != null) {
+                JLabel season = new JLabel(f.seasonal ? "(seasonal)" : "(non-seasonal)");
+                season.setForeground(f.seasonal ? new Color(0x2BD8B0) : new Color(0xE5636E));
+                season.setToolTipText(f.seasonal ? "Found on a seasonal character" : "Found on a non-seasonal character");
+                tags.add(season);
+            }
+            if (note != null) {
+                JLabel gone = new JLabel((f.seasonal != null ? "  · " : "· ") + note);
+                gone.setForeground(Palette.MUTED);
+                tags.add(gone);
+            }
+            tags.setMaximumSize(new Dimension(Integer.MAX_VALUE, tags.getPreferredSize().height));
+            text.add(leftAligned(tags));
+        }
         int count = f.enchantIds != null ? f.enchantIds.size() : Math.max(0, f.enchants);
         if (f.enchantIds != null && f.enchantIds.stream().anyMatch(id -> id >= 0)) {
             text.add(Box.createVerticalStrut(4));

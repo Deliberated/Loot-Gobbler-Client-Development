@@ -116,6 +116,20 @@ public final class GobblerServer {
         public int characters;    // living characters
         public int maxed;         // living characters with all 8 stats maxed
         public int points;        // quest points this month
+        public List<Tally> tally = List.of();   // every drop ever logged, for the item score
+    }
+
+    /** How often a member found an item in one place with that many enchantments (-1 = unknown). */
+    public static final class Tally {
+        public int itemId;
+        public String where = "";
+        public int enchants = -1;
+        public int count;
+    }
+
+    /** The item score weights (0 to 1 each), set by an admin. */
+    public static final class ScoreWeights {
+        public double feedPower = 1, difficulty = 1, rarity = 1;
     }
 
     public static final class Leaderboard {
@@ -174,6 +188,7 @@ public final class GobblerServer {
         public Map<String, Integer> byBag = Map.of();   // bag color -> items found
         public int total;                               // all items found
         public List<CaravanItem> items = List.of();   // newest first, at most 120
+        public List<Tally> tally = List.of();         // all items of the range, for the score (empty from older servers)
         public String lastDrop;                        // the player's local time, null if none
         public CaravanCharacter character;             // null if unknown
     }
@@ -181,7 +196,7 @@ public final class GobblerServer {
     public static final class Caravan {
         public String guild = "";
         public String range = "";
-        public List<CaravanMember> members = List.of();   // most items first
+        public List<CaravanMember> members = List.of();   // most items first (the client sorts them by score)
     }
 
     /** Who cleared a quest map stage, and when (epoch ms). */
@@ -537,6 +552,16 @@ public final class GobblerServer {
     /** Your guild's most recent drops, newest first (at most 200). */
     public CompletableFuture<GuildDrops> guildDrops(int limit) {
         return call("GET", "/guild/drops?limit=" + limit, null, GuildDrops.class);
+    }
+
+    /** The item score weights. */
+    public CompletableFuture<ScoreWeights> scoring() {
+        return call("GET", "/scoring", null, ScoreWeights.class);
+    }
+
+    /** Admins only: changes the item score weights (each 0 to 1); returns them as stored. */
+    public CompletableFuture<ScoreWeights> putScoring(ScoreWeights w) {
+        return call("PUT", "/admin/scoring", w, ScoreWeights.class);
     }
 
     /** Your guild's loot caravan; range is "week", "month" or "all". */
