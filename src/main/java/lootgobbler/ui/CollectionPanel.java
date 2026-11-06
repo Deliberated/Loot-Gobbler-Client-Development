@@ -63,6 +63,7 @@ public class CollectionPanel extends JPanel {
         add(views, BorderLayout.CENTER);
 
         CollectionStore.get().onChange(ViewRefresh.of(this, this::refresh));   // only while it can be seen
+        lootgobbler.Whereabouts.get().onChange(ViewRefresh.of(this, this::refresh));   // copies moved, came or went
         Thread loader = new Thread(() -> {
             ItemDb db = ItemDb.get();
             List<StSets.Set> sets = StSets.get();
@@ -213,30 +214,40 @@ public class CollectionPanel extends JPanel {
         recent.add(itemHeader(item, entry));
         recent.add(Box.createVerticalStrut(12));
 
+        // where your copies are now: each as the game last showed its place (nothing guessed)
+        lootgobbler.Whereabouts where = lootgobbler.Whereabouts.get();
+        heading("WHERE THEY ARE");
+        if (!where.known()) {
+            recent.add(leftAligned(mutedLabel("Shown once Loot Gobbler has seen your characters (log in) and your vault.")));
+        } else {
+            List<lootgobbler.Whereabouts.Held> have = where.copies(item.id);
+            if (have.isEmpty()) recent.add(leftAligned(mutedLabel("None on your characters or in your vaults.")));
+            for (lootgobbler.Whereabouts.Held h : have) {
+                recent.add(findRow(item.id, asFind(h), null));
+                recent.add(Box.createVerticalStrut(6));
+            }
+            lootgobbler.Whereabouts.Gaps gaps = where.gaps();
+            if (!gaps.none()) {
+                JLabel hint = mutedLabel("Not seen yet: " + gapsText(gaps) + ". Their copies are not counted until then.");
+                hint.setToolTipText("Log in with each character once (or enter the Nexus, which reads the character list) "
+                        + "and visit your vaults.");
+                recent.add(leftAligned(hint));
+            }
+        }
         if (entry == null) return;
-        // the copies you have on top; below a line, the ones used up (forged, fed), each shown as the copy it was
+        // what happened: drops (and chests opened), latest first; below, the copies used up
         Map<CollectionStore.Find, CollectionStore.Find> used = usedCopies(entry.history());
         List<CollectionStore.Find> finds = new ArrayList<>(entry.history());
         Collections.reverse(finds);   // latest at the top
-        for (CollectionStore.Find f : finds) {
-            if (CollectionStore.isRemoval(f) || used.containsValue(f) || Boolean.TRUE.equals(f.missing)) continue;
+        List<CollectionStore.Find> drops = finds.stream().filter(f -> CollectionStore.DROP.equals(f.source)).toList();
+        heading("FOUND");
+        if (drops.isEmpty()) {
+            recent.add(leftAligned(mutedLabel("No drop seen" + (entry.first == null ? "" : "; first seen in your "
+                    + "inventory or vault on " + entry.firstDate()) + ".")));
+        }
+        for (CollectionStore.Find f : drops) {
             recent.add(findRow(item.id, f, null));
             recent.add(Box.createVerticalStrut(6));
-        }
-        // copies on no character and in no vault at the last check: sold, traded or gone unseen (not counted)
-        List<CollectionStore.Find> missing = finds.stream()
-                .filter(f -> Boolean.TRUE.equals(f.missing) && !used.containsValue(f)).toList();
-        if (!missing.isEmpty()) {
-            JLabel title = heading("NOT FOUND");
-            title.setToolTipText("<html>On none of your characters and in no vault or gift chest when last checked:<br>"
-                    + "sold, traded, given away or used up without Loot Gobbler seeing it. Not counted.<br>"
-                    + "If it turns up again, it moves back up by itself.</html>");
-            for (CollectionStore.Find f : missing) {
-                JPanel row = findRow(item.id, f, null);
-                dim(row);
-                recent.add(row);
-                recent.add(Box.createVerticalStrut(6));
-            }
         }
         if (used.isEmpty()) return;
         heading("USED");
@@ -296,12 +307,41 @@ public class CollectionPanel extends JPanel {
         return title;
     }
 
-    /** Greys out a history row's texts (a copy found nowhere). */
-    private static void dim(Component c) {
-        if (c instanceof JLabel l && l.getForeground() != null && !Palette.MUTED.equals(l.getForeground())) {
-            l.setForeground(Palette.MUTED);
+    private static JLabel mutedLabel(String text) {
+        JLabel l = new JLabel(text);
+        l.setForeground(Palette.MUTED);
+        return l;
+    }
+
+    /** "2 characters, your seasonal vault". */
+    private static String gapsText(lootgobbler.Whereabouts.Gaps g) {
+        List<String> parts = new ArrayList<>();
+        if (g.characters() > 0) parts.add(g.characters() + (g.characters() == 1 ? " character" : " characters"));
+        if (g.vault()) parts.add("your vault");
+        if (g.seasonalVault()) parts.add("your seasonal vault");
+        return String.join(", ", parts);
+    }
+
+    /**
+     * A copy you have, as a history row: its slot ("Equipped", "Vault chest"...), season and enchantments, the
+     * character or chest it is in, and when that place was last looked at.
+     */
+    private static CollectionStore.Find asFind(lootgobbler.Whereabouts.Held h) {
+        CollectionStore.Find f = new CollectionStore.Find();
+        f.source = h.charId() > 0 ? CollectionStore.INVENTORY : CollectionStore.VAULT;
+        f.bag = h.slot();
+        f.enchantIds = h.enchantIds();
+        f.enchants = h.enchantIds() == null ? -1 : h.enchantIds().size();
+        f.seasonal = h.seasonal();
+        f.time = h.seenAt() <= 0 ? null : java.time.LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(h.seenAt()),
+                java.time.ZoneId.systemDefault()).withNano(0).toString();
+        if (h.charId() > 0) {
+            lootgobbler.CharacterStore.get().all().stream().filter(c -> c.charId == h.charId()).findFirst()
+                    .ifPresent(c -> f.seen = CollectionStore.Seen.character(c));
+        } else {
+            f.seen = CollectionStore.Seen.vault((lootgobbler.Whereabouts.SEASONAL_VAULT.equals(h.vault()) ? "seasonal " : "") + h.slot());
         }
-        if (c instanceof Container k) for (Component x : k.getComponents()) dim(x);
+        return f;
     }
 
     /** A removal shown as the copy it used up: the removal's time and source, the copy's enchantments and season. */
@@ -348,7 +388,7 @@ public class CollectionPanel extends JPanel {
         text.add(leftAligned(kind));
         text.add(Box.createVerticalStrut(6));
 
-        int held = entry == null ? 0 : entry.held();   // the copies you have now (used up ones are below, under USED)
+        int held = CollectionStore.get().held(item.id);   // the copies you have now, wherever they are
         JLabel count = new JLabel("Count: " + held);
         count.setFont(count.getFont().deriveFont(20f));   // smaller, the pixel font draws a 6 that looks like an 8
         count.setForeground(held == 0 ? Palette.MUTED : new Color(0xF5C542));
@@ -424,7 +464,7 @@ public class CollectionPanel extends JPanel {
     private static String how(CollectionStore.Find f) {
         return switch (f.source) {
             case CollectionStore.VAULT -> f.bag.isEmpty() ? "Vault" : f.bag;
-            case CollectionStore.INVENTORY -> "Inventory";
+            case CollectionStore.INVENTORY -> f.bag.isEmpty() ? "Inventory" : f.bag;   // "Equipped", "Quick slot"...
             case CollectionStore.FORGED -> "Forged (used in the forge)";
             case CollectionStore.FED -> "Fed to a pet";
             case CollectionStore.DROPPED -> "Dropped on the ground";
@@ -650,7 +690,7 @@ public class CollectionPanel extends JPanel {
         Map<Integer, CollectionStore.Entry> all = CollectionStore.get().snapshot();
         all.entrySet().removeIf(e -> {
             ItemDb.Item item = ItemDb.get().item(e.getKey());
-            return item == null || !item.isCollectible() || e.getValue().held() == 0;
+            return item == null || !item.isCollectible() || CollectionStore.get().held(e.getKey()) == 0;
         });
         return all;
     }
@@ -662,7 +702,8 @@ public class CollectionPanel extends JPanel {
             ItemDb.Item item = ItemDb.get().item(e.getKey());
             String line = name(e.getKey());
             if (item != null && item.isShiny() && !line.contains("Shiny")) line += " (Shiny)";
-            if (e.getValue().held() > 1) line += " x" + e.getValue().held();
+            int n = CollectionStore.get().held(e.getKey());
+            if (n > 1) line += " x" + n;
             lines.add(line);
         }
         lines.sort(String.CASE_INSENSITIVE_ORDER);

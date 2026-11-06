@@ -331,7 +331,7 @@ public class CollectionGrid extends JComponent implements Scrollable {
                 if (have) {
                     CollectionStore.Entry entry = owned.get(item.id);
                     EnchantBadge.draw(g, x + CELL - 3, y + CELL - 3, entry.maxEnchants(), 5);   // best copy
-                    drawCount(g, x + 2, y + CELL - 3, entry.held());   // copies you still have
+                    drawCount(g, x + 2, y + CELL - 3, CollectionStore.get().held(item.id));   // copies you have
                 }
             }
         }
@@ -425,7 +425,7 @@ public class CollectionGrid extends JComponent implements Scrollable {
         ItemDb.Item item = items.get(tipIndex);
         CollectionStore.Entry entry = owned.get(item.id);
         String name = item.name + (item.isShiny() && !item.name.contains("Shiny") ? " (Shiny)" : "");
-        String sub = entry == null ? "Not found yet" : "Count: " + entry.held();
+        String sub = entry == null ? "Not found yet" : "Count: " + CollectionStore.get().held(item.id);
         Font base = UIManager.getFont("Label.font");
         if (base == null) base = getFont();
         FontMetrics fm = g.getFontMetrics(base);

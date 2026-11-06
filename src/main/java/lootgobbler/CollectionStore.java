@@ -47,7 +47,6 @@ public final class CollectionStore implements Syncable {
         public List<Integer> enchantIds;   // null if unknown (older finds, inventory)
         public Boolean seasonal;   // found on a seasonal character; null if unknown (older finds)
         public Seen seen;          // where this copy was seen last (a character or a vault chest); null if not yet
-        public Boolean missing;    // true: on no character and in no vault at the last full check (see reconcile)
 
         public static Find of(String source, int enchants, String where, String bag) {
             Find f = new Find();
@@ -94,11 +93,6 @@ public final class CollectionStore implements Syncable {
             s.seasonal = c.seasonal;
             return s;
         }
-
-        boolean same(Seen o) {
-            return o != null && charId == o.charId && place.equals(o.place) && classType == o.classType && skin == o.skin
-                    && tex1 == o.tex1 && tex2 == o.tex2 && seasonal == o.seasonal;
-        }
     }
 
     public static final class Entry {
@@ -124,13 +118,11 @@ public final class CollectionStore implements Syncable {
             return (int) history().stream().filter(CollectionStore::isRemoval).count();
         }
 
-        /** Copies you still hold: every copy obtained minus those forged or fed away, and those found nowhere. */
+        /**
+         * Copies obtained minus those forged or fed away, by the history alone; what you have is
+         * CollectionStore.held(itemId), which counts the copies where they are.
+         */
         public int held() {
-            return Math.max(0, owned() - (int) history().stream().filter(f -> Boolean.TRUE.equals(f.missing)).count());
-        }
-
-        /** Every copy obtained minus those forged or fed away (the ones found nowhere still count here). */
-        int owned() {
             return Math.max(0, count - removed());
         }
 
@@ -195,263 +187,31 @@ public final class CollectionStore implements Syncable {
     }
 
     /**
-     * Items you hold right now (vault, inventory), one Find per copy. An item's count is raised to the number of
-     * copies held if it is lower; seeing the same copies again changes nothing, so re-checking never inflates it.
+     * Items you hold right now (a character or the vault), one Find per copy: an item seen for the first time (not
+     * dropped while Loot Gobbler ran) joins the collection, as first seen there. Nothing else happens: what you have
+     * is kept by Whereabouts, place by place, and the history only records what happened (finds, removals).
      *
      * @param held item id to one Find per copy currently held
      * @return How many copies were new to the collection.
      */
     public int recordHeld(Map<Integer, List<Find>> held) {
         int added = 0;
-        boolean changed = false;
         synchronized (this) {
             for (Map.Entry<Integer, List<Find>> h : held.entrySet()) {
                 List<Find> copies = h.getValue();
-                Entry e = entries.get(h.getKey());
-                if (e != null && fillEnchants(e, copies)) changed = true;
-                if (e != null && fillSeasonal(e, copies)) changed = true;
-                // new copies: those no recorded copy can be (see unmatched), and at least as many as are seen here
-                // beyond the copies on record (copies forged or fed away are not held any more)
-                java.util.Map<Find, Find> pairs = new java.util.IdentityHashMap<>();   // held copy -> its record
-                List<Find> fresh = e == null ? copies : unmatched(e, copies, pairs);
-                for (java.util.Map.Entry<Find, Find> p : pairs.entrySet()) {   // where each recorded copy is now
-                    Seen now = p.getKey().seen;
-                    if (now != null && !now.same(p.getValue().seen)) {
-                        p.getValue().seen = now;
-                        changed = true;
-                    }
-                    if (p.getValue().missing != null) {   // turned up again
-                        p.getValue().missing = null;
-                        changed = true;
-                    }
-                }
-                int n = Math.max(fresh.size(), copies.size() - (e == null ? 0 : e.owned()));
-                if (n <= 0) continue;
-                if (e == null) {
-                    e = new Entry();
-                    e.first = copies.get(0).time;
-                    entries.put(h.getKey(), e);
-                }
-                // each new copy keeps its own place and enchantments
-                List<Find> others = new ArrayList<>(copies);
-                others.removeAll(fresh);
-                for (int i = 0; i < n; i++) addHistory(e, i < fresh.size() ? fresh.get(i) : others.get(i - fresh.size()));
+                if (copies.isEmpty() || entries.containsKey(h.getKey())) continue;
+                Entry e = new Entry();
+                e.first = copies.get(0).time;
                 e.last = copies.get(copies.size() - 1).time;
-                added += n;
-                e.count += n;
+                for (Find f : copies) addHistory(e, f);
+                e.count = copies.size();
+                entries.put(h.getKey(), e);
+                added += copies.size();
             }
-            if (added > 0 || changed) save();
+            if (added > 0) save();
         }
-        if (added > 0 || changed) fire();
+        if (added > 0) fire();
         return added;
-    }
-
-    /**
-     * The held copies (all of one place: a character or the vault) that no copy on record can be, so they are new.
-     * Copies are told apart by what does not change: a copy on record can only be a held one if it has no more
-     * enchantment slots (slots are never taken away), and a non-seasonal one never a seasonal copy (only seasonal
-     * items turn non-seasonal, when the season ends). Each copy on record stands for one held copy at most. Copies
-     * forged or fed away are taken out first; copies the history no longer lists (trimmed, or from before it) can
-     * be any copy. Pairs are made the surest way first: the same enchantments, the same slots, fewer slots, unknown.
-     */
-    private static List<Find> unmatched(Entry e, List<Find> copies, java.util.Map<Find, Find> pairs) {
-        List<Find> records = new ArrayList<>();
-        int wild = remaining(e, records);
-        List<Find> rest = pair(copies, records, pairs);
-        return rest.subList(Math.min(rest.size(), wild), rest.size());   // the unlisted copies can be any of the rest
-    }
-
-    /**
-     * Pairs copies with the records they can be (see unmatched), each record once: the surest way first, and among
-     * equally sure records the one last seen in the copy's place, so two copies that look alike (one in the vault,
-     * one on a character) keep their own records instead of trading places. Matched records are taken out of records.
-     *
-     * @return The copies no record fits.
-     */
-    private static List<Find> pair(List<Find> copies, List<Find> records, Map<Find, Find> pairs) {
-        List<Find> rest = new ArrayList<>(copies);
-        rest.sort(java.util.Comparator.comparingInt(CollectionStore::slots));   // fewest slots first, so they get the fitting records
-        for (int pass = 0; pass < 4; pass++) {
-            for (java.util.Iterator<Find> it = rest.iterator(); it.hasNext(); ) {
-                Find c = it.next();
-                Find match = null;
-                for (Find f : records) {
-                    if (!fits(c, f, pass)) continue;
-                    if (match == null) match = f;
-                    if (samePlace(c.seen, f.seen)) {
-                        match = f;
-                        break;
-                    }
-                }
-                if (match != null) {
-                    records.remove(match);
-                    it.remove();
-                    pairs.put(c, match);
-                }
-            }
-        }
-        return rest;
-    }
-
-    private static boolean samePlace(Seen a, Seen b) {
-        return a != null && b != null && a.charId == b.charId && (a.charId > 0 || a.place.equals(b.place));
-    }
-
-    /**
-     * The recorded copies not forged or fed away (into records), and how many obtained copies the history no longer
-     * lists (trimmed, or from before it).
-     */
-    private static int remaining(Entry e, List<Find> records) {
-        List<Find> removals = new ArrayList<>();
-        for (Find f : e.history()) (isRemoval(f) ? removals : records).add(f);
-        int wild = Math.max(0, e.count - records.size());   // obtained copies the history does not list
-        for (Find r : removals) {   // a copy gone: the record it most likely was
-            Find gone = best(records, r);
-            if (gone != null) records.remove(gone);
-            else if (wild > 0) wild--;
-        }
-        return wild;
-    }
-
-    /**
-     * Brings the collection in line with where your copies are (where: item id to the copies on every character
-     * and in every vault and gift chest, each with its place in seen), every place at once:
-     * <ul>
-     * <li>copies there beyond those on record are new (e.g. one in the vault and one on a character not played
-     * since: each place alone holds no more than the one on record);</li>
-     * <li>recorded copies that are nowhere are marked missing, so they no longer count as held (sold, traded, given
-     * away, or used up unseen); one that is somewhere again loses the mark. Only copies judged can be marked: e.g.
-     * not found after the check, and of a seasonality whose vault was checked (see Whereabouts).</li>
-     * </ul>
-     *
-     * @return How many copies were new to the collection.
-     */
-    public int reconcile(Map<Integer, List<Find>> where, java.util.function.Predicate<Find> judged) {
-        boolean changed = false;
-        int added = 0;
-        synchronized (this) {
-            java.util.Set<Integer> items = new java.util.LinkedHashSet<>(entries.keySet());
-            items.addAll(where.keySet());
-            for (int item : items) {
-                Entry e = entries.get(item);
-                List<Find> records = new ArrayList<>();
-                int wild = e == null ? 0 : remaining(e, records);
-                List<Find> unseen = new ArrayList<>(records);
-                List<Find> rest = pair(where.getOrDefault(item, List.of()), unseen, new java.util.IdentityHashMap<>());
-                for (Find f : records) {
-                    Boolean mark;
-                    if (!unseen.contains(f)) mark = null;   // somewhere
-                    else if (judged.test(f)) mark = Boolean.TRUE;   // nowhere
-                    else continue;   // too new for the check, or its vault was not checked: leave it as it is
-                    if (!java.util.Objects.equals(mark, f.missing)) {
-                        f.missing = mark;
-                        changed = true;
-                    }
-                }
-                // copies left over are new; copies the history no longer lists may be any of them
-                for (int i = wild; i < rest.size(); i++) {
-                    Find f = rest.get(i);
-                    if (e == null) {
-                        e = new Entry();
-                        e.first = f.time;
-                        entries.put(item, e);
-                    }
-                    addHistory(e, f);
-                    e.last = f.time;
-                    e.count++;
-                    added++;
-                }
-            }
-            if (changed || added > 0) save();
-        }
-        if (changed || added > 0) fire();
-        return added;
-    }
-
-    /** A held copy's enchantment slots, -1 if unknown. */
-    private static int slots(Find f) {
-        return f.enchantIds != null ? f.enchantIds.size() : f.enchants;
-    }
-
-    /**
-     * Whether the record can be the held copy, at a pass: 0 the same enchantments, 1 the same slots, 2 fewer slots
-     * on record, 3 slots unknown on either side.
-     */
-    private static boolean fits(Find copy, Find record, int pass) {
-        if (Boolean.TRUE.equals(copy.seasonal) && Boolean.FALSE.equals(record.seasonal)) return false;
-        int c = slots(copy), r = slots(record);
-        return switch (pass) {
-            case 0 -> copy.enchantIds != null && copy.enchantIds.equals(record.enchantIds);
-            case 1 -> c >= 0 && c == r;
-            case 2 -> c >= 0 && r >= 0 && r < c;
-            default -> c < 0 || r < 0;
-        };
-    }
-
-    /** The record that a removed copy most likely was (the surest pair, as in unmatched); null if none fits. */
-    private static Find best(List<Find> records, Find removed) {
-        for (int pass = 0; pass < 4; pass++) for (Find f : records) if (fits(removed, f, pass)) return f;
-        return records.isEmpty() ? null : records.get(0);
-    }
-
-    /**
-     * Copies seen again with known enchantments complete earlier vault/inventory finds that lacked them. A set of
-     * enchantments the history already shows belongs to that find, so it is never copied onto another one.
-     *
-     * @return True if any find was updated.
-     */
-    private static boolean fillEnchants(Entry e, List<Find> seen) {
-        boolean changed = false;
-        List<Find> unknown = new ArrayList<>();
-        List<List<Integer>> shown = new ArrayList<>();   // enchantment sets already in the history, one per find
-        for (Find f : e.history()) {
-            if (isRemoval(f)) continue;
-            if (f.enchantIds == null && !DROP.equals(f.source)) unknown.add(f);
-            if (f.enchantIds != null) shown.add(f.enchantIds);
-        }
-        for (Find s : seen) {
-            if (s.enchantIds == null || shown.remove(s.enchantIds)) continue;   // that copy is already in the history
-            // older versions did not count empty slots: upgrade a find with the same enchantments but fewer slots
-            Find upgrade = null;
-            for (Find f : e.history()) {
-                if (f.enchantIds != null && !DROP.equals(f.source) && !isRemoval(f) && f.enchantIds.size() < s.enchantIds.size()
-                        && s.enchantIds.containsAll(f.enchantIds)) {
-                    upgrade = f;
-                    break;
-                }
-            }
-            Find f = upgrade;
-            if (f == null) {   // an unknown find from the same place (vault / inventory) first
-                f = unknown.stream().filter(u -> u.source.equals(s.source)).findFirst()
-                        .orElse(unknown.isEmpty() ? null : unknown.get(0));
-                unknown.remove(f);
-            }
-            if (f == null) continue;
-            f.enchantIds = s.enchantIds;
-            f.enchants = s.enchantIds.size();
-            changed = true;
-        }
-        return changed;
-    }
-
-    /**
-     * Older vault/inventory finds did not record whether the character was seasonal: a copy seen again with the
-     * same enchantments fills it in.
-     *
-     * @return True if any find was updated.
-     */
-    private static boolean fillSeasonal(Entry e, List<Find> seen) {
-        boolean changed = false;
-        List<Find> rest = new ArrayList<>(seen);
-        for (Find f : e.history()) {
-            if (f.seasonal != null || f.enchantIds == null || DROP.equals(f.source) || isRemoval(f)) continue;
-            Find s = rest.stream().filter(c -> c.seasonal != null && f.enchantIds.equals(c.enchantIds)).findFirst().orElse(null);
-            if (s == null) continue;
-            rest.remove(s);
-            f.seasonal = s.seasonal;
-            changed = true;
-        }
-        return changed;
     }
 
     public void clear() {
@@ -469,10 +229,22 @@ public final class CollectionStore implements Syncable {
         return new LinkedHashMap<>(entries);
     }
 
-    /** True if you hold at least one copy (found, and not all forged or fed away). */
-    public synchronized boolean contains(int itemId) {
-        Entry e = entries.get(itemId);
-        return e != null && e.held() > 0;
+    /** True if you hold at least one copy. */
+    public boolean contains(int itemId) {
+        return held(itemId) > 0;
+    }
+
+    /**
+     * How many copies of the item you have: counted where they are (every character and vault, see Whereabouts),
+     * or from the history while no place has been looked at yet.
+     */
+    public int held(int itemId) {
+        if (Whereabouts.get().known()) return Whereabouts.get().count(itemId);
+        Entry e;
+        synchronized (this) {
+            e = entries.get(itemId);
+        }
+        return e == null ? 0 : e.held();
     }
 
     /**
@@ -487,7 +259,7 @@ public final class CollectionStore implements Syncable {
     public boolean recordRemoved(int itemId, String source, String where, Find copy) {
         synchronized (this) {
             Entry e = entries.get(itemId);
-            if (e == null || e.held() == 0) return false;
+            if (e == null) return false;
             Find f = copy != null && copy.enchantIds != null ? Find.of(source, copy.enchantIds, where, "")
                     : Find.of(source, -1, where, "");
             if (copy != null) {

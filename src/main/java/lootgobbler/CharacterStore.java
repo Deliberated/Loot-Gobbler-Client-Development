@@ -489,7 +489,7 @@ public final class CharacterStore implements Syncable {
             if (item == null || !item.isCollectible()) continue;
             List<Integer> ids = c.slotEnchantIds != null && i < c.slotEnchantIds.length && c.slotEnchantIds[i] != null
                     ? Arrays.stream(c.slotEnchantIds[i]).boxed().toList() : null;
-            CollectionStore.Find f = CollectionStore.Find.of(CollectionStore.INVENTORY, ids, "", "Inventory");
+            CollectionStore.Find f = CollectionStore.Find.of(CollectionStore.INVENTORY, ids, "", LootEvents.slotName(i));
             f.seasonal = c.seasonal;
             out.computeIfAbsent(c.slots[i], k -> new ArrayList<>()).add(f);
         }

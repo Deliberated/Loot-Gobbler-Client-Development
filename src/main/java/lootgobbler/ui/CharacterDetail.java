@@ -429,7 +429,7 @@ final class CharacterDetail {
         Set<Integer> ids = new LinkedHashSet<>();
         if (c.slots != null) for (int id : c.slots) if (id > 0) ids.add(id);
         for (Map.Entry<Integer, CollectionStore.Entry> e : CollectionStore.get().snapshot().entrySet()) {
-            if (e.getValue().held() == 0) continue;
+            if (CollectionStore.get().held(e.getKey()) == 0) continue;
             for (CollectionStore.Find f : e.getValue().history()) {
                 if (CollectionStore.isRemoval(f)) continue;
                 boolean side = f.seasonal == null ? !c.seasonal : f.seasonal == c.seasonal;
@@ -495,10 +495,10 @@ final class CharacterDetail {
         }, id -> carriedEnchants(c, id) + (carriedEnchants(c, id) == 1 ? " enchantment" : " enchantments")));
         f.add(new Fact("Most recently found", id -> time(coll.get(id), true), id -> day(coll.get(id).last)));
         f.add(new Fact("Oldest find", id -> -time(coll.get(id), false), id -> day(coll.get(id).first)));
-        f.add(new Fact("Your only copy", id -> coll.get(id) != null && coll.get(id).held() == 1 ? 1 : Double.NaN,
+        f.add(new Fact("Your only copy", id -> CollectionStore.get().held(id) == 1 ? 1 : Double.NaN,
                 id -> "1 copy"));
-        f.add(new Fact("Most copies", id -> coll.get(id) != null && coll.get(id).held() > 1 ? coll.get(id).held() : Double.NaN,
-                id -> coll.get(id).held() + " copies"));
+        f.add(new Fact("Most copies", id -> CollectionStore.get().held(id) > 1 ? CollectionStore.get().held(id) : Double.NaN,
+                id -> CollectionStore.get().held(id) + " copies"));
         return f;
     }
 

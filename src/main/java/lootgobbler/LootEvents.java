@@ -74,14 +74,10 @@ public final class LootEvents {
             System.out.println("Vault: " + vault + " vault + " + gift + " gift items"
                     + (p.partial ? "  (packet only partly decoded)" : ""));
             if (p.lastVaultPacket) {
-                Whereabouts.get().vault(seasonal, vaultVisit);   // before your inventory joins it below
-                // vault and inventory together: an item can't be in both, so this is everything you hold right now
-                if (player != null) {
-                    inventoryFinds(player).forEach((id, finds) -> vaultVisit.computeIfAbsent(id, k -> new ArrayList<>()).addAll(finds));
-                }
-                int added = CollectionStore.get().recordHeld(vaultVisit);
-                System.out.println("Vault: " + added + " copies new to the collection");
-                vaultVisit.clear();
+                // the vault usually arrives before your character does (it is forgotten on every map change), and
+                // which vault it is (seasonal or not) is only known from the character: until then it waits
+                if (player != null) vaultDone(player);
+                else vaultPending = true;
             } else if (player != null) {
                 scanInventory(player);
             }
@@ -90,10 +86,43 @@ public final class LootEvents {
         }
     }
 
+    /** One of your characters by id, from the character store; null if not known. */
+    private static CharacterStore.Char character(int charId) {
+        return CharacterStore.get().all().stream().filter(c -> c.charId == charId).findFirst().orElse(null);
+    }
+
+    /** Where on the character a copy is, by its slot index: 0-3 worn, anything else (inventory, backpack) inventory. */
+    public static String slotName(int i) {
+        return i < 4 ? "Equipped" : "Inventory";
+    }
+
+    private static boolean vaultPending;   // a whole vault came in before your character: recorded once it is known
+
+    /** Records a vault visit with the character in it: the vault's seasonality, and your inventory beside it. */
+    private static void vaultDone(Entity player) {
+        vaultPending = false;
+        CharacterStore.Char me = character(player.charId());
+        boolean seasonal = me != null ? me.seasonal : player.isSeasonal();   // the stat can still be missing on the first tick
+        for (List<CollectionStore.Find> finds : vaultVisit.values()) for (CollectionStore.Find f : finds) f.seasonal = seasonal;
+        Whereabouts.get().vault(seasonal, vaultVisit);   // before your inventory joins it below
+        // vault and inventory together: an item can't be in both, so this is everything you hold right now
+        inventoryFinds(player).forEach((id, finds) -> vaultVisit.computeIfAbsent(id, k -> new ArrayList<>()).addAll(finds));
+        int added = CollectionStore.get().recordHeld(vaultVisit);
+        System.out.println("Vault (" + (seasonal ? "seasonal" : "regular") + "): " + added + " copies new to the collection");
+        vaultVisit.clear();
+    }
+
     /**
      * Called every game tick; checks your equipment, inventory and backpack every few seconds.
      */
     public static void inventoryTick(TomatoData data) {
+        if (vaultPending && data.player != null) {
+            try {
+                vaultDone(data.player);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
         long now = System.currentTimeMillis();
         if (data.player == null || now - lastInventoryScan < INVENTORY_INTERVAL_MS) return;
         lastInventoryScan = now;
@@ -175,8 +204,11 @@ public final class LootEvents {
         // enchant codes for every slot (equipment, inventory, backpack), same per-slot list loot bags use
         StatData udata = player.stat.get(StatType.UNIQUE_DATA_STRING);
         String[] codes = udata == null || udata.stringStatValue == null ? new String[0] : udata.stringStatValue.split(",", -1);
-        CharacterStore.Char me = CharacterStore.get().playing();   // the copies are seen on this character, as it looks now
-        CollectionStore.Seen here = me != null && me.charId == player.charId() ? CollectionStore.Seen.character(me) : null;
+        // this very character (not "the one played", which lags behind a switch), as it looks now; its season from
+        // the character list, as the entity's stat can still be missing on the first tick
+        CharacterStore.Char me = character(player.charId());
+        CollectionStore.Seen here = me != null ? CollectionStore.Seen.character(me) : null;
+        boolean seasonal = me != null ? me.seasonal : player.isSeasonal();
         for (int i = 0; i < 28; i++) {
             boolean backpack = i >= 12;
             int stat = backpack ? StatType.BACKPACK_0_STAT.get() + (i - 12) : StatType.INVENTORY_0_STAT.get() + i;
@@ -192,10 +224,11 @@ public final class LootEvents {
                 int[] known = CharacterStore.get().slotEnchants(player.charId(), i, sd.statValue);
                 if (known != null) ids = Arrays.stream(known).boxed().toList();
             }
+            String slot = slotName(i);
             CollectionStore.Find f = ids != null
-                    ? CollectionStore.Find.of(CollectionStore.INVENTORY, ids, "", "Inventory")
-                    : CollectionStore.Find.of(CollectionStore.INVENTORY, -1, "", "Inventory");
-            f.seasonal = player.isSeasonal();
+                    ? CollectionStore.Find.of(CollectionStore.INVENTORY, ids, "", slot)
+                    : CollectionStore.Find.of(CollectionStore.INVENTORY, -1, "", slot);
+            f.seasonal = seasonal;
             f.seen = here;
             held.computeIfAbsent(sd.statValue, k -> new ArrayList<>()).add(f);
             copies.put(i, f);
@@ -207,7 +240,7 @@ public final class LootEvents {
             ItemDb.Item item = sd == null || sd.statValue < 1 ? null : db.item(sd.statValue);
             if (item == null || !item.isCollectible()) continue;
             CollectionStore.Find f = CollectionStore.Find.of(CollectionStore.INVENTORY, -1, "", "Quick slot");
-            f.seasonal = player.isSeasonal();
+            f.seasonal = seasonal;
             f.seen = here;
             held.computeIfAbsent(sd.statValue, x -> new ArrayList<>()).add(f);
             copies.put(QUICKSLOT_FIRST + k, f);
