@@ -88,13 +88,29 @@ public class PingSounds {
     }
 
     /**
-     * Plays the ping for a category. Never throws - a bad sound file must not
-     * break loot handling.
+     * Volume of a category's ping, 0 to 100 (100, the default: as loud as the
+     * other sounds).
+     */
+    public static int getVolume(Type type) {
+        try {
+            return Math.max(0, Math.min(100, Integer.parseInt(PropertiesManager.getProperty(type.key + ".volume").trim())));
+        } catch (Exception e) {
+            return 100;
+        }
+    }
+
+    public static void setVolume(Type type, int volume) {
+        PropertiesManager.setProperties(type.key + ".volume", String.valueOf(Math.max(0, Math.min(100, volume))));
+    }
+
+    /**
+     * Plays the ping for a category at its volume. Never throws - a bad sound
+     * file must not break loot handling.
      */
     public static void play(Type type) {
         try {
             Sound s = get(type);
-            if (s != null) s.play();
+            if (s != null) s.play(getVolume(type));
         } catch (Throwable ignored) {}
     }
 

@@ -563,6 +563,9 @@ public final class GobblerServer {
         public String source = "";   // "visit" or "character"
         public boolean alive;
         public long lastPlayed;
+        public int maxHp;
+        public long[] hitAt = new long[0];   // the hits they took in the run, ms after its start (asked "from")
+        public int[] hitDamage = new int[0];
     }
 
     /** Looks of guildmates who may have been in this dungeon between from and to (epoch ms). */

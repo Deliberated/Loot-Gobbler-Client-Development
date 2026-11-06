@@ -27,6 +27,8 @@ public class PingSoundGUI extends JPanel {
     private final Map<PingSounds.Type, DefaultComboBoxModel<String>> models =
         new EnumMap<>(PingSounds.Type.class);
 
+    private final Map<PingSounds.Type, JSlider> volumes = new EnumMap<>(PingSounds.Type.class);
+
     private final Map<PingSounds.Type, String> chosen = new EnumMap<>(
         PingSounds.Type.class
     );
@@ -114,6 +116,31 @@ public class PingSoundGUI extends JPanel {
             c.gridx = 3;
             rows.add(test, c);
 
+            // its own volume, saved and heard when let go
+            JSlider volume = new JSlider(0, 100, PingSounds.getVolume(type));
+            volume.setFocusable(false);
+            volume.setPreferredSize(new Dimension(140, volume.getPreferredSize().height));
+            volume.setToolTipText("Volume of the " + type.label.toLowerCase());
+            JLabel level = new JLabel(volume.getValue() + "%");
+            level.setPreferredSize(new Dimension(level.getFontMetrics(level.getFont()).stringWidth("100%") + 4, level.getPreferredSize().height));
+            volume.addChangeListener(e -> {
+                level.setText(volume.getValue() + "%");
+                if (volume.getValueIsAdjusting()) return;
+                PingSounds.setVolume(type, volume.getValue());
+                PingSounds.setPath(type, chosen.get(type));
+                PingSounds.play(type);
+            });
+            JPanel volumeBox = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+            volumeBox.setOpaque(false);
+            volumeBox.add(new JLabel("Volume"));
+            volumeBox.add(volume);
+            volumeBox.add(level);
+            c.gridx = 4;
+            c.anchor = GridBagConstraints.EAST;
+            rows.add(volumeBox, c);
+            c.anchor = GridBagConstraints.WEST;
+            volumes.put(type, volume);
+
             pickers.put(type, combo);
             models.put(type, model);
             row++;
@@ -144,6 +171,10 @@ public class PingSoundGUI extends JPanel {
                 DefaultComboBoxModel<String> m = models.get(type);
                 if (m.getIndexOf(reset) < 0) m.addElement(reset);
                 m.setSelectedItem(reset);
+                PingSounds.setVolume(type, 100);
+                JSlider v = volumes.get(type);
+                v.setValueIsAdjusting(true);   // no test play for each reset
+                v.setValue(100);
             }
         });
 

@@ -243,7 +243,130 @@ public class DpsLoggerView extends JPanel {
         return v.start + "|" + current + "|" + v.dungeon + "|" + (current ? v.duration() / 5000 : v.durationMs) + "|" + v.hits() + "|"
                 + (v.dealt == null ? 0 : v.dealt.length) + "|" + (v.exalts == null ? 0 : v.exalts.size()) + "|"
                 + (v.amuletSaves == null ? 0 : v.amuletSaves.length) + "|" + v.runStart + "|" + v.lanternActiveMs / 1000
-                + "|" + (run == null ? 0 : run.bosses.size()) + "|" + bosses;
+                + "|" + (run == null ? 0 : run.bosses.size()) + "|" + bosses + "|" + Guildmates.get().version();
+    }
+
+    // the players' colors in the guild graph: you first, then the guildmates in turn
+    private static final Color[] GUILD_COLORS = {new Color(0xE5B23A), new Color(0x5FA343), new Color(0x4C8FE0),
+            new Color(0xB36BE0), new Color(0xE0679C), new Color(0x3FC4D6), new Color(0xE88A3A), new Color(0xC0503C)};
+
+    /**
+     * The damage you and the guildmates who use Loot Gobbler took in this dungeon, from their synced visits: one
+     * graph, stacked per player, and below it who took how much.
+     */
+    private static JComponent guildSection(Visit v, Run run, boolean current) {
+        JPanel out = column();
+        lootgobbler.GobblerServer server = lootgobbler.GobblerServer.get();
+        if (server.state() != lootgobbler.GobblerServer.State.ONLINE || server.user() == null) {
+            out.add(muted("Log in to a Loot Gobbler server to see your guild's damage taken here."));
+            return out;
+        }
+        if (current) {
+            out.add(muted("Shown once you have left the dungeon."));
+            return out;
+        }
+        Map<String, List<lootgobbler.GobblerServer.RunLook>> looks = Guildmates.get().runLooks(v);
+        if (looks == null) {
+            out.add(muted("Asking the server..."));
+            return out;
+        }
+        if (Guildmates.get().failed(v)) {
+            out.add(muted("The server could not answer right now."));
+            return out;
+        }
+        // the guildmates who were in it (their visit of it is on the server), in the look the run shows them in
+        Map<String, PlayerRow> inTable = new java.util.HashMap<>();
+        for (PlayerRow p : Guildmates.get().with(v)) inTable.put(p.name.toLowerCase(Locale.ROOT), p);
+        List<GuildDamageGraph.Series> series = new ArrayList<>();
+        List<PlayerRow> who = new ArrayList<>();
+        List<Integer> maxHp = new ArrayList<>();
+        String myName = lootgobbler.CharacterStore.get().playerName();
+        series.add(new GuildDamageGraph.Series(myName == null ? "You" : myName, GUILD_COLORS[0], myHits(v),
+                v.hitDamage == null ? new int[0] : v.hitDamage));
+        who.add(myRow(v, run));
+        maxHp.add(v.maxHp);
+        for (Map.Entry<String, List<lootgobbler.GobblerServer.RunLook>> e : new java.util.TreeMap<>(looks).entrySet()) {
+            lootgobbler.GobblerServer.RunLook visit = e.getValue().stream().filter(l -> "visit".equals(l.source)).findFirst().orElse(null);
+            if (visit == null) continue;
+            Color c = GUILD_COLORS[series.size() % GUILD_COLORS.length];
+            series.add(new GuildDamageGraph.Series(visit.player, c, visit.hitAt, visit.hitDamage));
+            PlayerRow p = inTable.get(e.getKey());
+            if (p == null) p = rowOf(visit, e.getValue());
+            who.add(p);
+            maxHp.add(visit.maxHp);
+        }
+        if (series.size() == 1) {
+            out.add(muted("No guildmates with Loot Gobbler were in this dungeon."));
+            return out;
+        }
+        long together = series.stream().mapToLong(GuildDamageGraph.Series::total).sum();
+        JLabel sum = muted(String.format(Locale.ROOT, "Damage taken together: %,d  \u00b7  %d players with Loot Gobbler",
+                together, series.size()));
+        sum.setAlignmentX(LEFT_ALIGNMENT);
+        out.add(sum);
+        out.add(Box.createVerticalStrut(6));
+        GuildDamageGraph graph = new GuildDamageGraph(series, v.durationMs);
+        graph.setAlignmentX(LEFT_ALIGNMENT);
+        out.add(graph);
+        out.add(Box.createVerticalStrut(8));
+        // who took how much, most first
+        List<Integer> order = new ArrayList<>();
+        for (int i = 0; i < series.size(); i++) order.add(i);
+        order.sort((a, b) -> Long.compare(series.get(b).total(), series.get(a).total()));
+        for (int i : order) {
+            GuildDamageGraph.Series se = series.get(i);
+            int biggest = 0;
+            for (int d : se.damage()) biggest = Math.max(biggest, d);
+            JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
+            row.setOpaque(false);
+            row.setAlignmentX(LEFT_ALIGNMENT);
+            row.add(new JLabel(new Section.Square(se.color(), 10)));
+            PlayerRow p = who.get(i);
+            if (p != null) row.add(new JLabel(Guildmates.get().look(p, 24)));
+            JLabel name = new JLabel(se.name());
+            if (i == 0) name.setForeground(Palette.GOLD);
+            row.add(name);
+            String life = maxHp.get(i) > 0 && biggest > 0
+                    ? String.format(Locale.ROOT, " (%d%% of life)", Math.round(100.0 * biggest / maxHp.get(i))) : "";
+            row.add(muted(String.format(Locale.ROOT, "%,d taken in %d hits  \u00b7  biggest %,d%s",
+                    se.total(), se.damage().length, biggest, life)));
+            row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
+            out.add(row);
+        }
+        return out;
+    }
+
+    /** Your hits, as ms after entering (as the guildmates' come from the server). */
+    private static long[] myHits(Visit v) {
+        long[] at = new long[v.hitTime == null ? 0 : v.hitTime.length];
+        for (int i = 0; i < at.length; i++) at[i] = v.hitTime[i];
+        return at;
+    }
+
+    /** You as the run shows you (your damage table row), else your look saved with the visit; null if neither. */
+    private static PlayerRow myRow(Visit v, Run run) {
+        if (run != null) for (Boss b : run.bosses) if (b.me() != null) return b.me();
+        if (v.look == null || v.look.classType <= 0) return null;
+        PlayerRow p = new PlayerRow();
+        p.classType = v.look.classType;
+        p.skin = v.look.skin;
+        p.tex1 = v.look.tex1;
+        p.tex2 = v.look.tex2;
+        return p;
+    }
+
+    /** A guildmate who fought no boss with you: their saved look, else their character played last. */
+    private static PlayerRow rowOf(lootgobbler.GobblerServer.RunLook visit, List<lootgobbler.GobblerServer.RunLook> all) {
+        lootgobbler.GobblerServer.RunLook l = visit.classType > 0 ? visit : all.stream()
+                .filter(x -> "character".equals(x.source)).max(java.util.Comparator.comparingLong(x -> x.lastPlayed)).orElse(null);
+        if (l == null || l.classType <= 0) return null;
+        PlayerRow p = new PlayerRow();
+        p.name = visit.player;
+        p.classType = l.classType;
+        p.skin = l.skin;
+        p.tex1 = l.tex1;
+        p.tex2 = l.tex2;
+        return p;
     }
 
     private void showDetail(Visit v, Run run, boolean current) {
@@ -341,6 +464,7 @@ public class DpsLoggerView extends JPanel {
             for (Exalt e : merged(v)) exalts.add(exaltRow(e));
         }
         detail.add(CharactersView.box("Exaltations", Palette.PURPLE, exalts));
+        detail.add(CharactersView.box("Guild", Palette.GREEN, guildSection(v, run, current)));
         detail.revalidate();
         detail.repaint();
     }
@@ -385,8 +509,6 @@ public class DpsLoggerView extends JPanel {
                 : String.format(Locale.ROOT, "%s %d/%d (+%d)%s", stat, e.after, full, e.after - e.before,
                 n > 0 ? "  \u00b7  exaltation " + ExaltStore.level(e.after) + "/" + ExaltStore.MAX_PER_STAT + "!" : "");
         JLabel what = new JLabel(text, ClassesView.potion(EXALT_POTION[e.stat], 20), SwingConstants.LEFT);
-        what.setToolTipText(e.before + " \u2192 " + e.after + " of " + full + " progress; exaltations come at "
-                + java.util.Arrays.toString(ExaltStore.THRESHOLDS));
         what.setIconTextGap(8);
         if (e.after >= full) what.setForeground(Section.color("LootGobbler.gold", Palette.GOLD));
         row.add(what, BorderLayout.CENTER);

@@ -89,9 +89,44 @@ final class Guildmates {
         return out.isEmpty() ? List.of() : withLooks(v, new ArrayList<>(out.values()));
     }
 
-    // per finished visit (dungeon/start): the guildmates' looks the server has for it, by lower-case name; an empty
-    // map while asking or when it has none
+    // per finished visit (dungeon/start): the guildmates' looks and hits the server has for it, by lower-case name;
+    // ASKING while asking, FAILED if the server could not answer
     private final Map<String, Map<String, List<GobblerServer.RunLook>>> runLooks = new HashMap<>();
+    private static final Map<String, List<GobblerServer.RunLook>> ASKING = new HashMap<>(), FAILED = new HashMap<>();
+    private int version;   // goes up with every answer, so views know to rebuild
+
+    int version() {
+        return version;
+    }
+
+    /** What the server said about a run: null while asking (or offline, or still in it); empty if it had nothing. */
+    Map<String, List<GobblerServer.RunLook>> runLooks(DungeonVisits.Visit v) {
+        if (v.durationMs <= 0 || server.state() != GobblerServer.State.ONLINE) return null;   // in progress: not saved yet
+        String key = v.dungeon + "/" + v.start;
+        Map<String, List<GobblerServer.RunLook>> looks = runLooks.get(key);
+        if (looks == null) {
+            runLooks.put(key, ASKING);
+            server.runLooks(v.dungeon, v.start, v.start + v.durationMs).whenComplete((r, e) -> SwingUtilities.invokeLater(() -> {
+                Map<String, List<GobblerServer.RunLook>> byName = new HashMap<>();
+                if (e != null || r == null) {
+                    byName = FAILED;   // stays so until the server changes
+                } else {
+                    for (GobblerServer.RunLook l : r.looks)
+                        byName.computeIfAbsent(l.player.toLowerCase(Locale.ROOT), k -> new ArrayList<>()).add(l);
+                }
+                runLooks.put(key, byName);
+                version++;
+                for (Runnable listener : listeners) listener.run();
+            }));
+            return null;
+        }
+        return looks == ASKING ? null : looks;
+    }
+
+    /** Whether asking the server about this run failed. */
+    boolean failed(DungeonVisits.Visit v) {
+        return runLooks.get(v.dungeon + "/" + v.start) == FAILED;
+    }
 
     /**
      * The rows in the look the server has for them: what their own client saved with their visit of this run (sure,
@@ -99,21 +134,8 @@ final class Guildmates {
      * class as it looks now (living and last played first). Asked once per visit; the views redraw when it comes.
      */
     private List<DpsHistory.PlayerRow> withLooks(DungeonVisits.Visit v, List<DpsHistory.PlayerRow> rows) {
-        if (v.durationMs <= 0 || server.state() != GobblerServer.State.ONLINE) return rows;   // in progress: not saved yet
-        String key = v.dungeon + "/" + v.start;
-        Map<String, List<GobblerServer.RunLook>> looks = runLooks.get(key);
-        if (looks == null) {
-            runLooks.put(key, Map.of());
-            server.runLooks(v.dungeon, v.start, v.start + v.durationMs).whenComplete((r, e) -> SwingUtilities.invokeLater(() -> {
-                if (e != null || r == null) return;   // stays empty until the server changes
-                Map<String, List<GobblerServer.RunLook>> byName = new HashMap<>();
-                for (GobblerServer.RunLook l : r.looks)
-                    byName.computeIfAbsent(l.player.toLowerCase(Locale.ROOT), k -> new ArrayList<>()).add(l);
-                runLooks.put(key, byName);
-                if (!byName.isEmpty()) for (Runnable listener : listeners) listener.run();
-            }));
-            return rows;
-        }
+        Map<String, List<GobblerServer.RunLook>> looks = runLooks(v);
+        if (looks == null) return rows;
         List<DpsHistory.PlayerRow> out = new ArrayList<>(rows.size());
         for (DpsHistory.PlayerRow p : rows) {
             GobblerServer.RunLook l = pick(looks.getOrDefault(p.name.toLowerCase(Locale.ROOT), List.of()), p);
