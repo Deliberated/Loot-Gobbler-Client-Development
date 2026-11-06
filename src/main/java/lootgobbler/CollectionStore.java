@@ -47,6 +47,7 @@ public final class CollectionStore implements Syncable {
         public List<Integer> enchantIds;   // null if unknown (older finds, inventory)
         public Boolean seasonal;   // found on a seasonal character; null if unknown (older finds)
         public Seen seen;          // where this copy was seen last (a character or a vault chest); null if not yet
+        public Boolean missing;    // true: on no character and in no vault at the last full check (see reconcile)
 
         public static Find of(String source, int enchants, String where, String bag) {
             Find f = new Find();
@@ -123,8 +124,13 @@ public final class CollectionStore implements Syncable {
             return (int) history().stream().filter(CollectionStore::isRemoval).count();
         }
 
-        /** Copies you still hold: every copy obtained minus those forged or fed away. */
+        /** Copies you still hold: every copy obtained minus those forged or fed away, and those found nowhere. */
         public int held() {
+            return Math.max(0, owned() - (int) history().stream().filter(f -> Boolean.TRUE.equals(f.missing)).count());
+        }
+
+        /** Every copy obtained minus those forged or fed away (the ones found nowhere still count here). */
+        int owned() {
             return Math.max(0, count - removed());
         }
 
@@ -214,8 +220,12 @@ public final class CollectionStore implements Syncable {
                         p.getValue().seen = now;
                         changed = true;
                     }
+                    if (p.getValue().missing != null) {   // turned up again
+                        p.getValue().missing = null;
+                        changed = true;
+                    }
                 }
-                int n = Math.max(fresh.size(), copies.size() - (e == null ? 0 : e.held()));
+                int n = Math.max(fresh.size(), copies.size() - (e == null ? 0 : e.owned()));
                 if (n <= 0) continue;
                 if (e == null) {
                     e = new Entry();
@@ -246,14 +256,19 @@ public final class CollectionStore implements Syncable {
      */
     private static List<Find> unmatched(Entry e, List<Find> copies, java.util.Map<Find, Find> pairs) {
         List<Find> records = new ArrayList<>();
-        List<Find> removals = new ArrayList<>();
-        for (Find f : e.history()) (isRemoval(f) ? removals : records).add(f);
-        int wild = Math.max(0, e.count - records.size());   // obtained copies the history does not list
-        for (Find r : removals) {   // a copy gone: the record it most likely was
-            Find gone = best(records, r);
-            if (gone != null) records.remove(gone);
-            else if (wild > 0) wild--;
-        }
+        int wild = remaining(e, records);
+        List<Find> rest = pair(copies, records, pairs);
+        return rest.subList(Math.min(rest.size(), wild), rest.size());   // the unlisted copies can be any of the rest
+    }
+
+    /**
+     * Pairs copies with the records they can be (see unmatched), each record once: the surest way first, and among
+     * equally sure records the one last seen in the copy's place, so two copies that look alike (one in the vault,
+     * one on a character) keep their own records instead of trading places. Matched records are taken out of records.
+     *
+     * @return The copies no record fits.
+     */
+    private static List<Find> pair(List<Find> copies, List<Find> records, Map<Find, Find> pairs) {
         List<Find> rest = new ArrayList<>(copies);
         rest.sort(java.util.Comparator.comparingInt(CollectionStore::slots));   // fewest slots first, so they get the fitting records
         for (int pass = 0; pass < 4; pass++) {
@@ -261,7 +276,9 @@ public final class CollectionStore implements Syncable {
                 Find c = it.next();
                 Find match = null;
                 for (Find f : records) {
-                    if (fits(c, f, pass)) {
+                    if (!fits(c, f, pass)) continue;
+                    if (match == null) match = f;
+                    if (samePlace(c.seen, f.seen)) {
                         match = f;
                         break;
                     }
@@ -273,7 +290,82 @@ public final class CollectionStore implements Syncable {
                 }
             }
         }
-        return rest.subList(Math.min(rest.size(), wild), rest.size());   // the unlisted copies can be any of the rest
+        return rest;
+    }
+
+    private static boolean samePlace(Seen a, Seen b) {
+        return a != null && b != null && a.charId == b.charId && (a.charId > 0 || a.place.equals(b.place));
+    }
+
+    /**
+     * The recorded copies not forged or fed away (into records), and how many obtained copies the history no longer
+     * lists (trimmed, or from before it).
+     */
+    private static int remaining(Entry e, List<Find> records) {
+        List<Find> removals = new ArrayList<>();
+        for (Find f : e.history()) (isRemoval(f) ? removals : records).add(f);
+        int wild = Math.max(0, e.count - records.size());   // obtained copies the history does not list
+        for (Find r : removals) {   // a copy gone: the record it most likely was
+            Find gone = best(records, r);
+            if (gone != null) records.remove(gone);
+            else if (wild > 0) wild--;
+        }
+        return wild;
+    }
+
+    /**
+     * Brings the collection in line with where your copies are (where: item id to the copies on every character
+     * and in every vault and gift chest, each with its place in seen), every place at once:
+     * <ul>
+     * <li>copies there beyond those on record are new (e.g. one in the vault and one on a character not played
+     * since: each place alone holds no more than the one on record);</li>
+     * <li>recorded copies that are nowhere are marked missing, so they no longer count as held (sold, traded, given
+     * away, or used up unseen); one that is somewhere again loses the mark. Only copies judged can be marked: e.g.
+     * not found after the check, and of a seasonality whose vault was checked (see Whereabouts).</li>
+     * </ul>
+     *
+     * @return How many copies were new to the collection.
+     */
+    public int reconcile(Map<Integer, List<Find>> where, java.util.function.Predicate<Find> judged) {
+        boolean changed = false;
+        int added = 0;
+        synchronized (this) {
+            java.util.Set<Integer> items = new java.util.LinkedHashSet<>(entries.keySet());
+            items.addAll(where.keySet());
+            for (int item : items) {
+                Entry e = entries.get(item);
+                List<Find> records = new ArrayList<>();
+                int wild = e == null ? 0 : remaining(e, records);
+                List<Find> unseen = new ArrayList<>(records);
+                List<Find> rest = pair(where.getOrDefault(item, List.of()), unseen, new java.util.IdentityHashMap<>());
+                for (Find f : records) {
+                    Boolean mark;
+                    if (!unseen.contains(f)) mark = null;   // somewhere
+                    else if (judged.test(f)) mark = Boolean.TRUE;   // nowhere
+                    else continue;   // too new for the check, or its vault was not checked: leave it as it is
+                    if (!java.util.Objects.equals(mark, f.missing)) {
+                        f.missing = mark;
+                        changed = true;
+                    }
+                }
+                // copies left over are new; copies the history no longer lists may be any of them
+                for (int i = wild; i < rest.size(); i++) {
+                    Find f = rest.get(i);
+                    if (e == null) {
+                        e = new Entry();
+                        e.first = f.time;
+                        entries.put(item, e);
+                    }
+                    addHistory(e, f);
+                    e.last = f.time;
+                    e.count++;
+                    added++;
+                }
+            }
+            if (changed || added > 0) save();
+        }
+        if (changed || added > 0) fire();
+        return added;
     }
 
     /** A held copy's enchantment slots, -1 if unknown. */

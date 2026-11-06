@@ -426,7 +426,9 @@ public final class CharacterStore implements Syncable {
      * ItemData (item type + enchant code) per item, matched to the slots of its Equipment list (equipment,
      * inventory, backpack) by item type in order. The equipped four also go to the loadout.
      */
-    private void importItemData(String xml) {
+    private void importItemData(String xml, boolean live) {
+        Map<Integer, Map<Integer, List<CollectionStore.Find>>> held = new HashMap<>();   // char id -> item -> copies
+        Map<Integer, CollectionStore.Seen> seen = new HashMap<>();
         synchronized (this) {
             java.util.regex.Matcher ch = CHAR_XML.matcher(xml);
             while (ch.find()) {
@@ -458,6 +460,8 @@ public final class CharacterStore implements Syncable {
                 }
                 c.slots = slots;
                 c.slotEnchantIds = ids;
+                if (c.alive) held.put(c.charId, collectibles(c));
+                seen.put(c.charId, CollectionStore.Seen.character(c));
                 // an older saved list must not overwrite what you wear now
                 if (c.equipment != null && slots.length >= 4 && Arrays.equals(c.equipment, Arrays.copyOf(slots, 4))) {
                     setEnchants(c, Arrays.copyOf(ids, 4));
@@ -466,6 +470,39 @@ public final class CharacterStore implements Syncable {
             save();
         }
         fire();
+        if (!live) return;
+        // every character's copies count like a live scan of it (also those you have not played since), and they
+        // tell where each copy is now
+        held.forEach((id, copies) -> {
+            for (List<CollectionStore.Find> list : copies.values()) for (CollectionStore.Find f : list) f.seen = seen.get(id);
+            if (!copies.isEmpty()) CollectionStore.get().recordHeld(copies);
+        });
+        Whereabouts.get().characters(held);
+    }
+
+    /** A character's collectible copies from its last list (equipment, inventory, backpack) and its quick slots. */
+    private static Map<Integer, List<CollectionStore.Find>> collectibles(Char c) {
+        Map<Integer, List<CollectionStore.Find>> out = new HashMap<>();
+        ItemDb db = ItemDb.get();
+        for (int i = 0; i < c.slots.length; i++) {
+            ItemDb.Item item = c.slots[i] > 0 ? db.item(c.slots[i]) : null;
+            if (item == null || !item.isCollectible()) continue;
+            List<Integer> ids = c.slotEnchantIds != null && i < c.slotEnchantIds.length && c.slotEnchantIds[i] != null
+                    ? Arrays.stream(c.slotEnchantIds[i]).boxed().toList() : null;
+            CollectionStore.Find f = CollectionStore.Find.of(CollectionStore.INVENTORY, ids, "", "Inventory");
+            f.seasonal = c.seasonal;
+            out.computeIfAbsent(c.slots[i], k -> new ArrayList<>()).add(f);
+        }
+        if (c.quickslots != null) {
+            for (int q : c.quickslots) {
+                ItemDb.Item item = q > 0 ? db.item(q) : null;
+                if (item == null || !item.isCollectible()) continue;
+                CollectionStore.Find f = CollectionStore.Find.of(CollectionStore.INVENTORY, -1, "", "Quick slot");
+                f.seasonal = c.seasonal;
+                out.computeIfAbsent(q, k -> new ArrayList<>()).add(f);
+            }
+        }
+        return out;
     }
 
     /**
@@ -477,7 +514,7 @@ public final class CharacterStore implements Syncable {
             savedListRead = true;
             Path saved = Path.of("char-list.xml");
             try {
-                if (Files.exists(saved)) importItemData(Files.readString(saved));
+                if (Files.exists(saved)) importItemData(Files.readString(saved), false);
             } catch (Exception e) {
                 System.err.println("Could not read " + saved + ": " + e.getMessage());
             }
@@ -713,7 +750,7 @@ public final class CharacterStore implements Syncable {
     public void saveRawList(String xml) {
         if (xml == null || xml.isBlank()) return;
         try {
-            importItemData(xml);
+            importItemData(xml, true);
         } catch (Exception e) {
             System.err.println("Could not read equipment enchantments: " + e);
         }

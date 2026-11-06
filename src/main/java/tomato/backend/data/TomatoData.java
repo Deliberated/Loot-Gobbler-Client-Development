@@ -106,6 +106,7 @@ public class TomatoData {
         rng = new RNG(map.seed);
         lootgobbler.DungeonVisits.get().entered(map);   // after clear(): the run of the map left is saved by now
         lootgobbler.MoonlightLog.get().entered(map.name);
+        lootgobbler.Whereabouts.get().entered("{s.vault}".equals(map.displayName));
     }
 
     /**

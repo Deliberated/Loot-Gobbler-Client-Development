@@ -219,22 +219,27 @@ public class CollectionPanel extends JPanel {
         List<CollectionStore.Find> finds = new ArrayList<>(entry.history());
         Collections.reverse(finds);   // latest at the top
         for (CollectionStore.Find f : finds) {
-            if (CollectionStore.isRemoval(f) || used.containsValue(f)) continue;
+            if (CollectionStore.isRemoval(f) || used.containsValue(f) || Boolean.TRUE.equals(f.missing)) continue;
             recent.add(findRow(item.id, f, null));
             recent.add(Box.createVerticalStrut(6));
         }
+        // copies on no character and in no vault at the last check: sold, traded or gone unseen (not counted)
+        List<CollectionStore.Find> missing = finds.stream()
+                .filter(f -> Boolean.TRUE.equals(f.missing) && !used.containsValue(f)).toList();
+        if (!missing.isEmpty()) {
+            JLabel title = heading("NOT FOUND");
+            title.setToolTipText("<html>On none of your characters and in no vault or gift chest when last checked:<br>"
+                    + "sold, traded, given away or used up without Loot Gobbler seeing it. Not counted.<br>"
+                    + "If it turns up again, it moves back up by itself.</html>");
+            for (CollectionStore.Find f : missing) {
+                JPanel row = findRow(item.id, f, null);
+                dim(row);
+                recent.add(row);
+                recent.add(Box.createVerticalStrut(6));
+            }
+        }
         if (used.isEmpty()) return;
-        JSeparator line = new JSeparator();
-        line.setAlignmentX(LEFT_ALIGNMENT);
-        line.setMaximumSize(new Dimension(Integer.MAX_VALUE, 2));
-        recent.add(Box.createVerticalStrut(6));
-        recent.add(line);
-        recent.add(Box.createVerticalStrut(8));
-        JLabel title = leftAligned(new JLabel("USED"));
-        title.putClientProperty("FlatLaf.styleClass", "small");
-        title.setForeground(Palette.MUTED);
-        recent.add(title);
-        recent.add(Box.createVerticalStrut(6));
+        heading("USED");
         for (CollectionStore.Find r : finds) {
             if (!CollectionStore.isRemoval(r)) continue;
             CollectionStore.Find was = used.get(r);
@@ -273,6 +278,30 @@ public class CollectionPanel extends JPanel {
             used.put(r, match);
         }
         return used;
+    }
+
+    /** A line, then a small grey section title (USED, NOT FOUND) in the history list. */
+    private JLabel heading(String text) {
+        JSeparator line = new JSeparator();
+        line.setAlignmentX(LEFT_ALIGNMENT);
+        line.setMaximumSize(new Dimension(Integer.MAX_VALUE, 2));
+        recent.add(Box.createVerticalStrut(6));
+        recent.add(line);
+        recent.add(Box.createVerticalStrut(8));
+        JLabel title = leftAligned(new JLabel(text));
+        title.putClientProperty("FlatLaf.styleClass", "small");
+        title.setForeground(Palette.MUTED);
+        recent.add(title);
+        recent.add(Box.createVerticalStrut(6));
+        return title;
+    }
+
+    /** Greys out a history row's texts (a copy found nowhere). */
+    private static void dim(Component c) {
+        if (c instanceof JLabel l && l.getForeground() != null && !Palette.MUTED.equals(l.getForeground())) {
+            l.setForeground(Palette.MUTED);
+        }
+        if (c instanceof Container k) for (Component x : k.getComponents()) dim(x);
     }
 
     /** A removal shown as the copy it used up: the removal's time and source, the copy's enchantments and season. */

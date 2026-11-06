@@ -74,6 +74,7 @@ public final class LootEvents {
             System.out.println("Vault: " + vault + " vault + " + gift + " gift items"
                     + (p.partial ? "  (packet only partly decoded)" : ""));
             if (p.lastVaultPacket) {
+                Whereabouts.get().vault(seasonal, vaultVisit);   // before your inventory joins it below
                 // vault and inventory together: an item can't be in both, so this is everything you hold right now
                 if (player != null) {
                     inventoryFinds(player).forEach((id, finds) -> vaultVisit.computeIfAbsent(id, k -> new ArrayList<>()).addAll(finds));
@@ -110,6 +111,7 @@ public final class LootEvents {
         if (charBefore == player.charId()) openedChests(chestsBefore);   // first, so the copy is not counted twice
         int added = held.isEmpty() ? 0 : CollectionStore.get().recordHeld(held);
         if (added > 0) System.out.println("Inventory: " + added + " copies new to the collection");
+        Whereabouts.get().character(player.charId(), held);
     }
 
     /**
