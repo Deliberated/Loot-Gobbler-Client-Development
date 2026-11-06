@@ -39,6 +39,8 @@ final class Guildmates {
 
     private void load() {
         runLooks.clear();   // another server or account: ask again
+        askedAt.clear();
+        generation++;   // retries still pending belong to the old server
         GobblerServer.User me = server.user();
         if (me == null || server.state() != GobblerServer.State.ONLINE) {
             set(Set.of());
@@ -76,9 +78,15 @@ final class Guildmates {
 
     /** The guildmates who fought the visit's bosses with you, one row each (first character seen). */
     List<DpsHistory.PlayerRow> with(DungeonVisits.Visit v) {
-        if (names.isEmpty() || v == null) return List.of();
+        Map<String, DpsHistory.PlayerRow> out = fought(v);
+        return out.isEmpty() ? List.of() : withLooks(v, new ArrayList<>(out.values()));
+    }
+
+    /** The guildmates in the visit's damage table, by lower-case name, as the run saw them. */
+    private Map<String, DpsHistory.PlayerRow> fought(DungeonVisits.Visit v) {
+        if (names.isEmpty() || v == null) return Map.of();
         DpsHistory.Run run = v == DungeonVisits.get().current() ? DpsHistory.get().live() : DungeonVisits.run(v);
-        if (run == null || run.guildHall || !run.dungeon.equals(v.dungeon)) return List.of();
+        if (run == null || run.guildHall || !run.dungeon.equals(v.dungeon)) return Map.of();
         Map<String, DpsHistory.PlayerRow> out = new LinkedHashMap<>();
         for (DpsHistory.Boss b : run.bosses) {
             for (DpsHistory.PlayerRow p : b.players) {
@@ -86,7 +94,26 @@ final class Guildmates {
                 if (!p.me && names.contains(key)) out.putIfAbsent(key, p);
             }
         }
-        return out.isEmpty() ? List.of() : withLooks(v, new ArrayList<>(out.values()));
+        return out;
+    }
+
+    /**
+     * The guildmates who fought with you in the visit but whose own visit of it is not on the server yet (their
+     * client may not have synced it); asked again for a while, see RETRY_MS.
+     */
+    List<String> awaited(DungeonVisits.Visit v) {
+        Map<String, List<GobblerServer.RunLook>> looks = runLooks.get(v.dungeon + "/" + v.start);
+        if (looks == null || looks == ASKING || looks == FAILED) return List.of();
+        List<String> out = new ArrayList<>();
+        for (Map.Entry<String, DpsHistory.PlayerRow> e : fought(v).entrySet())
+            if (looks.getOrDefault(e.getKey(), List.of()).stream().noneMatch(l -> "visit".equals(l.source))) out.add(e.getValue().name);
+        return out;
+    }
+
+    /** Whether the server will still be asked again about the visit for the guildmates it is missing. */
+    boolean retrying(DungeonVisits.Visit v) {
+        Long first = askedAt.get(v.dungeon + "/" + v.start);
+        return first != null && System.currentTimeMillis() - first + RETRY_MS <= RETRY_FOR_MS && !awaited(v).isEmpty();
     }
 
     // per finished visit (dungeon/start): the guildmates' looks and hits the server has for it, by lower-case name;
@@ -94,6 +121,11 @@ final class Guildmates {
     private final Map<String, Map<String, List<GobblerServer.RunLook>>> runLooks = new HashMap<>();
     private static final Map<String, List<GobblerServer.RunLook>> ASKING = new HashMap<>(), FAILED = new HashMap<>();
     private int version;   // goes up with every answer, so views know to rebuild
+    // a guildmate's client syncs their visit a little after they left: until all who fought with you are there,
+    // the server is asked again every RETRY_MS, for RETRY_FOR_MS after the first question
+    private static final int RETRY_MS = 20_000, RETRY_FOR_MS = 180_000;
+    private final Map<String, Long> askedAt = new HashMap<>();
+    private int generation;
 
     int version() {
         return version;
@@ -106,21 +138,37 @@ final class Guildmates {
         Map<String, List<GobblerServer.RunLook>> looks = runLooks.get(key);
         if (looks == null) {
             runLooks.put(key, ASKING);
-            server.runLooks(v.dungeon, v.start, v.start + v.durationMs).whenComplete((r, e) -> SwingUtilities.invokeLater(() -> {
-                Map<String, List<GobblerServer.RunLook>> byName = new HashMap<>();
-                if (e != null || r == null) {
-                    byName = FAILED;   // stays so until the server changes
-                } else {
-                    for (GobblerServer.RunLook l : r.looks)
-                        byName.computeIfAbsent(l.player.toLowerCase(Locale.ROOT), k -> new ArrayList<>()).add(l);
-                }
-                runLooks.put(key, byName);
-                version++;
-                for (Runnable listener : listeners) listener.run();
-            }));
+            askedAt.put(key, System.currentTimeMillis());
+            ask(v, key);
             return null;
         }
         return looks == ASKING ? null : looks;
+    }
+
+    private void ask(DungeonVisits.Visit v, String key) {
+        int asked = generation;
+        server.runLooks(v.dungeon, v.start, v.start + v.durationMs).whenComplete((r, e) -> SwingUtilities.invokeLater(() -> {
+            if (asked != generation) return;   // the server changed meanwhile
+            boolean again = runLooks.get(key) != ASKING;
+            Map<String, List<GobblerServer.RunLook>> byName = new HashMap<>();
+            if (e != null || r == null) {
+                if (again) byName = runLooks.get(key);   // a retry that failed: keep the last answer
+                else byName = FAILED;   // stays so until the server changes
+            } else {
+                for (GobblerServer.RunLook l : r.looks)
+                    byName.computeIfAbsent(l.player.toLowerCase(Locale.ROOT), k -> new ArrayList<>()).add(l);
+            }
+            runLooks.put(key, byName);
+            version++;
+            for (Runnable listener : listeners) listener.run();
+            if (byName != FAILED && retrying(v)) {
+                javax.swing.Timer t = new javax.swing.Timer(RETRY_MS, x -> {
+                    if (asked == generation) ask(v, key);
+                });
+                t.setRepeats(false);
+                t.start();
+            }
+        }));
     }
 
     /** Whether asking the server about this run failed. */

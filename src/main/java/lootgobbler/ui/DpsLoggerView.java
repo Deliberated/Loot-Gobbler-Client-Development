@@ -295,8 +295,12 @@ public class DpsLoggerView extends JPanel {
             who.add(p);
             maxHp.add(visit.maxHp);
         }
+        // guildmates who fought with you but whose client has not synced this visit yet
+        List<String> awaited = Guildmates.get().awaited(v);
+        String waiting = awaited.isEmpty() ? null : (Guildmates.get().retrying(v) ? "Waiting for " : "Not on the server: ")
+                + String.join(", ", awaited) + (Guildmates.get().retrying(v) ? " to sync this run..." : "");
         if (series.size() == 1) {
-            out.add(muted("No guildmates with Loot Gobbler were in this dungeon."));
+            out.add(muted(waiting != null ? waiting : "No guildmates with Loot Gobbler were in this dungeon."));
             return out;
         }
         long together = series.stream().mapToLong(GuildDamageGraph.Series::total).sum();
@@ -304,6 +308,11 @@ public class DpsLoggerView extends JPanel {
                 together, series.size()));
         sum.setAlignmentX(LEFT_ALIGNMENT);
         out.add(sum);
+        if (waiting != null) {
+            JLabel w = muted(waiting);
+            w.setAlignmentX(LEFT_ALIGNMENT);
+            out.add(w);
+        }
         out.add(Box.createVerticalStrut(6));
         GuildDamageGraph graph = new GuildDamageGraph(series, v.durationMs);
         graph.setAlignmentX(LEFT_ALIGNMENT);
