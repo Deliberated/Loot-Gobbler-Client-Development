@@ -189,7 +189,7 @@ public final class CollectionStore implements Syncable {
     /**
      * Items you hold right now (a character or the vault), one Find per copy: an item seen for the first time (not
      * dropped while Loot Gobbler ran) joins the collection, as first seen there. Nothing else happens: what you have
-     * is kept by Whereabouts, place by place, and the history only records what happened (finds, removals).
+     * is kept by Holdings, place by place, and the history only records what happened (finds, removals).
      *
      * @param held item id to one Find per copy currently held
      * @return How many copies were new to the collection.
@@ -235,11 +235,11 @@ public final class CollectionStore implements Syncable {
     }
 
     /**
-     * How many copies of the item you have: counted where they are (every character and vault, see Whereabouts),
+     * How many copies of the item you have: counted where they are (every character and vault, see Holdings),
      * or from the history while no place has been looked at yet.
      */
     public int held(int itemId) {
-        if (Whereabouts.get().known()) return Whereabouts.get().count(itemId);
+        if (Holdings.get().known()) return Holdings.get().count(itemId);
         Entry e;
         synchronized (this) {
             e = entries.get(itemId);

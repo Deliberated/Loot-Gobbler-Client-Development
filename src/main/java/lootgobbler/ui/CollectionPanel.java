@@ -63,7 +63,7 @@ public class CollectionPanel extends JPanel {
         add(views, BorderLayout.CENTER);
 
         CollectionStore.get().onChange(ViewRefresh.of(this, this::refresh));   // only while it can be seen
-        lootgobbler.Whereabouts.get().onChange(ViewRefresh.of(this, this::refresh));   // copies moved, came or went
+        lootgobbler.Holdings.get().onChange(ViewRefresh.of(this, this::refresh));   // copies moved, came or went
         Thread loader = new Thread(() -> {
             ItemDb db = ItemDb.get();
             List<StSets.Set> sets = StSets.get();
@@ -215,18 +215,18 @@ public class CollectionPanel extends JPanel {
         recent.add(Box.createVerticalStrut(12));
 
         // where your copies are now: each as the game last showed its place (nothing guessed)
-        lootgobbler.Whereabouts where = lootgobbler.Whereabouts.get();
+        lootgobbler.Holdings where = lootgobbler.Holdings.get();
         heading("WHERE THEY ARE");
         if (!where.known()) {
             recent.add(leftAligned(mutedLabel("Shown once Loot Gobbler has seen your characters (log in) and your vault.")));
         } else {
-            List<lootgobbler.Whereabouts.Held> have = where.copies(item.id);
+            List<lootgobbler.Holdings.Held> have = where.copies(item.id);
             if (have.isEmpty()) recent.add(leftAligned(mutedLabel("None on your characters or in your vaults.")));
-            for (lootgobbler.Whereabouts.Held h : have) {
+            for (lootgobbler.Holdings.Held h : have) {
                 recent.add(findRow(item.id, asFind(h), null));
                 recent.add(Box.createVerticalStrut(6));
             }
-            lootgobbler.Whereabouts.Gaps gaps = where.gaps();
+            lootgobbler.Holdings.Gaps gaps = where.gaps();
             if (!gaps.none()) {
                 JLabel hint = mutedLabel("Not seen yet: " + gapsText(gaps) + ". Their copies are not counted until then.");
                 hint.setToolTipText("Log in with each character once (or enter the Nexus, which reads the character list) "
@@ -314,7 +314,7 @@ public class CollectionPanel extends JPanel {
     }
 
     /** "2 characters, your seasonal vault". */
-    private static String gapsText(lootgobbler.Whereabouts.Gaps g) {
+    private static String gapsText(lootgobbler.Holdings.Gaps g) {
         List<String> parts = new ArrayList<>();
         if (g.characters() > 0) parts.add(g.characters() + (g.characters() == 1 ? " character" : " characters"));
         if (g.vault()) parts.add("your vault");
@@ -326,7 +326,7 @@ public class CollectionPanel extends JPanel {
      * A copy you have, as a history row: its slot ("Equipped", "Vault chest"...), season and enchantments, the
      * character or chest it is in, and when that place was last looked at.
      */
-    private static CollectionStore.Find asFind(lootgobbler.Whereabouts.Held h) {
+    private static CollectionStore.Find asFind(lootgobbler.Holdings.Held h) {
         CollectionStore.Find f = new CollectionStore.Find();
         f.source = h.charId() > 0 ? CollectionStore.INVENTORY : CollectionStore.VAULT;
         f.bag = h.slot();
@@ -339,7 +339,7 @@ public class CollectionPanel extends JPanel {
             lootgobbler.CharacterStore.get().all().stream().filter(c -> c.charId == h.charId()).findFirst()
                     .ifPresent(c -> f.seen = CollectionStore.Seen.character(c));
         } else {
-            f.seen = CollectionStore.Seen.vault((lootgobbler.Whereabouts.SEASONAL_VAULT.equals(h.vault()) ? "seasonal " : "") + h.slot());
+            f.seen = CollectionStore.Seen.vault((lootgobbler.Holdings.SEASONAL_VAULT.equals(h.vault()) ? "seasonal " : "") + h.slot());
         }
         return f;
     }

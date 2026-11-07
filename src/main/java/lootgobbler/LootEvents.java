@@ -67,6 +67,8 @@ public final class LootEvents {
     public static void vaultPacket(VaultContentPacket p, Entity player) {
         try {
             writeVaultDebug(p);
+            // what you have: the vault slot by slot, saved once the visit is complete and its season known
+            if (Holdings.get().vaultPacket(p)) saveVault(player);
             // a vault can arrive as several packets; collect copies until the one marked last, then record once
             Boolean seasonal = seasonal(player);
             int vault = addContainer(vaultVisit, p.vaultContents, p.vaultChestEnchants, "Vault chest", seasonal);
@@ -104,7 +106,6 @@ public final class LootEvents {
         CharacterStore.Char me = character(player.charId());
         boolean seasonal = me != null ? me.seasonal : player.isSeasonal();   // the stat can still be missing on the first tick
         for (List<CollectionStore.Find> finds : vaultVisit.values()) for (CollectionStore.Find f : finds) f.seasonal = seasonal;
-        Whereabouts.get().vault(seasonal, vaultVisit);   // before your inventory joins it below
         // vault and inventory together: an item can't be in both, so this is everything you hold right now
         inventoryFinds(player).forEach((id, finds) -> vaultVisit.computeIfAbsent(id, k -> new ArrayList<>()).addAll(finds));
         int added = CollectionStore.get().recordHeld(vaultVisit);
@@ -116,6 +117,7 @@ public final class LootEvents {
      * Called every game tick; checks your equipment, inventory and backpack every few seconds.
      */
     public static void inventoryTick(TomatoData data) {
+        if (data.player != null && Holdings.get().vaultWaiting()) saveVault(data.player);
         if (vaultPending && data.player != null) {
             try {
                 vaultDone(data.player);
@@ -140,7 +142,49 @@ public final class LootEvents {
         if (charBefore == player.charId()) openedChests(chestsBefore);   // first, so the copy is not counted twice
         int added = held.isEmpty() ? 0 : CollectionStore.get().recordHeld(held);
         if (added > 0) System.out.println("Inventory: " + added + " copies new to the collection");
-        Whereabouts.get().character(player.charId(), held);
+        Holdings.get().live(player.charId(), liveSlots(player));
+    }
+
+    /**
+     * Saves a completed vault visit as the seasonal or regular vault. The season comes from the game's own stat
+     * for this character, else from the character list; until one of them is known, the visit waits.
+     */
+    private static void saveVault(Entity player) {
+        if (player == null) return;
+        StatData stat = player.stat.get(StatType.SEASONAL);
+        CharacterStore.Char me = character(player.charId());
+        Boolean seasonal = stat != null ? (Boolean) (stat.statValue == 1) : me != null ? (Boolean) me.seasonal : null;
+        String how = stat != null ? "from the character's stat" : "from the character list";
+        if (stat != null && me != null && me.seasonal != (stat.statValue == 1)) how += " (the character list said otherwise)";
+        Holdings.get().vaultSeason(seasonal, how);
+    }
+
+    /**
+     * Every slot of the character you play as the live stats show it (equipment, inventory, backpack, extender,
+     * quick slots). Slots the game has not sent are UNKNOWN and keep what they held.
+     */
+    @SuppressWarnings("unchecked")
+    private static Holdings.Live liveSlots(Entity player) {
+        StatData pack = player.stat.get(StatType.BACKPACK_SLOTS_STAT);
+        java.util.List<Holdings.Slot> before = Holdings.get().slots("char:" + player.charId(), Holdings.SLOTS);
+        int packSlots = pack != null ? pack.statValue : before != null ? Math.max(0, before.size() - 12) : 0;
+        int n = 12 + Math.max(0, Math.min(16, packSlots));
+        int[] items = new int[n];
+        List<Integer>[] ench = new List[n];
+        StatData udata = player.stat.get(StatType.UNIQUE_DATA_STRING);
+        String[] codes = udata == null || udata.stringStatValue == null ? null : udata.stringStatValue.split(",", -1);
+        for (int i = 0; i < n; i++) {
+            int stat = i < 12 ? StatType.INVENTORY_0_STAT.get() + i : StatType.BACKPACK_0_STAT.get() + (i - 12);
+            StatData sd = player.stat.get(stat);
+            items[i] = sd == null ? Holdings.Live.UNKNOWN : sd.statValue < 1 ? -1 : sd.statValue;
+            if (codes != null && i < codes.length) ench[i] = enchantIds(codes[i]);
+        }
+        int[] quick = new int[QUICKSLOTS.length];
+        for (int k = 0; k < quick.length; k++) {
+            StatData sd = player.stat.get(QUICKSLOTS[k]);
+            quick[k] = sd == null ? Holdings.Live.UNKNOWN : sd.statValue < 1 ? -1 : sd.statValue;
+        }
+        return new Holdings.Live(items, ench, quick);
     }
 
     /**

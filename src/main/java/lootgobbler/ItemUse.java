@@ -116,7 +116,6 @@ public final class ItemUse {
     private static void remove(List<Used> items, String source, String where) {
         for (Used u : items) {
             boolean taken = CollectionStore.get().recordRemoved(u.id(), source, where, u.copy());
-            Whereabouts.get().removed(u.id(), u.copy());   // gone for good, not into the vault
             AppLog.log("items", (source.equals(CollectionStore.FORGED) ? "Forged " : source.equals(CollectionStore.FED) ? "Fed "
                     : source.equals(CollectionStore.DROPPED) ? "Dropped " : "Used up ") + name(u.id())
                     + (u.copy() != null && u.copy().enchantIds != null ? " (" + u.copy().enchantIds.size() + " enchantments)" : "")

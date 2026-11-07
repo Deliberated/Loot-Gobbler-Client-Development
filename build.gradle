@@ -20,6 +20,12 @@ dependencies {
     implementation 'com.google.flatbuffers:flatbuffers-java:23.5.26'
     implementation 'com.formdev:flatlaf:3.5.4'
     runtimeOnly 'org.slf4j:slf4j-nop:2.0.17'
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.3'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.11.3'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
 }
 
 // tomato.version.Version is generated from `version` above, so the version is set in one place only. The release

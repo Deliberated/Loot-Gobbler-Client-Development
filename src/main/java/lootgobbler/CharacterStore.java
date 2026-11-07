@@ -282,7 +282,9 @@ public final class CharacterStore implements Syncable {
                 if (maxHp > 0) c.maxHp = maxHp;
                 int fame = intStat(p, StatType.CURR_FAME_STAT);
                 if (fame > 0) c.fame = fame;
-                c.seasonal = p.isSeasonal();
+                // only once the game has sent it: before that the character list's season stands (a guess here
+                // used to file a seasonal vault as the regular one)
+                if (p.stat.get(StatType.SEASONAL) != null) c.seasonal = p.isSeasonal();
                 c.crucible = p.isCrucible();
                 StatData ritual = p.stat.get(StatType.BloodRitualStat);
                 c.ritual = ritual != null && ritual.stringStatValue != null && !ritual.stringStatValue.isBlank()
@@ -429,6 +431,7 @@ public final class CharacterStore implements Syncable {
     private void importItemData(String xml, boolean live) {
         Map<Integer, Map<Integer, List<CollectionStore.Find>>> held = new HashMap<>();   // char id -> item -> copies
         Map<Integer, CollectionStore.Seen> seen = new HashMap<>();
+        List<Holdings.Listed> listed = new ArrayList<>();   // what each living character holds, slot by slot
         synchronized (this) {
             java.util.regex.Matcher ch = CHAR_XML.matcher(xml);
             while (ch.find()) {
@@ -460,7 +463,10 @@ public final class CharacterStore implements Syncable {
                 }
                 c.slots = slots;
                 c.slotEnchantIds = ids;
-                if (c.alive) held.put(c.charId, collectibles(c));
+                if (c.alive) {
+                    held.put(c.charId, collectibles(c));
+                    listed.add(new Holdings.Listed(c.charId, slots, ids, c.quickslots));
+                }
                 seen.put(c.charId, CollectionStore.Seen.character(c));
                 // an older saved list must not overwrite what you wear now
                 if (c.equipment != null && slots.length >= 4 && Arrays.equals(c.equipment, Arrays.copyOf(slots, 4))) {
@@ -477,7 +483,7 @@ public final class CharacterStore implements Syncable {
             for (List<CollectionStore.Find> list : copies.values()) for (CollectionStore.Find f : list) f.seen = seen.get(id);
             if (!copies.isEmpty()) CollectionStore.get().recordHeld(copies);
         });
-        Whereabouts.get().characters(held);
+        Holdings.get().characters(listed);
     }
 
     /** A character's collectible copies from its last list (equipment, inventory, backpack) and its quick slots. */

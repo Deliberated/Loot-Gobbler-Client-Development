@@ -17,6 +17,9 @@ character-tags.txt
 characters.json
 collection.json
 whereabouts.json
+holdings.json
+holdings-journal.txt
+holdings-journal.old.txt
 exalts.json
 exalt_changes.json
 pets.json
