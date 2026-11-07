@@ -164,6 +164,15 @@ class HoldingsTest {
         assertEquals(1, h.count(1001));
     }
 
+    @Test
+    void theBestCopyYouHaveGivesTheRarity() {
+        h.live(1, live(slots(1001, 1001, 1002), List.of(7), List.of(7, 8, -1, 9)));
+        assertEquals(4, h.bestEnchants(1001));   // empty enchant slots count for rarity too
+        assertEquals(-1, h.bestEnchants(1002));   // its enchantments are not known
+        h.live(1, live(slots(1001, -1)));   // the four-slot copy is gone
+        assertEquals(1, h.bestEnchants(1001));
+    }
+
     // ---- what a tick carries ------------------------------------------------------------------------------------
 
     private static packets.data.StatData stat(packets.data.enums.StatType t, int value) {

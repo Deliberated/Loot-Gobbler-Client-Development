@@ -138,7 +138,7 @@ public final class Holdings {
 
     private State state = new State();
     private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
-    private volatile Map<Integer, Integer> counts;   // item -> copies, null after a change
+    private volatile Tally counts;   // copies and best rarity per item, null after a change
 
     /** The vault visit being read: its sections so far, until the packet marked last (and its season) is known. */
     private Visit visit;
@@ -629,22 +629,43 @@ public final class Holdings {
 
     /** How many copies of the item you have (kept until the next change, as the grid asks for every item). */
     public int count(int item) {
-        Map<Integer, Integer> c = counts;
-        if (c == null) {
-            c = new HashMap<>();
+        return tally().count().getOrDefault(item, 0);
+    }
+
+    /**
+     * Most enchantment slots any copy you have carries (its rarity), or -1 if you have none whose enchantments are
+     * known.
+     */
+    public int bestEnchants(int item) {
+        return tally().best().getOrDefault(item, -1);
+    }
+
+    /** Copies and best rarity per item, kept until the next change (the grid asks for every item). */
+    private record Tally(Map<Integer, Integer> count, Map<Integer, Integer> best) {
+    }
+
+    private Tally tally() {
+        Tally t = counts;
+        if (t == null) {
+            Map<Integer, Integer> c = new HashMap<>(), best = new HashMap<>();
             Map<Integer, Boolean> chars = living.get();
             synchronized (this) {
                 for (Map.Entry<String, Place> e : state.places.entrySet()) {
                     String key = e.getKey();
                     if (key.startsWith("char:") && !chars.containsKey(Integer.parseInt(key.substring(5)))) continue;
                     for (List<Slot> slots : e.getValue().sections.values()) {
-                        for (Slot s : slots) if (!s.empty() && items.collectible(s.item)) c.merge(s.item, 1, Integer::sum);
+                        for (Slot s : slots) {
+                            if (s.empty() || !items.collectible(s.item)) continue;
+                            c.merge(s.item, 1, Integer::sum);
+                            if (s.enchantIds != null) best.merge(s.item, s.enchantIds.size(), Math::max);
+                        }
                     }
                 }
             }
-            counts = c;
+            t = new Tally(c, best);
+            counts = t;
         }
-        return c.getOrDefault(item, 0);
+        return t;
     }
 
     /** Whether any place has been looked at yet (until then, the counts come from the finds). */

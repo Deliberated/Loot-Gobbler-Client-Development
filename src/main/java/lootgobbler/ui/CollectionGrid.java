@@ -330,7 +330,7 @@ public class CollectionGrid extends JComponent implements Scrollable {
                 }
                 if (have) {
                     CollectionStore.Entry entry = owned.get(item.id);
-                    EnchantBadge.draw(g, x + CELL - 3, y + CELL - 3, entry.maxEnchants(), 5);   // best copy
+                    EnchantBadge.draw(g, x + CELL - 3, y + CELL - 3, CollectionStore.get().bestEnchants(item.id), 5);   // best copy you have
                     drawCount(g, x + 2, y + CELL - 3, CollectionStore.get().held(item.id));   // copies you have
                 }
             }

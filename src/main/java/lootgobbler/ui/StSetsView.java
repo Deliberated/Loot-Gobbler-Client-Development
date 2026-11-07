@@ -415,7 +415,7 @@ public class StSetsView extends JPanel {
                 g2.setComposite(AlphaComposite.SrcOver);
             }
             if (have && entries.get(id) != null) {
-                EnchantBadge.draw(g2, x + TILE - 3, TILE - 3, entries.get(id).maxEnchants(), 5);   // best copy
+                EnchantBadge.draw(g2, x + TILE - 3, TILE - 3, lootgobbler.CollectionStore.get().bestEnchants(id), 5);   // best copy you have
             }
             g2.setColor(hover ? accent : Color.BLACK);
             g2.setStroke(new BasicStroke(hover ? 2f : 1f));

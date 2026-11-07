@@ -229,6 +229,22 @@ public final class CollectionStore implements Syncable {
         return new LinkedHashMap<>(entries);
     }
 
+    /**
+     * The rarity (enchantment slots) of the best copy you have, counted where the copies are; while that is not known,
+     * the best copy ever recorded.
+     */
+    public int bestEnchants(int itemId) {
+        if (Holdings.get().known()) {
+            int best = Holdings.get().bestEnchants(itemId);
+            if (best >= 0) return best;
+        }
+        Entry e;
+        synchronized (this) {
+            e = entries.get(itemId);
+        }
+        return e == null ? 0 : e.maxEnchants();
+    }
+
     /** True if you hold at least one copy. */
     public boolean contains(int itemId) {
         return held(itemId) > 0;
