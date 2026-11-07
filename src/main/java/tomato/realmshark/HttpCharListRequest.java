@@ -18,7 +18,9 @@ public class HttpCharListRequest {
      * @return Char list data as XML string.
      */
     public static String getChartList(String accessToken) throws IOException {
-        return webRequest(accessToken, "char/list");
+        String full = webRequest(accessToken, "char/list", "&muleDump=true");   // in full: with the vault
+        if (full != null && !full.contains("<Error")) return full;
+        return webRequest(accessToken, "char/list");   // refused in full: the list as before
     }
 
     /**
@@ -39,12 +41,22 @@ public class HttpCharListRequest {
      */
     public static String webRequest(String accessToken, String requestType)
         throws IOException {
+        return webRequest(accessToken, requestType, "");
+    }
+
+    /**
+     * Web request packet sent, with more parameters appended (e.g. "&muleDump=true").
+     *
+     * @return Request info
+     */
+    public static String webRequest(String accessToken, String requestType, String extra)
+        throws IOException {
         String encoded = URLEncoder.encode(accessToken, "UTF-8");
         String s1 = "https://www.realmofthemadgod.com/" + requestType + "?";
         String s2 =
             "do_login=true&accessToken=" +
             encoded +
-            "&game_net=Unity&play_platform=Unity&game_net_user_id";
+            "&game_net=Unity&play_platform=Unity&game_net_user_id" + extra;
 
         URL obj = new URL(s1 + s2);
         HttpURLConnection con = (HttpURLConnection) obj.openConnection();

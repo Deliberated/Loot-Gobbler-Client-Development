@@ -140,6 +140,10 @@ public final class Holdings {
     private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
     private volatile Tally counts;   // copies and best rarity per item, null after a change
 
+    /** Whether the map you are in is the vault (vault packets elsewhere are not your vault). */
+    private boolean mapIsVault;
+    private boolean toldNotVault;   // journaled once per map
+
     /** The vault visit being read: its sections so far, until the packet marked last (and its season) is known. */
     private Visit visit;
 
@@ -351,6 +355,11 @@ public final class Holdings {
      * never saved half read. Returns true when the visit is complete (see {@link #vaultSeason}).
      */
     public synchronized boolean vaultPacket(VaultContentPacket p) {
+        if (!mapIsVault) {   // the daily quest room sends one too, all but empty: it is not your vault
+            if (!toldNotVault) journal.line("vault?", "vault packet outside the vault ignored");
+            toldNotVault = true;
+            return false;
+        }
         if (visit == null || visit.complete) visit = new Visit();
         Visit v = visit;
         chest(p.vaultChestObjectId, VAULT_CHEST);
@@ -393,6 +402,10 @@ public final class Holdings {
             p.seenAt = System.currentTimeMillis();
             p.source = "vault packet";
             inVault = null;
+            if (!v.broken && v.sections.getOrDefault(VAULT_CHEST, List.of()).isEmpty()) {
+                v.broken = true;
+                v.why = "it has no vault chest slots";
+            }
             if (v.broken) {
                 journal.line(key, "vault visit not saved: " + v.why + " (" + describe(p) + ")");
                 return true;
@@ -416,6 +429,8 @@ public final class Holdings {
     /** A new map: a vault visit not completed by now is dropped. */
     public void entered(boolean vault) {
         synchronized (this) {
+            mapIsVault = vault;
+            toldNotVault = false;
             inVault = null;
             chestSections.clear();
             pages.clear();
@@ -620,6 +635,108 @@ public final class Holdings {
 
     private String side(String sec, int slot, int item) {
         return (sec == null ? "you, slot " + slot : sec + ", slot " + slot) + " (" + (item < 1 ? "empty" : items.name(item)) + ")";
+    }
+
+    // ---- the regular vault from the character list ------------------------------------------------------------
+
+    private static final java.util.regex.Pattern CHEST_XML = java.util.regex.Pattern.compile("<Chest>([^<]*)</Chest>");
+    private static final java.util.regex.Pattern ITEM_DATA_XML = java.util.regex.Pattern.compile(
+            "<ItemData[^>]*?\\bid=\"([^\"]+)\"[^>]*>([^<]*)</ItemData>");   // id: the instance (type is the item)
+
+    /**
+     * The regular vault as the character list shows it (its Account block, when asked for in full): the vault
+     * chests, gifts, potions and material chests. Items are "id" or "id#instance"; the enchantments of an instance
+     * come from the UniqueItemInfo blocks. Null if the list carries no vault.
+     */
+    static Map<String, List<Slot>> vaultFromCharList(String xml) {
+        if (xml == null) return null;
+        // every character's pet carries a small Account block of its own: the account's is the one with the vault
+        int at = xml.indexOf("<Vault>");
+        if (at < 0) return null;
+        int start = xml.lastIndexOf("<Account>", at), end = xml.indexOf("</Account>", at);
+        if (start < 0 || end < 0) return null;
+        String account = xml.substring(start, end);
+        String vault = between(account, "<Vault>", "</Vault>");
+        if (vault == null) return null;
+        Map<String, String> codes = new HashMap<>();   // instance -> enchantment code
+        java.util.regex.Matcher d = ITEM_DATA_XML.matcher(account);
+        while (d.find()) codes.put(d.group(1), d.group(2).trim());
+        Map<String, List<Slot>> out = new LinkedHashMap<>();
+        out.put(VAULT_CHEST, chests(vault, codes));
+        String gifts = between(account, "<Gifts>", "</Gifts>");
+        if (gifts != null) {
+            List<Slot> list = items(gifts, codes);
+            list.removeIf(Slot::empty);   // gifts have no gaps
+            out.put(GIFT_CHEST, list);
+        }
+        String potions = between(account, "<Potions>", "</Potions>");
+        if (potions != null) out.put(POTIONS, items(potions, codes));
+        String materials = between(account, "<MaterialStorage>", "</MaterialStorage>");
+        if (materials != null) out.put(MATERIALS, chests(materials, codes));
+        return out;
+    }
+
+    private static String between(String s, String open, String close) {
+        int a = s.indexOf(open);
+        if (a < 0) return null;
+        int b = s.indexOf(close, a);
+        return b < 0 ? null : s.substring(a + open.length(), b);
+    }
+
+    private static List<Slot> chests(String block, Map<String, String> codes) {
+        List<Slot> out = new ArrayList<>();
+        java.util.regex.Matcher m = CHEST_XML.matcher(block);
+        while (m.find()) out.addAll(items(m.group(1), codes));
+        return out;
+    }
+
+    private static List<Slot> items(String csv, Map<String, String> codes) {
+        List<Slot> out = new ArrayList<>();
+        if (csv.isBlank()) return out;
+        for (String part : csv.split(",")) {
+            String t = part.trim();
+            int hash = t.indexOf('#');
+            String id = hash < 0 ? t : t.substring(0, hash), instance = hash < 0 ? null : t.substring(hash + 1);
+            int item;
+            try {
+                item = Integer.parseInt(id);
+            } catch (NumberFormatException e) {
+                item = -1;
+            }
+            String code = instance == null ? null : codes.get(instance);
+            out.add(new Slot(item, code == null ? null : LootEvents.enchantIds(code)));
+        }
+        return out;
+    }
+
+    /**
+     * The regular vault from the character list: replaces the stored one, except while you are in it (then the
+     * moves you make are newer). Sections the list does not carry (seasonal spoils) keep what they held. A list
+     * whose vault does not decode as items is ignored.
+     */
+    public void listedVault(Map<String, List<Slot>> sections) {
+        if (sections == null) return;
+        boolean changed;
+        synchronized (this) {
+            if (VAULT.equals(inVault)) {
+                journal.line(VAULT, "vault from the character list ignored: you are in it");
+                return;
+            }
+            List<Slot> chest = sections.get(VAULT_CHEST);
+            int[] ids = chest == null ? new int[0] : chest.stream().mapToInt(s -> s.item).toArray();
+            if (ids.length == 0 || !plausible(ids)) {
+                journal.line(VAULT, "vault from the character list ignored: " + (ids.length == 0 ? "it is empty" : "it does not decode as items"));
+                return;
+            }
+            Place before = state.places.get(VAULT);
+            Place p = new Place();
+            p.sections.putAll(sections);
+            if (before != null) before.sections.forEach(p.sections::putIfAbsent);
+            p.seenAt = System.currentTimeMillis();
+            p.source = "char list";
+            changed = replace(VAULT, before, p, "vault from the character list");
+        }
+        if (changed) changed();
     }
 
     // ---- what you have ------------------------------------------------------------------------------------------

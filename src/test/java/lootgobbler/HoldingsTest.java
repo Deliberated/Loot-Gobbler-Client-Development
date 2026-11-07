@@ -32,6 +32,7 @@ class HoldingsTest {
         h.items = ITEMS;
         living = new HashMap<>(Map.of(1, false, 2, false, 3, true));
         h.living = () -> living;
+        h.entered(true);   // in the vault map, unless a test leaves it
     }
 
     @SuppressWarnings("unchecked")
@@ -263,7 +264,7 @@ class HoldingsTest {
     @Test
     void aVisitNotCompletedIsDroppedOnLeaving() {
         h.vaultPacket(vault(new int[]{1001}, null, false));
-        h.entered(false);
+        h.entered(true);   // back in the vault
         h.vaultPacket(vault(new int[]{1002}, null, true));
         h.vaultSeason(false, "test");
         assertEquals(0, h.count(1001));   // nothing from the visit left half read
@@ -283,6 +284,27 @@ class HoldingsTest {
         h.vaultSeason(false, "test");
         assertEquals(1, h.count(1002));
         assertTrue(h.journal.lines.stream().anyMatch(l -> l.contains("did not decode")));
+    }
+
+    @Test
+    void aVaultPacketOutsideTheVaultIsNotYourVault() {
+        h.vaultPacket(vault(new int[]{1001}, null, true));
+        h.vaultSeason(false, "test");
+        h.entered(false);   // the daily quest room
+        h.vaultPacket(vault(new int[]{}, new int[]{}, true));
+        h.vaultSeason(false, "test");
+        assertEquals(1, h.count(1001));
+    }
+
+    @Test
+    void aVisitWithoutVaultChestSlotsIsRefused() {
+        h.vaultPacket(vault(new int[]{1001}, null, true));
+        h.vaultSeason(false, "test");
+        h.entered(true);
+        h.vaultPacket(vault(new int[]{}, new int[]{1002}, true));
+        h.vaultSeason(false, "test");
+        assertEquals(1, h.count(1001));
+        assertTrue(h.journal.lines.stream().anyMatch(l -> l.contains("no vault chest slots")));
     }
 
     @Test
@@ -453,6 +475,62 @@ class HoldingsTest {
         inVault(chest16(), new int[]{1003, 1004, 1005, 1006});
         move(GIFT, 2, 1006, ME, 5, -1);   // named slot 2, but it is in slot 3 here
         assertEquals(List.of(1003, 1004, 1005), h.slots(Holdings.VAULT, Holdings.GIFT_CHEST).stream().map(x -> x.item).toList());
+    }
+
+    // ---- the regular vault from the character list -------------------------------------------------------------
+
+    private static final String LIST = """
+            <Chars nextCharId="9" maxNumChars="20">
+              <Char id="1"><Equipment>1001,-1</Equipment><Pet><Account><Name>Me</Name></Account></Pet><UniqueItemInfo><ItemData type="1001">x</ItemData></UniqueItemInfo></Char>
+              <Account>
+                <AccountId>1</AccountId>
+                <Vault><Chest>2001#a1,-1,2002,-1,-1,-1,-1,-1</Chest><Chest>2003#a2,-1,-1,-1,-1,-1,-1,-1</Chest></Vault>
+                <Gifts>2004#g1,2005</Gifts>
+                <Potions>2591,-1</Potions>
+                <MaterialStorage><Chest>5,-1,-1,-1,-1,-1,-1,-1</Chest></MaterialStorage>
+                <UniqueItemInfo><ItemData id="a1" type="2001"></ItemData><ItemData id="a2" type="2003">AAIE_f_9__3__f8=</ItemData></UniqueItemInfo>
+                <UniqueGiftItemInfo><ItemData id="g1"></ItemData></UniqueGiftItemInfo>
+              </Account>
+            </Chars>""";
+
+    @Test
+    void theCharacterListCarriesTheRegularVault() {
+        Map<String, List<Holdings.Slot>> v = Holdings.vaultFromCharList(LIST);
+        assertEquals(16, v.get(Holdings.VAULT_CHEST).size());
+        assertEquals(2001, v.get(Holdings.VAULT_CHEST).get(0).item);
+        assertEquals(2003, v.get(Holdings.VAULT_CHEST).get(8).item);
+        assertEquals(List.of(), v.get(Holdings.VAULT_CHEST).get(0).enchantIds);   // known: none
+        assertNull(v.get(Holdings.VAULT_CHEST).get(2).enchantIds);   // no instance: not known
+        assertEquals(2, v.get(Holdings.GIFT_CHEST).size());
+        assertEquals(1, v.get(Holdings.MATERIALS).size() / 8);
+        assertNull(Holdings.vaultFromCharList("<Chars><Account><AccountId>1</AccountId></Account></Chars>"));
+    }
+
+    @Test
+    void theListedVaultReplacesTheStoredOneButKeepsWhatItDoesNotCarry() {
+        VaultContentPacket p = vault(new int[]{2009}, null, true);
+        p.seasonalSpoilContent = new int[]{2010};
+        h.vaultPacket(p);
+        h.vaultSeason(false, "test");
+        h.entered(false);   // left the vault: later, the list arrives in the quest room
+        h.listedVault(Holdings.vaultFromCharList(LIST));
+        assertEquals(0, h.count(2009));
+        assertEquals(1, h.count(2001));
+        assertEquals(1, h.count(2005));
+        assertEquals(1, h.count(2010));   // the spoils are not in the list: kept
+    }
+
+    @Test
+    void theListedVaultWaitsWhileYouAreInIt() {
+        VaultContentPacket p = vault(new int[]{2009}, null, true);
+        p.vaultChestObjectId = 60;
+        h.vaultPacket(p);
+        h.vaultSeason(false, "test");
+        h.listedVault(Holdings.vaultFromCharList(LIST));
+        assertEquals(1, h.count(2009));
+        h.entered(false);
+        h.listedVault(Holdings.vaultFromCharList(LIST));
+        assertEquals(0, h.count(2009));
     }
 
     // ---- gaps and seeding ---------------------------------------------------------------------------------------

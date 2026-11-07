@@ -761,6 +761,11 @@ public final class CharacterStore implements Syncable {
             System.err.println("Could not read equipment enchantments: " + e);
         }
         try {
+            Holdings.get().listedVault(Holdings.vaultFromCharList(xml));   // the regular vault, without walking in
+        } catch (Exception e) {
+            System.err.println("Could not read the vault from the character list: " + e);
+        }
+        try {
             PetStore.get().importCharList(xml);   // pets, their abilities and saddlebags
         } catch (Exception e) {
             System.err.println("Could not read pets: " + e);
