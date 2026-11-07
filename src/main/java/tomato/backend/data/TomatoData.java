@@ -277,6 +277,7 @@ public class TomatoData {
             if (id == worldPlayerId) {
                 player = entity;
                 entity.setUser(charId);
+                lootgobbler.LootEvents.playerStatus(charId, entity, object.status);   // every slot, on entering
                 MyInfoGUI.updatePlayer(player);
             } else {
                 entity.isPlayer();
@@ -449,6 +450,7 @@ public class TomatoData {
                 new Entity(this, idd, timePc)
             );
             entity.updateStats(p.status[i], timePc);
+            if (id == worldPlayerId) lootgobbler.LootEvents.playerStatus(charId, entity, p.status[i]);   // slots that changed
             lootgobbler.MoonlightLog.get().changed(this, p.status[i]);
         }
         SecurityAbilityUseCheck.decreaseDecoyCounter();

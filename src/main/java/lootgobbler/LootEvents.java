@@ -142,7 +142,23 @@ public final class LootEvents {
         if (charBefore == player.charId()) openedChests(chestsBefore);   // first, so the copy is not counted twice
         int added = held.isEmpty() ? 0 : CollectionStore.get().recordHeld(held);
         if (added > 0) System.out.println("Inventory: " + added + " copies new to the collection");
-        Holdings.get().live(player.charId(), liveSlots(player));
+    }
+
+    /**
+     * What the game sent of the character you play: on entering a map (every stat) and in each tick (only the stats
+     * that changed). Only the slots sent change what you have.
+     */
+    public static void playerStatus(int charId, Entity player, packets.data.ObjectStatusData status) {
+        if (charId <= 0 || status == null || status.stats == null) return;
+        try {
+            StatData pack = player == null ? null : player.stat.get(StatType.BACKPACK_SLOTS_STAT);
+            java.util.List<Holdings.Slot> before = Holdings.get().slots("char:" + charId, Holdings.SLOTS);
+            int packSlots = pack != null ? pack.statValue : before != null ? Math.max(0, before.size() - 12) : 0;
+            Holdings.Live seen = liveSlots(status.stats, 12 + Math.max(0, Math.min(16, packSlots)));
+            if (seen != null) Holdings.get().live(charId, seen);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 
     /**
@@ -160,31 +176,45 @@ public final class LootEvents {
     }
 
     /**
-     * Every slot of the character you play as the live stats show it (equipment, inventory, backpack, extender,
-     * quick slots). Slots the game has not sent are UNKNOWN and keep what they held.
+     * The slots in one status of your character (n slots: equipment, inventory, then the packs; and the quick slots):
+     * UNKNOWN where the status does not carry that slot. Null if it carries no slot and no enchantments at all.
      */
     @SuppressWarnings("unchecked")
-    private static Holdings.Live liveSlots(Entity player) {
-        StatData pack = player.stat.get(StatType.BACKPACK_SLOTS_STAT);
-        java.util.List<Holdings.Slot> before = Holdings.get().slots("char:" + player.charId(), Holdings.SLOTS);
-        int packSlots = pack != null ? pack.statValue : before != null ? Math.max(0, before.size() - 12) : 0;
-        int n = 12 + Math.max(0, Math.min(16, packSlots));
+    static Holdings.Live liveSlots(StatData[] stats, int n) {
         int[] items = new int[n];
-        List<Integer>[] ench = new List[n];
-        StatData udata = player.stat.get(StatType.UNIQUE_DATA_STRING);
-        String[] codes = udata == null || udata.stringStatValue == null ? null : udata.stringStatValue.split(",", -1);
-        for (int i = 0; i < n; i++) {
-            int stat = i < 12 ? StatType.INVENTORY_0_STAT.get() + i : StatType.BACKPACK_0_STAT.get() + (i - 12);
-            StatData sd = player.stat.get(stat);
-            items[i] = sd == null ? Holdings.Live.UNKNOWN : sd.statValue < 1 ? -1 : sd.statValue;
-            if (codes != null && i < codes.length) ench[i] = enchantIds(codes[i]);
-        }
+        java.util.Arrays.fill(items, Holdings.Live.UNKNOWN);
         int[] quick = new int[QUICKSLOTS.length];
-        for (int k = 0; k < quick.length; k++) {
-            StatData sd = player.stat.get(QUICKSLOTS[k]);
-            quick[k] = sd == null ? Holdings.Live.UNKNOWN : sd.statValue < 1 ? -1 : sd.statValue;
+        java.util.Arrays.fill(quick, Holdings.Live.UNKNOWN);
+        String codes = null;
+        boolean any = false, anyQuick = false;
+        int inv0 = StatType.INVENTORY_0_STAT.get(), pack0 = StatType.BACKPACK_0_STAT.get();
+        for (StatData sd : stats) {
+            int t = sd.statTypeNum, i = -1;
+            if (t >= inv0 && t < inv0 + 12) i = t - inv0;
+            else if (t >= pack0 && t < pack0 + 16) i = 12 + t - pack0;
+            if (i >= 0 && i < n) {
+                items[i] = sd.statValue < 1 ? -1 : sd.statValue;
+                any = true;
+                continue;
+            }
+            if (t == StatType.UNIQUE_DATA_STRING.get()) {
+                codes = sd.stringStatValue;
+                continue;
+            }
+            for (int k = 0; k < QUICKSLOTS.length; k++) {
+                if (t == QUICKSLOTS[k].get()) {
+                    quick[k] = sd.statValue < 1 ? -1 : sd.statValue;
+                    anyQuick = true;
+                }
+            }
         }
-        return new Holdings.Live(items, ench, quick);
+        List<Integer>[] ench = new List[n];
+        if (codes != null) {   // one code per slot, every slot
+            String[] c = codes.split(",", -1);
+            for (int i = 0; i < n && i < c.length; i++) ench[i] = enchantIds(c[i]);
+        }
+        if (!any && !anyQuick && codes == null) return null;
+        return new Holdings.Live(items, ench, anyQuick ? quick : null);
     }
 
     /**

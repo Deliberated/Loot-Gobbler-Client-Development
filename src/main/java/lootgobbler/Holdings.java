@@ -96,7 +96,8 @@ public final class Holdings {
 
     /**
      * A live look at a character: per slot index the item (-1 empty, UNKNOWN when the game has not sent that slot)
-     * and its enchantment ids (null when not sent). quick holds the three quick slots, or null when not sent.
+     * and its enchantment ids (null when not sent; sent alone, they apply to the item already there). quick holds the
+     * three quick slots (UNKNOWN each when not sent), or null.
      */
     public record Live(int[] items, List<Integer>[] enchantIds, int[] quick) {
         public static final int UNKNOWN = Integer.MIN_VALUE;
@@ -257,7 +258,10 @@ public final class Holdings {
         if (changed) changed();
     }
 
-    /** A live look at the character you play. Slots the game has not sent keep what they held. */
+    /**
+     * A live look at the character you play: what the game sent of it, on entering a map (all of it) or in a tick
+     * (only what changed). Slots the game has not sent keep what they held.
+     */
     public void live(int charId, Live seen) {
         String key = "char:" + charId;
         boolean changed = false;
@@ -275,9 +279,12 @@ public final class Holdings {
             List<String> lines = new ArrayList<>();
             for (int i = 0; i < n; i++) {
                 int item = seen.items()[i];
-                if (item == Live.UNKNOWN) continue;
                 Slot old = slots.get(i);
                 List<Integer> ench = seen.enchantIds() == null ? null : seen.enchantIds()[i];
+                if (item == Live.UNKNOWN) {   // the item was not sent: only its enchantments may have been
+                    if (ench == null || old.empty()) continue;
+                    item = old.item;
+                }
                 if (ench == null && old.item == item) ench = old.enchantIds;   // the same item, its codes not sent
                 Slot now = new Slot(item, ench);
                 if (now.same(old)) continue;

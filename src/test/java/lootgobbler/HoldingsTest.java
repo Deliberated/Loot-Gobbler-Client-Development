@@ -154,6 +154,60 @@ class HoldingsTest {
         assertEquals(1, h.count(1001));
     }
 
+    @Test
+    void enchantmentsSentAloneApplyToTheItemThere() {
+        h.live(1, live(slots(1001)));
+        int[] none = slots(U);
+        java.util.Arrays.fill(none, U);
+        h.live(1, live(none, List.of(4, -1)));
+        assertEquals(List.of(4, -1), h.copies(1001).get(0).enchantIds());
+        assertEquals(1, h.count(1001));
+    }
+
+    // ---- what a tick carries ------------------------------------------------------------------------------------
+
+    private static packets.data.StatData stat(packets.data.enums.StatType t, int value) {
+        packets.data.StatData d = new packets.data.StatData();
+        d.statTypeNum = t.get();
+        d.statType = t;
+        d.statValue = value;
+        return d;
+    }
+
+    @Test
+    void aTickOnlyCarriesTheSlotsItSent() {
+        packets.data.StatData[] stats = {
+                stat(packets.data.enums.StatType.INVENTORY_0_STAT, 1001),
+                stat(packets.data.enums.StatType.byOrdinal(packets.data.enums.StatType.INVENTORY_0_STAT.get() + 5), -1),
+                stat(packets.data.enums.StatType.BACKPACK_0_STAT, 1002),
+                stat(packets.data.enums.StatType.MP_STAT, 120)};
+        Holdings.Live l = LootEvents.liveSlots(stats, 20);
+        assertEquals(1001, l.items()[0]);
+        assertEquals(-1, l.items()[5]);
+        assertEquals(1002, l.items()[12]);
+        assertEquals(U, l.items()[1]);
+        assertNull(l.quick());
+        assertNull(l.enchantIds()[0]);
+    }
+
+    @Test
+    void aTickWithoutSlotsCarriesNothing() {
+        assertNull(LootEvents.liveSlots(new packets.data.StatData[]{stat(packets.data.enums.StatType.MP_STAT, 1)}, 12));
+    }
+
+    @Test
+    void aTickCanCarryTheQuickSlotsAlone() {
+        packets.data.StatData[] stats = {stat(LootEvents.QUICKSLOTS[1], 1004)};
+        Holdings.Live l = LootEvents.liveSlots(stats, 12);
+        assertEquals(U, l.quick()[0]);
+        assertEquals(1004, l.quick()[1]);
+        h.live(1, live(slots(1001)));
+        h.live(1, l);
+        assertEquals(1, h.count(1004));
+        assertEquals(1, h.count(1001));
+        assertEquals("Quick slot", h.copies(1004).get(0).slot());
+    }
+
     // ---- vaults -------------------------------------------------------------------------------------------------
 
     @Test
