@@ -66,7 +66,6 @@ public final class LootEvents {
      */
     public static void vaultPacket(VaultContentPacket p, Entity player) {
         try {
-            writeVaultDebug(p);
             // what you have: the vault slot by slot, saved once the visit is complete and its season known
             if (Holdings.get().vaultPacket(p)) saveVault(player);
             // a vault can arrive as several packets; collect copies until the one marked last, then record once
@@ -364,41 +363,7 @@ public final class LootEvents {
         slotItems = items;
         chestSlots = chests;
         chestChar = player.charId();
-        writeInventoryDebug(player, codes.length);
         return held;
-    }
-
-    private static String lastInventoryDebug = "";
-
-    /**
-     * Diagnostics, in inventory-debug.txt next to the app (rewritten only when it changes): every text stat the game
-     * sends for your character, and for each backpack slot whether its enchantments are known.
-     */
-    private static void writeInventoryDebug(Entity player, int liveCodes) {
-        StringBuilder sb = new StringBuilder("Character ").append(player.charId()).append(": live enchant codes for ")
-                .append(liveCodes).append(" slots\n\nText stats:\n");
-        for (int id = 0; id < 200; id++) {
-            StatData s = player.stat.get(id);
-            if (s != null && s.stringStatValue != null && !s.stringStatValue.isEmpty()) {
-                String v = s.stringStatValue;
-                sb.append(String.format("  %3d %-24s %s%n", id, StatType.byOrdinal(id), v.length() > 300 ? v.substring(0, 300) + "..." : v));
-            }
-        }
-        sb.append("\nBackpack:\n");
-        for (int i = 12; i < 28; i++) {
-            StatData sd = player.stat.get(StatType.BACKPACK_0_STAT.get() + (i - 12));
-            if (sd == null || sd.statValue < 1) continue;
-            int[] known = CharacterStore.get().slotEnchants(player.charId(), i, sd.statValue);
-            sb.append(String.format("  slot %2d  item %6d  enchants from char list: %s%n", i, sd.statValue,
-                    known == null ? "unknown" : Arrays.toString(known)));
-        }
-        String text = sb.toString();
-        if (text.equals(lastInventoryDebug)) return;
-        lastInventoryDebug = text;
-        try {
-            java.nio.file.Files.writeString(java.nio.file.Path.of("inventory-debug.txt"), text);
-        } catch (Exception ignore) {
-        }
     }
 
     /**
@@ -449,49 +414,6 @@ public final class LootEvents {
             finds.computeIfAbsent(ids[i], k -> new ArrayList<>()).add(f);
         }
         return count;
-    }
-
-    private static final java.nio.file.Path VAULT_DEBUG = java.nio.file.Path.of("vault-contents.txt");
-    private static long lastVaultPacket;
-
-    /**
-     * Writes what each vault packet contained to vault-contents.txt (a new file per vault visit), so missing
-     * items can be traced to the packet itself or to the collection filter.
-     */
-    private static void writeVaultDebug(VaultContentPacket p) {
-        long now = System.currentTimeMillis();
-        boolean newVisit = now - lastVaultPacket > 10_000;
-        lastVaultPacket = now;
-        StringBuilder sb = new StringBuilder();
-        sb.append("=== vault packet ").append(java.time.LocalDateTime.now().withNano(0))
-                .append("  last=").append(p.lastVaultPacket).append('\n');
-        debugList(sb, "vault chest", p.vaultContents, p.vaultChestEnchants);
-        debugList(sb, "gift chest", p.giftContents, p.giftChestEnchants);
-        try {
-            if (newVisit) java.nio.file.Files.writeString(VAULT_DEBUG, sb.toString());
-            else java.nio.file.Files.writeString(VAULT_DEBUG, sb.toString(), java.nio.file.StandardOpenOption.APPEND);
-        } catch (Exception e) {
-            System.err.println("Could not write " + VAULT_DEBUG + ": " + e.getMessage());
-        }
-    }
-
-    private static void debugList(StringBuilder sb, String label, int[] ids, String enchants) {
-        sb.append("--- ").append(label).append(": ").append(ids == null ? "null" : ids.length + " slots").append('\n');
-        if (enchants != null) {
-            int entries = enchants.split(",", -1).length;
-            sb.append("    enchant entries: ").append(entries)
-                    .append(ids != null && entries == ids.length ? " (one per slot - used)" : " (does not match the slots - ignored)").append('\n');
-            sb.append("    enchant data: ").append(enchants.length() > 300 ? enchants.substring(0, 300) + "..." : enchants).append('\n');
-        }
-        if (ids == null) return;
-        ItemDb db = ItemDb.get();
-        for (int i = 0; i < ids.length; i++) {
-            if (ids[i] < 1) continue;
-            ItemDb.Item item = db.item(ids[i]);
-            String status = item == null ? "not equipment" : !item.isCollectible() ? "not collectible"
-                    : CollectionStore.get().contains(ids[i]) ? "collected" : "NEW";
-            sb.append(String.format("    [%3d] %6d  %-40s %s%n", i, ids[i], String.valueOf(assets.IdToAsset.objectName(ids[i])), status));
-        }
     }
 
     static List<Drop> readBag(Entity bag) {

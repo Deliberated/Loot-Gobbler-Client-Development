@@ -163,15 +163,31 @@ public final class Holdings {
         return INSTANCE;
     }
 
-    /** First start with this store: the saved characters' slots, and the vaults from whereabouts.json. */
+    /** Files of earlier versions that are no longer written: the journal records what changed instead. */
+    private static final List<String> RETIRED = List.of("vault-contents.txt", "vault-debug.txt", "vault-packet.txt",
+            "inventory-debug.txt");
+
+    /**
+     * First start with this store: the saved characters' slots, and the vaults from whereabouts.json (an earlier
+     * version's record), which is deleted once taken over, like the diagnostic files earlier versions wrote.
+     */
     private static void seedFromSavedData() {
-        if (INSTANCE.known()) return;
+        for (String f : RETIRED) {
+            try {
+                Files.deleteIfExists(Path.of(f));
+            } catch (Exception ignore) {
+            }
+        }
+        Path old = Path.of("whereabouts.json");
+        if (INSTANCE.known()) {
+            retire(old);
+            return;
+        }
         List<Listed> saved = new ArrayList<>();
         for (CharacterStore.Char c : CharacterStore.get().all()) {
             if (c.alive && c.slots != null) saved.add(new Listed(c.charId, c.slots, c.slotEnchantIds, c.quickslots));
         }
         Map<String, Map<Integer, Integer>> vaults = new HashMap<>();
-        Path old = Path.of("whereabouts.json");
         if (Files.exists(old)) {
             try (Reader r = Files.newBufferedReader(old, StandardCharsets.UTF_8)) {
                 com.google.gson.JsonObject places = com.google.gson.JsonParser.parseReader(r).getAsJsonObject()
@@ -189,6 +205,15 @@ public final class Holdings {
             }
         }
         INSTANCE.seed(saved, vaults);
+        if (INSTANCE.known()) retire(old);
+    }
+
+    private static void retire(Path old) {
+        try {
+            if (Files.deleteIfExists(old)) INSTANCE.journal.line("start", old + " deleted: its vaults were taken over");
+        } catch (Exception e) {
+            System.err.println("Could not delete " + old + ": " + e.getMessage());
+        }
     }
 
     Holdings(Path file, boolean persist) {

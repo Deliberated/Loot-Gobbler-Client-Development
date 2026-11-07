@@ -229,7 +229,7 @@ public class CollectionPanel extends JPanel {
             lootgobbler.Holdings.Gaps gaps = where.gaps();
             if (!gaps.none()) {
                 JLabel hint = mutedLabel("Not seen yet: " + gapsText(gaps) + ". Their copies are not counted until then.");
-                hint.setToolTipText("Log in with each character once (or enter the Nexus, which reads the character list) "
+                hint.setToolTipText("Play each character once (or visit the daily quest room or the pet yard, which read the character list) "
                         + "and visit your vaults.");
                 recent.add(leftAligned(hint));
             }
