@@ -113,6 +113,10 @@ public class TomatoPacketCapture implements Controller {
         } else if (packet instanceof VaultContentPacket) {
             VaultContentPacket p = (VaultContentPacket) packet;
             data.vaultPacketUpdate(p);
+        } else if (packet instanceof InvSwapPacket) {
+            lootgobbler.LootEvents.invSwap((InvSwapPacket) packet, data.player);   // a move, e.g. into the vault
+        } else if (packet instanceof InvResultPacket) {
+            lootgobbler.LootEvents.invResult((InvResultPacket) packet);
         } else if (packet instanceof HelloPacket) {
             HelloPacket p = (HelloPacket) packet;
             data.updateToken(p.accessToken);

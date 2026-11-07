@@ -328,6 +328,11 @@ public final class Holdings {
     public synchronized boolean vaultPacket(VaultContentPacket p) {
         if (visit == null || visit.complete) visit = new Visit();
         Visit v = visit;
+        chest(p.vaultChestObjectId, VAULT_CHEST);
+        chest(p.giftChestObjectId, GIFT_CHEST);
+        chest(p.seasonalSpoilChestObjectId, SPOILS);
+        chest(p.potionStorageObjectId, POTIONS);
+        chest(p.materialChestObjectId, MATERIALS);
         if (p.partial && !v.broken) {
             v.broken = true;
             v.why = "a packet did not decode";
@@ -362,6 +367,7 @@ public final class Holdings {
             p.sections.putAll(v.sections);
             p.seenAt = System.currentTimeMillis();
             p.source = "vault packet";
+            inVault = null;
             if (v.broken) {
                 journal.line(key, "vault visit not saved: " + v.why + " (" + describe(p) + ")");
                 return true;
@@ -375,6 +381,8 @@ public final class Holdings {
                 return true;
             }
             changed = replace(key, mine, p, "vault visit, season " + how);
+            inVault = key;   // from now on, moves in this vault are followed
+            pages.clear();
         }
         if (changed) changed();
         return true;
@@ -383,12 +391,210 @@ public final class Holdings {
     /** A new map: a vault visit not completed by now is dropped. */
     public void entered(boolean vault) {
         synchronized (this) {
+            inVault = null;
+            chestSections.clear();
+            pages.clear();
+            asked.clear();
             if (visit != null) {
                 journal.line(visit.complete ? "vault" : "vault?", "vault visit dropped on leaving: "
                         + (visit.complete ? "its season was never known" : "the last packet never came"));
                 visit = null;
             }
         }
+    }
+
+    // ---- moves in the vault -------------------------------------------------------------------------------------
+
+    /** Slots a vault container shows at once: one page. */
+    static final int PAGE = 8;
+    /** The vault you are in, once its visit is saved (VAULT or SEASONAL_VAULT); null elsewhere. */
+    private volatile String inVault;
+    /** The vault's containers by object id (from the vault packet), and the page each shows. */
+    private final Map<Integer, String> chestSections = new HashMap<>();
+    private final Map<Integer, Integer> pages = new HashMap<>();
+    /** Moves asked for and not answered yet, with the enchantments of what moves (known only before it moves). */
+    private final List<Move> asked = new ArrayList<>();
+
+    private record Move(int fromObj, int fromSlot, int fromItem, List<Integer> fromEnch,
+                        int toObj, int toSlot, int toItem, List<Integer> toEnch, long at) {
+    }
+
+    private void chest(int objectId, String section) {
+        if (objectId != 0) chestSections.put(objectId, section);
+    }
+
+    /**
+     * A move you asked for (the swap packet you send): the items in two slots, of your character (playerId) or a
+     * vault container, are to trade places. Nothing changes yet: the game's answer ({@link #swapResult}) says what
+     * each slot holds afterwards. Here the enchantments of both items are noted while they are still in place.
+     */
+    public synchronized void swap(int playerId, int charId, int fromObj, int fromSlot, int fromItem, int toObj, int toSlot, int toItem) {
+        if (!chestSections.containsKey(fromObj) && !chestSections.containsKey(toObj)) return;   // not the vault
+        long now = System.currentTimeMillis();
+        asked.removeIf(m -> now - m.at() > 10_000);
+        asked.add(new Move(fromObj, fromSlot, fromItem, enchantsAt(playerId, charId, fromObj, fromSlot, fromItem),
+                toObj, toSlot, toItem, enchantsAt(playerId, charId, toObj, toSlot, toItem), now));
+    }
+
+    /**
+     * The game's answer to a move or a use: whether it worked, and what each of the two slots holds now. A vault
+     * container's slot named here is written as the game says, with the enchantments of the item that moved there
+     * (from the move asked for). resultType 1 is an item used up in its slot (there is no second slot then).
+     */
+    public void swapResult(boolean result, int type, int fromObj, int fromSlot, int fromItem, int toObj, int toSlot, int toItem) {
+        boolean changed = false;
+        synchronized (this) {
+            String fromSec = chestSections.get(fromObj), toSec = chestSections.get(toObj);
+            if (fromSec == null && toSec == null) return;   // not the vault
+            Move m = null;
+            for (Move a : asked) {
+                if (a.fromObj() == fromObj && a.fromSlot() == fromSlot && a.toObj() == toObj && a.toSlot() == toSlot) {
+                    m = a;
+                    break;
+                }
+            }
+            if (m != null) asked.remove(m);
+            String what = side(fromSec, fromSlot, m != null ? m.fromItem() : fromItem) + " <-> "
+                    + side(toSec, toSlot, m != null ? m.toItem() : toItem);
+            String place = inVault == null ? "vault?" : inVault;
+            if (!result) {
+                journal.line(place, "move refused by the game (type " + type + "): " + what);
+                return;
+            }
+            Place v = inVault == null ? null : state.places.get(inVault);
+            if (v == null) {
+                journal.line(place, "move not followed, the vault of this visit is not saved: " + what);
+                return;
+            }
+            List<String> lines = new ArrayList<>();
+            // what each slot holds now came from the other slot: its enchantments are the other item's. A gift taken
+            // out leaves no gap: the gifts behind it move up.
+            if (GIFT_CHEST.equals(fromSec) && fromItem < 1) changed |= takeGift(v, fromSlot, m != null ? m.fromItem() : toItem, lines);
+            else if (fromSec != null) changed |= set(v, fromSec, fromSlot, fromItem, m == null ? null : m.toItem() == fromItem ? m.toEnch() : null, lines);
+            if (GIFT_CHEST.equals(toSec) && toItem < 1) changed |= takeGift(v, toSlot, m != null ? m.toItem() : fromItem, lines);
+            else if (toSec != null) changed |= set(v, toSec, toSlot, toItem, m == null ? null : m.fromItem() == toItem ? m.fromEnch() : null, lines);
+            journal.line(inVault, (type == 1 ? "used up: " : "move: ") + what + (m == null && type != 1 ? "  (no move asked for)" : ""));
+            for (String l : lines) journal.line(inVault, l);
+        }
+        if (changed) changed();
+    }
+
+    /** Whether the object is a container of the vault you are in. */
+    public boolean isVaultObject(int objectId) {
+        if (inVault == null) return false;
+        synchronized (this) {
+            return chestSections.containsKey(objectId);
+        }
+    }
+
+    /**
+     * What a vault container shows: the items in the slots of its page (slot -> item) the game sent. A whole page
+     * that matches one stored page tells which page is shown; slots that differ from the page shown are written
+     * there (a change no answer covered). A whole page that matches no stored page is only journaled.
+     */
+    public void chestView(int objectId, Map<Integer, Integer> shown) {
+        if (shown.isEmpty()) return;
+        boolean changed = false;
+        synchronized (this) {
+            String sec = chestSections.get(objectId);
+            Place v = inVault == null ? null : state.places.get(inVault);
+            if (sec == null || v == null) return;
+            List<Slot> slots = v.sections.computeIfAbsent(sec, k -> new ArrayList<>());
+            int page = pages.getOrDefault(objectId, 0);
+            List<Integer> matching = new ArrayList<>();
+            for (int pg = 0; pg * PAGE < Math.max(slots.size(), PAGE); pg++) if (shows(slots, pg, shown)) matching.add(pg);
+            if (matching.contains(page)) return;   // as stored
+            if (shown.size() >= PAGE) {   // a whole page: which one is shown
+                if (matching.size() == 1) {
+                    pages.put(objectId, matching.get(0));
+                    return;
+                }
+                journal.line(inVault, sec + " shows a page that " + (matching.isEmpty() ? "matches no stored page"
+                        : "matches pages " + matching) + ": not written " + shown);
+                return;
+            }
+            List<String> lines = new ArrayList<>();
+            for (Map.Entry<Integer, Integer> e : shown.entrySet()) {
+                if (e.getKey() >= PAGE) continue;
+                changed |= set(v, sec, page * PAGE + e.getKey(), e.getValue(), null, lines);
+            }
+            for (String l : lines) journal.line(inVault, "seen in the vault, page " + page + ": " + l);
+        }
+        if (changed) changed();
+    }
+
+    /** Whether a stored page holds the items shown. */
+    private static boolean shows(List<Slot> slots, int page, Map<Integer, Integer> shown) {
+        for (Map.Entry<Integer, Integer> e : shown.entrySet()) {
+            int idx = page * PAGE + e.getKey();
+            int stored = idx < slots.size() ? slots.get(idx).item : -1;
+            if (stored != (e.getValue() < 1 ? -1 : e.getValue())) return false;
+        }
+        return true;
+    }
+
+    /** The enchantments of the item in a slot of your character or of the vault, if it holds that item. */
+    private List<Integer> enchantsAt(int playerId, int charId, int obj, int slot, int item) {
+        if (item < 1) return null;
+        List<Slot> from = null;
+        String sec = chestSections.get(obj);
+        if (sec != null) {
+            Place v = inVault == null ? null : state.places.get(inVault);
+            from = v == null ? null : v.sections.get(sec);
+        } else if (obj == playerId) {
+            Place me = state.places.get("char:" + charId);
+            from = me == null ? null : me.sections.get(SLOTS);
+        }
+        if (from == null || slot < 0 || slot >= from.size() || from.get(slot).item != item) return null;
+        return from.get(slot).enchantIds;
+    }
+
+    /**
+     * Writes what a vault slot holds now (its number counts from the start of the container). The enchantments
+     * given are used, else those stored for the same item. True if it changed.
+     */
+    private boolean set(Place v, String sec, int idx, int item, List<Integer> ench, List<String> lines) {
+        List<Slot> slots = v.sections.computeIfAbsent(sec, k -> new ArrayList<>());
+        if (idx < 0 || idx >= slots.size()) {
+            lines.add(sec + " " + idx + ": not in the stored vault (" + slots.size() + " slots)");
+            return false;
+        }
+        Slot old = slots.get(idx);
+        int now = item < 1 ? -1 : item;
+        Slot slot = new Slot(now, ench != null ? ench : old.item == now ? old.enchantIds : null);
+        if (slot.same(old)) return false;
+        slots.set(idx, slot);
+        note(lines, sec + " " + idx, old, slot);
+        return true;
+    }
+
+    /**
+     * A gift taken out of the gift chest: it closes the gap, so the gift is removed and those behind it move up.
+     * The gift is looked for at its slot, else a few slots around it (in case an earlier gap was missed).
+     */
+    private boolean takeGift(Place v, int idx, int item, List<String> lines) {
+        List<Slot> gifts = v.sections.get(GIFT_CHEST);
+        if (gifts == null) return false;
+        int at = -1;
+        for (int d = 0; d <= 5 && at < 0; d++) {
+            for (int i : new int[]{idx + d, idx - d}) {
+                if (i >= 0 && i < gifts.size() && gifts.get(i).item == item) {
+                    at = i;
+                    break;
+                }
+            }
+        }
+        if (at < 0) {
+            lines.add(GIFT_CHEST + " " + idx + ": the gift taken (" + items.name(item) + ") is not there: not written");
+            return false;
+        }
+        Slot old = gifts.remove(at);
+        note(lines, GIFT_CHEST + " " + at + (at != idx ? " (named " + idx + ")" : ""), old, new Slot());
+        return true;
+    }
+
+    private String side(String sec, int slot, int item) {
+        return (sec == null ? "you, slot " + slot : sec + ", slot " + slot) + " (" + (item < 1 ? "empty" : items.name(item)) + ")";
     }
 
     // ---- what you have ------------------------------------------------------------------------------------------

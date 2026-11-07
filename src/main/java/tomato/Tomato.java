@@ -264,6 +264,9 @@ public class Tomato {
             PacketType.VAULT_UPDATE,
             packCap::packetCapture
         );
+        // moves (e.g. into the vault) and the game's answer to them
+        Register.INSTANCE.register(PacketType.INVSWAP, packCap::packetCapture);
+        Register.INSTANCE.register(PacketType.INVRESULT, packCap::packetCapture);
         Register.INSTANCE.register(
             PacketType.QUEST_FETCH_RESPONSE,
             packCap::packetCapture

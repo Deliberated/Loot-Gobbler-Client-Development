@@ -148,14 +148,52 @@ public final class LootEvents {
      * What the game sent of the character you play: on entering a map (every stat) and in each tick (only the stats
      * that changed). Only the slots sent change what you have.
      */
-    public static void playerStatus(int charId, Entity player, packets.data.ObjectStatusData status) {
+    public static void playerStatus(int charId, Entity player, packets.data.ObjectStatusData status, boolean entering) {
         if (charId <= 0 || status == null || status.stats == null) return;
         try {
             StatData pack = player == null ? null : player.stat.get(StatType.BACKPACK_SLOTS_STAT);
             java.util.List<Holdings.Slot> before = Holdings.get().slots("char:" + charId, Holdings.SLOTS);
             int packSlots = pack != null ? pack.statValue : before != null ? Math.max(0, before.size() - 12) : 0;
-            Holdings.Live seen = liveSlots(status.stats, 12 + Math.max(0, Math.min(16, packSlots)));
+            Holdings.Live seen = liveSlots(status.stats, 12 + Math.max(0, Math.min(16, packSlots)), entering);
             if (seen != null) Holdings.get().live(charId, seen);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    /** A move you made between two slots (the swap packet you send): followed when it involves the vault. */
+    public static void invSwap(packets.outgoing.InvSwapPacket p, Entity player) {
+        if (p.slotFrom == null || p.slotTo == null) return;
+        try {
+            int playerId = player == null ? 0 : player.id, charId = player == null ? 0 : player.charId();
+            Holdings.get().swap(playerId, charId, p.slotFrom.objectId, p.slotFrom.slotId, p.slotFrom.objectType,
+                    p.slotTo.objectId, p.slotTo.slotId, p.slotTo.objectType);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    /** The game's answer to a move. */
+    public static void invResult(packets.incoming.InvResultPacket p) {
+        if (p.slotFrom == null || p.slotTo == null) return;
+        try {
+            Holdings.get().swapResult(p.result, p.resultType, p.slotFrom.objectId, p.slotFrom.slotId, p.slotFrom.objectType,
+                    p.slotTo.objectId, p.slotTo.slotId, p.slotTo.objectType);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    /** What any object's status carries: for the vault's containers, the items of the page they show. */
+    public static void objectStatus(int objectId, packets.data.ObjectStatusData status) {
+        if (status == null || status.stats == null || !Holdings.get().isVaultObject(objectId)) return;
+        try {
+            Map<Integer, Integer> shown = new java.util.TreeMap<>();
+            int inv0 = StatType.INVENTORY_0_STAT.get();
+            for (StatData sd : status.stats) {
+                if (sd.statTypeNum >= inv0 && sd.statTypeNum < inv0 + 12) shown.put(sd.statTypeNum - inv0, sd.statValue);
+            }
+            Holdings.get().chestView(objectId, shown);
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -177,10 +215,11 @@ public final class LootEvents {
 
     /**
      * The slots in one status of your character (n slots: equipment, inventory, then the packs; and the quick slots):
-     * UNKNOWN where the status does not carry that slot. Null if it carries no slot and no enchantments at all.
+     * UNKNOWN where the status does not carry that slot. Null if it carries no slot and no enchantments at all. On
+     * entering a map an empty quick slot counts as not sent: the game shows quick slots empty for a moment there.
      */
     @SuppressWarnings("unchecked")
-    static Holdings.Live liveSlots(StatData[] stats, int n) {
+    static Holdings.Live liveSlots(StatData[] stats, int n, boolean entering) {
         int[] items = new int[n];
         java.util.Arrays.fill(items, Holdings.Live.UNKNOWN);
         int[] quick = new int[QUICKSLOTS.length];
@@ -203,6 +242,7 @@ public final class LootEvents {
             }
             for (int k = 0; k < QUICKSLOTS.length; k++) {
                 if (t == QUICKSLOTS[k].get()) {
+                    if (sd.statValue < 1 && entering) continue;
                     quick[k] = sd.statValue < 1 ? -1 : sd.statValue;
                     anyQuick = true;
                 }

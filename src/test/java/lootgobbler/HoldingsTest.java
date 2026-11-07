@@ -181,7 +181,7 @@ class HoldingsTest {
                 stat(packets.data.enums.StatType.byOrdinal(packets.data.enums.StatType.INVENTORY_0_STAT.get() + 5), -1),
                 stat(packets.data.enums.StatType.BACKPACK_0_STAT, 1002),
                 stat(packets.data.enums.StatType.MP_STAT, 120)};
-        Holdings.Live l = LootEvents.liveSlots(stats, 20);
+        Holdings.Live l = LootEvents.liveSlots(stats, 20, false);
         assertEquals(1001, l.items()[0]);
         assertEquals(-1, l.items()[5]);
         assertEquals(1002, l.items()[12]);
@@ -191,14 +191,23 @@ class HoldingsTest {
     }
 
     @Test
+    void onEnteringAMapAnEmptyQuickSlotIsNotTaken() {
+        packets.data.StatData[] stats = {stat(LootEvents.QUICKSLOTS[0], -1), stat(LootEvents.QUICKSLOTS[1], 1004)};
+        Holdings.Live l = LootEvents.liveSlots(stats, 12, true);
+        assertEquals(U, l.quick()[0]);
+        assertEquals(1004, l.quick()[1]);
+        assertEquals(-1, LootEvents.liveSlots(stats, 12, false).quick()[0]);   // in a tick it is
+    }
+
+    @Test
     void aTickWithoutSlotsCarriesNothing() {
-        assertNull(LootEvents.liveSlots(new packets.data.StatData[]{stat(packets.data.enums.StatType.MP_STAT, 1)}, 12));
+        assertNull(LootEvents.liveSlots(new packets.data.StatData[]{stat(packets.data.enums.StatType.MP_STAT, 1)}, 12, false));
     }
 
     @Test
     void aTickCanCarryTheQuickSlotsAlone() {
         packets.data.StatData[] stats = {stat(LootEvents.QUICKSLOTS[1], 1004)};
-        Holdings.Live l = LootEvents.liveSlots(stats, 12);
+        Holdings.Live l = LootEvents.liveSlots(stats, 12, false);
         assertEquals(U, l.quick()[0]);
         assertEquals(1004, l.quick()[1]);
         h.live(1, live(slots(1001)));
@@ -296,6 +305,145 @@ class HoldingsTest {
         h.vaultPacket(q);
         h.vaultSeason(false, "test");
         assertNull(h.copies(1001).get(0).enchantIds());
+    }
+
+    // ---- moves in the vault -------------------------------------------------------------------------------------
+
+    private static final int ME = 50, CHEST = 60, GIFT = 61;
+
+    /** In the regular vault: a vault chest of 16 slots (two pages), saved, with character 1 beside it. */
+    private void inVault(int[] chest, int[] gift) {
+        VaultContentPacket p = vault(chest, gift, true);
+        p.vaultChestObjectId = CHEST;
+        p.giftChestObjectId = GIFT;
+        h.vaultPacket(p);
+        h.vaultSeason(false, "test");
+    }
+
+    private static int[] chest16(int... firstSlots) {
+        int[] c = new int[16];
+        java.util.Arrays.fill(c, -1);
+        System.arraycopy(firstSlots, 0, c, 0, firstSlots.length);
+        return c;
+    }
+
+    /** A move and the game's answer: the two slots trade their items. */
+    private void move(int fromObj, int fromSlot, int fromItem, int toObj, int toSlot, int toItem) {
+        h.swap(ME, 1, fromObj, fromSlot, fromItem, toObj, toSlot, toItem);
+        h.swapResult(true, 0, fromObj, fromSlot, toItem, toObj, toSlot, fromItem);
+    }
+
+    @Test
+    void puttingAnItemIntoTheVaultMovesItThere() {
+        h.live(1, live(slots(-1, -1, -1, -1, 1001), null, null, null, null, List.of(5, 6)));
+        inVault(chest16(), null);
+        move(ME, 4, 1001, CHEST, 11, -1);   // slot 11 counted from the start (the second page)
+        h.live(1, live(slots(-1, -1, -1, -1, -1)));   // the tick after: the slot is empty
+        assertEquals(1, h.count(1001));
+        Holdings.Held there = h.copies(1001).get(0);
+        assertEquals(Holdings.VAULT_CHEST, there.slot());
+        assertEquals(List.of(5, 6), there.enchantIds());   // carried over from the character's slot
+        assertEquals(1001, h.slots(Holdings.VAULT, Holdings.VAULT_CHEST).get(11).item);
+    }
+
+    @Test
+    void takingAnItemOutOfTheVaultMovesItOut() {
+        inVault(chest16(-1, -1, 1002), null);
+        move(CHEST, 2, 1002, ME, 6, -1);
+        h.live(1, live(slots(-1, -1, -1, -1, -1, -1, 1002)));
+        assertEquals(1, h.count(1002));
+        assertEquals("Inventory", h.copies(1002).get(0).slot());
+    }
+
+    @Test
+    void movingWithinTheVaultKeepsTheEnchantments() {
+        VaultContentPacket p = vault(chest16(1001), null, true);
+        p.vaultChestObjectId = CHEST;
+        p.vaultChestEnchants = ",,,,,,,,,,,,,,,";   // known: none
+        h.vaultPacket(p);
+        h.vaultSeason(false, "test");
+        move(CHEST, 0, 1001, CHEST, 9, -1);
+        assertEquals(-1, h.slots(Holdings.VAULT, Holdings.VAULT_CHEST).get(0).item);
+        assertEquals(List.of(), h.slots(Holdings.VAULT, Holdings.VAULT_CHEST).get(9).enchantIds);
+    }
+
+    @Test
+    void nothingChangesUntilTheGameAnswers() {
+        inVault(chest16(1001), null);
+        h.swap(ME, 1, CHEST, 0, 1001, ME, 4, -1);
+        assertEquals(1001, h.slots(Holdings.VAULT, Holdings.VAULT_CHEST).get(0).item);
+        h.swapResult(false, 0, CHEST, 0, 1001, ME, 4, -1);   // refused
+        assertEquals(1001, h.slots(Holdings.VAULT, Holdings.VAULT_CHEST).get(0).item);
+        assertTrue(h.journal.lines.stream().anyMatch(l -> l.contains("refused")));
+    }
+
+    @Test
+    void theAnswerIsWhatCountsEvenIfTheStoredVaultDiffered() {
+        inVault(chest16(1001), null);
+        move(CHEST, 0, 1009, ME, 4, -1);   // the vault held 1001 there: the game says it is empty now
+        assertEquals(-1, h.slots(Holdings.VAULT, Holdings.VAULT_CHEST).get(0).item);
+    }
+
+    @Test
+    void theContainerShowsAChangeNoAnswerCovered() {
+        inVault(chest16(1001), null);
+        h.chestView(CHEST, Map.of(0, -1));   // one slot of the page shown changed
+        assertEquals(0, h.count(1001));
+    }
+
+    @Test
+    void aWholePageTellsWhichPageIsShown() {
+        int[] c = chest16();
+        for (int i = 8; i < 16; i++) c[i] = 2000 + i;
+        inVault(c, null);
+        Map<Integer, Integer> page1 = new HashMap<>();
+        for (int i = 0; i < 8; i++) page1.put(i, c[8 + i]);
+        h.chestView(CHEST, page1);   // you turned to page 1
+        h.chestView(CHEST, Map.of(3, -1));   // slot 3 of that page emptied
+        assertEquals(-1, h.slots(Holdings.VAULT, Holdings.VAULT_CHEST).get(11).item);
+    }
+
+    @Test
+    void aWholePageMatchingNoneIsNotWritten() {
+        inVault(chest16(1001), null);
+        Map<Integer, Integer> strange = new HashMap<>();
+        for (int i = 0; i < 8; i++) strange.put(i, 3000 + i);
+        h.chestView(CHEST, strange);
+        assertEquals(1, h.count(1001));
+        assertEquals(0, h.count(3000));
+    }
+
+    @Test
+    void movesAreOnlyFollowedInASavedVaultOfThisVisit() {
+        h.live(1, live(slots(-1, -1, -1, -1, 1001)));
+        VaultContentPacket p = vault(chest16(), null, true);
+        p.vaultChestObjectId = CHEST;
+        h.vaultPacket(p);   // the season is not known yet: not saved
+        move(ME, 4, 1001, CHEST, 0, -1);
+        assertTrue(h.journal.lines.stream().anyMatch(l -> l.contains("is not saved")));
+        h.vaultSeason(false, "test");
+        h.entered(false);   // left the vault
+        move(ME, 4, 1001, CHEST, 0, -1);
+        assertEquals(-1, h.slots(Holdings.VAULT, Holdings.VAULT_CHEST).get(0).item);
+        assertFalse(h.isVaultObject(CHEST));
+    }
+
+    @Test
+    void takingAGiftOutClosesTheGap() {
+        inVault(chest16(), new int[]{1003, 1004, 1005, 1006});
+        move(GIFT, 1, 1004, ME, 5, -1);
+        List<Holdings.Slot> gifts = h.slots(Holdings.VAULT, Holdings.GIFT_CHEST);
+        assertEquals(3, gifts.size());
+        assertEquals(1005, gifts.get(1).item);   // moved up
+        move(GIFT, 2, 1006, ME, 6, -1);   // the slot as the game counts it now
+        assertEquals(List.of(1003, 1005), h.slots(Holdings.VAULT, Holdings.GIFT_CHEST).stream().map(x -> x.item).toList());
+    }
+
+    @Test
+    void aGiftIsFoundNearItsSlotIfAGapWasMissed() {
+        inVault(chest16(), new int[]{1003, 1004, 1005, 1006});
+        move(GIFT, 2, 1006, ME, 5, -1);   // named slot 2, but it is in slot 3 here
+        assertEquals(List.of(1003, 1004, 1005), h.slots(Holdings.VAULT, Holdings.GIFT_CHEST).stream().map(x -> x.item).toList());
     }
 
     // ---- gaps and seeding ---------------------------------------------------------------------------------------

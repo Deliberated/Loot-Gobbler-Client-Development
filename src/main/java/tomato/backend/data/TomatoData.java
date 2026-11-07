@@ -257,6 +257,7 @@ public class TomatoData {
         );
         int idType = object.objectType;
         entity.entityUpdate(idType, object.status, timePc);
+        lootgobbler.LootEvents.objectStatus(id, object.status);   // a vault container's page
 
         if (newObject) {
             moonLightFlameCounter(idType);
@@ -277,7 +278,7 @@ public class TomatoData {
             if (id == worldPlayerId) {
                 player = entity;
                 entity.setUser(charId);
-                lootgobbler.LootEvents.playerStatus(charId, entity, object.status);   // every slot, on entering
+                lootgobbler.LootEvents.playerStatus(charId, entity, object.status, true);   // every slot, on entering
                 MyInfoGUI.updatePlayer(player);
             } else {
                 entity.isPlayer();
@@ -450,7 +451,8 @@ public class TomatoData {
                 new Entity(this, idd, timePc)
             );
             entity.updateStats(p.status[i], timePc);
-            if (id == worldPlayerId) lootgobbler.LootEvents.playerStatus(charId, entity, p.status[i]);   // slots that changed
+            if (id == worldPlayerId) lootgobbler.LootEvents.playerStatus(charId, entity, p.status[i], false);   // slots that changed
+            else lootgobbler.LootEvents.objectStatus(id, p.status[i]);   // a vault container's page
             lootgobbler.MoonlightLog.get().changed(this, p.status[i]);
         }
         SecurityAbilityUseCheck.decreaseDecoyCounter();
