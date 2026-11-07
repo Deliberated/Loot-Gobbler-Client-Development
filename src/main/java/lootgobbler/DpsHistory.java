@@ -56,6 +56,7 @@ public final class DpsHistory implements Syncable {
         public int maxHp;
         public int endHp = -1;   // its life when the run was saved (about 0 if it died); -1 = not kept (older runs)
         public long fightMs;
+        public long fightStart;   // its first hit (epoch ms); 0 in runs saved before it was kept
         public List<PlayerRow> players = new ArrayList<>();
 
         public long totalDamage() {
@@ -310,6 +311,7 @@ public final class DpsHistory implements Syncable {
                 b.maxHp = e.maxHp();
                 b.endHp = e.hp();
                 b.fightMs = Math.max(0, e.getFightDuration());
+                b.fightStart = Math.max(0, e.getFirstDamageTaken());
                 for (Damage d : e.getPlayerDamageList()) {
                     if (d == null || d.owner == null || d.damage <= 0) continue;
                     PlayerRow p = new PlayerRow();

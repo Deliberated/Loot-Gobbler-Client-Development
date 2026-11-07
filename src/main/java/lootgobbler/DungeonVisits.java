@@ -54,6 +54,9 @@ public final class DungeonVisits implements Syncable {
         // Moonlight Village: how long its lantern was there, and you within 3.5 / 1.75 tiles of it (MoonlightLog)
         public long lanternActiveMs, lanternRangeMs, lanternNearMs;
         public int[] amuletSaves = new int[0];   // when your amulet saved you, ms after entering (AmuletSaves)
+        // the consumables you used from a quick slot: item type, and when (ms after entering)
+        public int[] quickItem = new int[0], quickTime = new int[0];
+        public int[] moved = new int[0];   // how far you walked, in tenths of a tile, per second after entering
         public List<MvPhase> mvPhases = new ArrayList<>();   // Moonlight Village: its boss phases in order (MoonlightLog)
         // whether it was completed can be told (visits from before this was kept cannot), and the game's "Victory"
         public boolean judged, victory;
@@ -156,6 +159,8 @@ public final class DungeonVisits implements Syncable {
                 v.start = now;
                 v.judged = true;
                 current = v;
+                lastX = Float.NaN;   // the way walked starts anew
+                unsaved = 0;
                 AppLog.log("game", "Dungeon visit started: " + map.name);
             }
         }
@@ -295,6 +300,74 @@ public final class DungeonVisits implements Syncable {
         }
         if (changed) for (Runnable r : hitListeners) r.run();
     }
+
+    /**
+     * You used an item (the use packet, on the packet thread): one in a quick slot, used up when used, counts for the
+     * visit in progress. A quick slot's item is told by the slot stats; the same item used from an inventory slot
+     * (where the packet's slot holds it) does not count, nor does quick-slot gear used again and again (Refinery...).
+     */
+    public void itemUsed(tomato.backend.data.TomatoData data, packets.outgoing.UseItemPacket u) {
+        tomato.backend.data.Entity player = data == null ? null : data.player;
+        if (current == null || player == null || u == null || u.slotObject == null || u.slotObject.objectId != player.id) return;
+        int type = u.slotObject.objectType, slot = u.slotObject.slotId;
+        boolean quick = false;
+        for (packets.data.enums.StatType q : LootEvents.QUICKSLOTS) {
+            packets.data.StatData sd = player.stat.get(q);
+            if (sd != null && sd.statValue == type) quick = true;
+        }
+        if (!quick || type <= 0) return;
+        if (slot >= 0 && slot < 28) {
+            int stat = slot >= 12 ? packets.data.enums.StatType.BACKPACK_0_STAT.get() + (slot - 12)
+                    : packets.data.enums.StatType.INVENTORY_0_STAT.get() + slot;
+            packets.data.StatData sd = player.stat.get(stat);
+            if (sd != null && sd.statValue == type) return;   // the inventory's copy
+        }
+        ItemDb.Item item = ItemDb.get().item(type);
+        if (item != null && item.quickslotOnly) return;   // gear, not used up
+        synchronized (this) {
+            Visit v = current;
+            if (v == null) return;
+            int n = v.quickItem == null ? 0 : v.quickItem.length;
+            v.quickItem = java.util.Arrays.copyOf(v.quickItem == null ? new int[0] : v.quickItem, n + 1);
+            v.quickTime = java.util.Arrays.copyOf(v.quickTime == null ? new int[0] : v.quickTime, n + 1);
+            v.quickItem[n] = type;
+            v.quickTime[n] = (int) (System.currentTimeMillis() - v.start);
+            AppLog.log("game", "Quick slot used in " + v.dungeon + ": " + (item == null ? type : item.name) + " (slot " + slot + ")");
+        }
+    }
+
+    private float lastX = Float.NaN, lastY;   // your last position seen in this visit
+    private double unsaved;                    // tiles walked not yet added to the visit (less than a tenth)
+
+    /**
+     * Your positions from a move packet (packet thread): the way walked between them is added to the visit in
+     * progress, per second. A jump of more than MAX_STEP tiles is a teleport, not walked.
+     */
+    public void moved(packets.data.WorldPosData[] positions) {
+        if (positions == null) return;
+        synchronized (this) {
+            Visit v = current;
+            if (v == null) return;
+            for (packets.data.WorldPosData p : positions) {
+                if (p == null) continue;
+                if (!Float.isNaN(lastX)) {
+                    double d = Math.hypot(p.x - lastX, p.y - lastY);
+                    if (d <= MAX_STEP) unsaved += d;
+                }
+                lastX = p.x;
+                lastY = p.y;
+            }
+            int tenths = (int) (unsaved * 10);
+            if (tenths <= 0) return;
+            unsaved -= tenths / 10.0;
+            int s = (int) Math.max(0, (System.currentTimeMillis() - v.start) / 1000);
+            if (v.moved == null) v.moved = new int[0];
+            if (s >= v.moved.length) v.moved = java.util.Arrays.copyOf(v.moved, s + 1);
+            v.moved[s] += tenths;
+        }
+    }
+
+    private static final double MAX_STEP = 2.5;
 
     /** Runs (on the packet thread) when the visit in progress has new hits. */
     public void onHits(Runnable listener) {
@@ -520,7 +593,8 @@ public final class DungeonVisits implements Syncable {
 
     private static int detail(Visit v) {
         return v.hits() + (v.dealt == null ? 0 : v.dealt.length) + (v.exalts == null ? 0 : v.exalts.size())
-                + (v.amuletSaves == null ? 0 : v.amuletSaves.length) + (v.runStart != 0 ? 1 : 0);
+                + (v.amuletSaves == null ? 0 : v.amuletSaves.length) + (v.runStart != 0 ? 1 : 0)
+                + (v.quickItem == null ? 0 : v.quickItem.length) + (v.moved == null ? 0 : v.moved.length);
     }
 
     private void fire() {

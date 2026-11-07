@@ -246,13 +246,13 @@ public class DpsLoggerView extends JPanel {
                 + "|" + (run == null ? 0 : run.bosses.size()) + "|" + bosses + "|" + Guildmates.get().version();
     }
 
-    // the players' colors in the guild graph: you first, then the guildmates in turn
+    // the players' colors (shown when their look is unknown): you first, then the guildmates in turn
     private static final Color[] GUILD_COLORS = {new Color(0xE5B23A), new Color(0x5FA343), new Color(0x4C8FE0),
             new Color(0xB36BE0), new Color(0xE0679C), new Color(0x3FC4D6), new Color(0xE88A3A), new Color(0xC0503C)};
 
     /**
-     * The damage you and the guildmates who use Loot Gobbler took in this dungeon, from their synced visits: one
-     * graph, stacked per player, and below it who took how much.
+     * You and the guildmates who use Loot Gobbler in this dungeon, from their synced visits: four facts and a podium
+     * (see facts).
      */
     private static JComponent guildSection(Visit v, Run run, boolean current) {
         JPanel out = column();
@@ -280,11 +280,13 @@ public class DpsLoggerView extends JPanel {
         List<GuildDamageGraph.Series> series = new ArrayList<>();
         List<PlayerRow> who = new ArrayList<>();
         List<Integer> maxHp = new ArrayList<>();
+        List<int[]> quick = new ArrayList<>();
         String myName = lootgobbler.CharacterStore.get().playerName();
         series.add(new GuildDamageGraph.Series(myName == null ? "You" : myName, GUILD_COLORS[0], myHits(v),
                 v.hitDamage == null ? new int[0] : v.hitDamage));
         who.add(myRow(v, run));
         maxHp.add(v.maxHp);
+        quick.add(v.quickItem == null ? new int[0] : v.quickItem);
         for (Map.Entry<String, List<lootgobbler.GobblerServer.RunLook>> e : new java.util.TreeMap<>(looks).entrySet()) {
             lootgobbler.GobblerServer.RunLook visit = e.getValue().stream().filter(l -> "visit".equals(l.source)).findFirst().orElse(null);
             if (visit == null) continue;
@@ -294,6 +296,7 @@ public class DpsLoggerView extends JPanel {
             if (p == null) p = rowOf(visit, e.getValue());
             who.add(p);
             maxHp.add(visit.maxHp);
+            quick.add(visit.quickUsed == null ? new int[0] : visit.quickUsed);
         }
         // guildmates who fought with you but whose client has not synced this visit yet
         List<String> awaited = Guildmates.get().awaited(v);
@@ -303,46 +306,173 @@ public class DpsLoggerView extends JPanel {
             out.add(muted(waiting != null ? waiting : "No guildmates with Loot Gobbler were in this dungeon."));
             return out;
         }
-        long together = series.stream().mapToLong(GuildDamageGraph.Series::total).sum();
-        JLabel sum = muted(String.format(Locale.ROOT, "Damage taken together: %,d  \u00b7  %d players with Loot Gobbler",
-                together, series.size()));
-        sum.setAlignmentX(LEFT_ALIGNMENT);
-        out.add(sum);
         if (waiting != null) {
             JLabel w = muted(waiting);
             w.setAlignmentX(LEFT_ALIGNMENT);
             out.add(w);
+            out.add(Box.createVerticalStrut(6));
         }
-        out.add(Box.createVerticalStrut(6));
-        GuildDamageGraph graph = new GuildDamageGraph(series, v.durationMs);
-        graph.setAlignmentX(LEFT_ALIGNMENT);
-        out.add(graph);
-        out.add(Box.createVerticalStrut(8));
-        // who took how much, most first
+        facts(out, series, who, maxHp, quick, v.durationMs);
+        return out;
+    }
+
+    private static final int FACT_LOOK = 36, PODIUM_FIRST = 56, PODIUM_LOOK = 48;
+
+    /**
+     * You and the guildmates ranked four ways, worst first, each as their character and the value: Critical Hits (the
+     * damage graph's 2 s slices that took 30% of their life or 300), Most Hurt (the most damage taken within one
+     * second), Zero Hit? (how often they were hit for the time in the dungeon against the server's baseline: hit% =
+     * HPM / (HPM + baseline HPM) x 100) and the quick slot items they used up. Below, a podium of who did best over
+     * all four: each player's average place in them (1 = worst), the highest average winning. All from what the
+     * clients synced.
+     */
+    private static void facts(JPanel out, List<GuildDamageGraph.Series> series, List<PlayerRow> who, List<Integer> maxHp,
+                              List<int[]> quick, long durationMs) {
+        int n = series.size(), slice = DamageGraph.WINDOWS_MS[0];
+        double[] critical = new double[n], hurt = new double[n], hitPct = new double[n], used = new double[n];
+        double baseline = Guildmates.get().settings().baselineHpm, minutes = Math.max(1000, durationMs) / 60_000.0;
+        for (int i = 0; i < n; i++) {
+            long[] at = series.get(i).at();
+            int[] dmg = series.get(i).damage();
+            List<long[]> hits = new ArrayList<>();   // {time, damage}, in order
+            for (int k = 0; k < Math.min(at.length, dmg.length); k++) hits.add(new long[]{at[k], dmg[k]});
+            hits.sort((x, y) -> Long.compare(x[0], y[0]));
+            int threshold = maxHp.get(i) > 0 ? (int) Math.min(DamageGraph.BIG_DAMAGE, Math.round(maxHp.get(i) * DamageGraph.BIG_SHARE))
+                    : DamageGraph.BIG_DAMAGE;
+            Map<Long, Long> slices = new HashMap<>();
+            for (long[] h : hits) slices.merge(Math.floorDiv(h[0], slice), h[1], Long::sum);
+            for (long d : slices.values()) if (d >= threshold) critical[i]++;
+            long sum = 0;   // the most taken within one second: a window sliding over the hits
+            for (int a = 0, b = 0; b < hits.size(); b++) {
+                sum += hits.get(b)[1];
+                while (hits.get(b)[0] - hits.get(a)[0] >= 1000) sum -= hits.get(a++)[1];
+                hurt[i] = Math.max(hurt[i], sum);
+            }
+            double hpm = hits.size() / minutes;
+            hitPct[i] = hpm <= 0 ? 0 : 100 * hpm / (hpm + baseline);
+            used[i] = quick.get(i).length;
+        }
+        JPanel grid = new JPanel(new WrapLayout(36, 14)) {   // side by side, wrapping only when the column is narrow
+            @Override
+            public Dimension getMaximumSize() {
+                return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+            }
+        };
+        grid.addComponentListener(new java.awt.event.ComponentAdapter() {
+            private int height = -1;
+
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent e) {   // a new width may wrap differently
+                int h = grid.getPreferredSize().height;
+                if (h != height) {
+                    height = h;
+                    grid.revalidate();
+                }
+            }
+        });
+        grid.setOpaque(false);
+        grid.setAlignmentX(LEFT_ALIGNMENT);
+        grid.add(fact("Critical Hits", series, who, critical, i -> numberLabel(String.valueOf((int) critical[i]))));
+        grid.add(fact("Most Hurt", series, who, hurt, i -> numberLabel(String.format(Locale.ROOT, "%,d", (long) hurt[i]))));
+        grid.add(fact("Zero Hit?", series, who, hitPct, i -> numberLabel(String.format(Locale.ROOT, "%.0f%%", hitPct[i]))));
+        grid.add(fact("Quickslots Used", series, who, used, i -> quickItems(quick.get(i))));
+        out.add(grid);
+
+        // the podium: the average place over the four, the highest (the least often worst) first
+        double[] average = new double[n];
+        for (double[] values : List.of(critical, hurt, hitPct, used)) {
+            for (int i = 0; i < n; i++) average[i] += place(values, i) / 4.0;
+        }
+        List<Integer> best = new ArrayList<>();
+        for (int i = 0; i < n; i++) best.add(i);
+        best.sort((a, b) -> Double.compare(average[b], average[a]));
+        List<Podium.Place> places = new ArrayList<>();
+        for (int k = 0; k < Math.min(3, n); k++) {
+            int i = best.get(k);
+            places.add(new Podium.Place(series.get(i).name(), look(series.get(i), who.get(i), k == 0 ? PODIUM_FIRST : PODIUM_LOOK),
+                    String.format(Locale.ROOT, "%s: average place %.2f of %d (1 = worst)", series.get(i).name(), average[i], n)));
+        }
+        out.add(Box.createVerticalStrut(20));
+        Podium podium = new Podium(places);
+        podium.setAlignmentX(LEFT_ALIGNMENT);
+        out.add(podium);
+    }
+
+    /** The player's place in one fact, 1 for the highest value (the worst); equal values share a place. */
+    private static int place(double[] values, int i) {
+        int place = 1;
+        for (double v : values) if (v > values[i]) place++;
+        return place;
+    }
+
+    private static JComponent numberLabel(String text) {
+        JLabel v = new JLabel(text);
+        v.setFont(v.getFont().deriveFont(Font.BOLD, v.getFont().getSize2D() + 3f));
+        return v;
+    }
+
+    /** The items used from a quick slot, each as its icon with how often (its name on hover); "-" for none. */
+    private static JComponent quickItems(int[] used) {
+        JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        row.setOpaque(false);
+        Map<Integer, Integer> items = new java.util.LinkedHashMap<>();
+        for (int type : used) items.merge(type, 1, Integer::sum);
+        if (items.isEmpty()) row.add(numberLabel("-"));
+        items.entrySet().stream().sorted((x, y) -> y.getValue() - x.getValue()).forEach(en -> {
+            lootgobbler.ItemDb.Item item = lootgobbler.ItemDb.get().item(en.getKey());
+            JLabel l = new JLabel("\u00d7" + en.getValue(), itemIcon(en.getKey()), SwingConstants.LEFT);
+            l.setFont(l.getFont().deriveFont(Font.BOLD));
+            l.setToolTipText(item == null ? "Item " + en.getKey() : item.name);
+            row.add(l);
+        });
+        return row;
+    }
+
+    /** The players' indexes, the highest value (the worst) first; equal ones in the order they came. */
+    private static List<Integer> worstFirst(double[] values) {
         List<Integer> order = new ArrayList<>();
-        for (int i = 0; i < series.size(); i++) order.add(i);
-        order.sort((a, b) -> Long.compare(series.get(b).total(), series.get(a).total()));
-        for (int i : order) {
-            GuildDamageGraph.Series se = series.get(i);
-            int biggest = 0;
-            for (int d : se.damage()) biggest = Math.max(biggest, d);
-            JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
+        for (int i = 0; i < values.length; i++) order.add(i);
+        order.sort((a, b) -> Double.compare(values[b], values[a]));
+        return order;
+    }
+
+    /** One fact: its title, then a row per player, worst first: their character and what value shows. */
+    private static JComponent fact(String title, List<GuildDamageGraph.Series> series, List<PlayerRow> who, double[] values,
+                                   java.util.function.IntFunction<JComponent> value) {
+        JPanel c = column();
+        JLabel t = new JLabel(title);
+        t.setFont(t.getFont().deriveFont(Font.BOLD, t.getFont().getSize2D() + 3f));
+        t.setForeground(Palette.GOLD);
+        t.setAlignmentX(LEFT_ALIGNMENT);
+        c.add(t);
+        c.add(Box.createVerticalStrut(4));
+        for (int i : worstFirst(values)) {
+            JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 1));
             row.setOpaque(false);
             row.setAlignmentX(LEFT_ALIGNMENT);
-            row.add(new JLabel(new Section.Square(se.color(), 10)));
-            PlayerRow p = who.get(i);
-            if (p != null) row.add(new JLabel(Guildmates.get().look(p, 24)));
-            JLabel name = new JLabel(se.name());
-            if (i == 0) name.setForeground(Palette.GOLD);
-            row.add(name);
-            String life = maxHp.get(i) > 0 && biggest > 0
-                    ? String.format(Locale.ROOT, " (%d%% of life)", Math.round(100.0 * biggest / maxHp.get(i))) : "";
-            row.add(muted(String.format(Locale.ROOT, "%,d taken in %d hits  \u00b7  biggest %,d%s",
-                    se.total(), se.damage().length, biggest, life)));
+            row.setToolTipText(series.get(i).name());
+            JLabel l = new JLabel(look(series.get(i), who.get(i), FACT_LOOK));
+            l.setToolTipText(series.get(i).name());
+            row.add(l);
+            row.add(value.apply(i));
             row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
-            out.add(row);
+            c.add(row);
         }
-        return out;
+        return c;
+    }
+
+    /** The player's character, or a square in their color if their look is unknown. */
+    private static Icon look(GuildDamageGraph.Series se, PlayerRow p, int size) {
+        Icon look = p == null ? null : Guildmates.get().look(p, size);
+        return look != null ? look : new Section.Square(se.color(), size);
+    }
+
+    private static Icon itemIcon(int type) {
+        try {
+            return assets.ImageBuffer.getOutlinedIcon(type, 24);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /** Your hits, as ms after entering (as the guildmates' come from the server). */
@@ -811,10 +941,19 @@ public class DpsLoggerView extends JPanel {
         return c;
     }
 
-    /** Clicks anywhere on c (also on its labels, which would otherwise take the click) run action. */
+    /**
+     * Pressing the left button anywhere on c (also on its labels, which would otherwise take the click) runs action.
+     * On press, not on a full click: the list is rebuilt whenever its data changes (every second during a boss
+     * fight, on each answer from the server), and a rebuild between press and release would lose a click.
+     */
     private static void clickable(JComponent c, Runnable action) {
         c.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        Clicks.onClick(c, action);
+        c.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mousePressed(java.awt.event.MouseEvent e) {
+                if (SwingUtilities.isLeftMouseButton(e)) action.run();
+            }
+        });
         for (Component child : c.getComponents()) if (child instanceof JComponent j) clickable(j, action);
     }
 }

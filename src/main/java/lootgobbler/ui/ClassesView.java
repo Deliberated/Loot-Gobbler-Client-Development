@@ -115,6 +115,37 @@ public class ClassesView extends JPanel {
         classBody.add(left(head));
         classBody.add(Box.createVerticalStrut(8));
 
+        // each stat's progress on the way to 75, with its five exaltations marked where they are reached
+        classBody.add(left(caption("Exaltations")));
+        int[] progress = ExaltStore.get().progress(cls.getId());
+        if (progress == null) {
+            JLabel none = new JLabel("Not known yet: loads when you log in with the sniffer running.");
+            none.setForeground(Palette.MUTED);
+            classBody.add(left(none));
+        } else {
+            int end = ExaltStore.THRESHOLDS[ExaltStore.THRESHOLDS.length - 1];
+            long dayAgo = System.currentTimeMillis() - 24 * 3600_000L;
+            for (int s = 0; s < 8; s++) {
+                int p = progress[STAT_INDEX[s]];
+                int before = ExaltStore.get().progressAt(cls.getId(), STAT_INDEX[s], dayAgo);
+                JPanel row = new JPanel(new BorderLayout(6, 2));
+                row.setOpaque(false);
+                row.setAlignmentX(LEFT_ALIGNMENT);
+                JLabel name = new JLabel(STAT_NAMES[s], potion(s, 18), SwingConstants.LEFT);
+                name.setIconTextGap(8);
+                row.add(name, BorderLayout.CENTER);
+                row.add(new JLabel(Math.min(p, end) + " / " + end), BorderLayout.EAST);
+                StageBar bar = new StageBar(before, p);
+                bar.setToolTipText(stageTip(before, p));
+                row.add(bar, BorderLayout.SOUTH);
+                row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
+                classBody.add(row);
+                classBody.add(Box.createVerticalStrut(5));
+            }
+            classBody.add(left(new StageScale()));
+        }
+        classBody.add(Box.createVerticalStrut(12));
+
         List<CharacterStore.Char> all = CharacterStore.get().all().stream().filter(c -> c.classType == cls.getId()).toList();
         List<CharacterStore.Char> dead = all.stream().filter(c -> !c.alive).toList();
         classBody.add(left(caption("Deaths")));
@@ -157,6 +188,81 @@ public class ClassesView extends JPanel {
         classBody.revalidate();
         classBody.repaint();
         revalidate();
+    }
+
+    private static String stageTip(int before, int progress) {
+        int level = ExaltStore.level(progress);
+        String day = progress > before ? "<br><font color='#4C8FE0'>+" + (progress - before) + " in the last 24 hours</font>" : "";
+        if (level >= ExaltStore.MAX_PER_STAT) return "<html>All " + ExaltStore.MAX_PER_STAT + " exaltations" + day + "</html>";
+        int next = ExaltStore.THRESHOLDS[level];
+        return "<html>" + level + " of " + ExaltStore.MAX_PER_STAT + " exaltations  ·  " + (next - progress) + " to the next (at "
+                + next + ")" + day + "</html>";
+    }
+
+    // the stage bars: the track, its fill and the outline of the diamonds; the fill is the pips' gold, the part
+    // made in the last 24 hours blue
+    private static final Color STAGE_TRACK = new Color(0x3A2E20), STAGE_EDGE = new Color(0x1A140D),
+            STAGE_RECENT = new Color(0x4C8FE0);
+    private static final int STAGE_INSET = 6;   // room for the half diamonds at 0 and 75
+
+    /**
+     * A stat's progress from 0 to 75 to scale, with a diamond at each exaltation that lights up once reached; what
+     * came after before (its progress a day ago) is blue.
+     */
+    private static class StageBar extends JComponent {
+        private final int before, progress;
+
+        StageBar(int before, int progress) {
+            this.before = Math.min(before, progress);
+            this.progress = progress;
+            setPreferredSize(new Dimension(100, 16));
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            int[] t = ExaltStore.THRESHOLDS;
+            int end = t[t.length - 1], w = getWidth() - 2 * STAGE_INSET, h = 6, y = (getHeight() - h) / 2, cy = y + h / 2;
+            g2.setColor(STAGE_TRACK);
+            g2.fillRect(STAGE_INSET, y, w, h);
+            int old = (int) Math.round(w * Math.min(before, end) / (double) end);
+            g2.setColor(PIP_ON);
+            g2.fillRect(STAGE_INSET, y, old, h);
+            g2.setColor(STAGE_RECENT);
+            g2.fillRect(STAGE_INSET + old, y, (int) Math.round(w * Math.min(progress, end) / (double) end) - old, h);
+            for (int at : t) {
+                int x = STAGE_INSET + (int) Math.round(w * at / (double) end);
+                Polygon d = new Polygon(new int[]{x, x + 6, x, x - 6}, new int[]{cy - 7, cy, cy + 7, cy}, 4);
+                g2.setColor(before >= at ? PIP_ON : progress >= at ? STAGE_RECENT : STAGE_TRACK);
+                g2.fill(d);
+                g2.setColor(STAGE_EDGE);
+                g2.draw(d);
+            }
+            g2.dispose();
+        }
+    }
+
+    /** The scale under the stage bars: 0 and where each exaltation is reached. */
+    private static class StageScale extends JComponent {
+        StageScale() {
+            setPreferredSize(new Dimension(100, 16));
+            setMaximumSize(new Dimension(Integer.MAX_VALUE, 16));
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            int[] t = ExaltStore.THRESHOLDS;
+            int end = t[t.length - 1], w = getWidth() - 2 * STAGE_INSET;
+            g.setColor(Palette.MUTED);
+            FontMetrics fm = g.getFontMetrics();
+            for (int i = -1; i < t.length; i++) {
+                int at = i < 0 ? 0 : t[i];
+                String s = String.valueOf(at);
+                int x = STAGE_INSET + (int) Math.round(w * at / (double) end) - fm.stringWidth(s) / 2;
+                g.drawString(s, Math.max(0, Math.min(getWidth() - fm.stringWidth(s), x)), fm.getAscent());
+            }
+        }
     }
 
     private static <T extends JComponent> T left(T c) {

@@ -132,6 +132,11 @@ public final class GobblerServer {
         public double feedPower = 1, difficulty = 1, rarity = 1;
     }
 
+    /** What the guild views compute with: baselineHpm is the hits per minute a run counts as average. */
+    public static final class GuildSettings {
+        public double baselineHpm = 50;
+    }
+
     public static final class Leaderboard {
         public String guild = "";
         public List<Member> members = List.of();
@@ -564,6 +569,16 @@ public final class GobblerServer {
         return call("PUT", "/admin/scoring", w, ScoreWeights.class);
     }
 
+    /** The guild settings. */
+    public CompletableFuture<GuildSettings> guildSettings() {
+        return call("GET", "/guild/settings", null, GuildSettings.class);
+    }
+
+    /** Admins only: changes the guild settings (baselineHpm 1 to 1000); returns them as stored. */
+    public CompletableFuture<GuildSettings> putGuildSettings(GuildSettings g) {
+        return call("PUT", "/admin/guild/settings", g, GuildSettings.class);
+    }
+
     /** Your guild's loot caravan; range is "week", "month" or "all". */
     public CompletableFuture<Caravan> caravan(String range) {
         return call("GET", "/guild/caravan?range=" + range, null, Caravan.class);
@@ -591,6 +606,10 @@ public final class GobblerServer {
         public int maxHp;
         public long[] hitAt = new long[0];   // the hits they took in the run, ms after its start (asked "from")
         public int[] hitDamage = new int[0];
+        public long dealt;   // damage they dealt in the run (0 from older clients)
+        public int[] quickUsed = new int[0];   // items they used from a quick slot (none from older clients)
+        public long moveAt;   // when their moved[0] second starts, ms after the asked "from"
+        public int[] moved = new int[0];   // how far they walked, tenths of a tile per second (none from older clients)
     }
 
     /** Looks of guildmates who may have been in this dungeon between from and to (epoch ms). */

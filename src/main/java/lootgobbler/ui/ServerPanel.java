@@ -54,6 +54,10 @@ public class ServerPanel extends JPanel {
     private final JLabel scoringFeedback = feedback();
     private final JSpinner feedWeight = weightSpinner(), difficultyWeight = weightSpinner(), rarityWeight = weightSpinner();
     private final Section scoring;
+    private final JPanel guildBody = body();
+    private final JLabel guildFeedback = feedback();
+    private final JSpinner baselineHpm = new JSpinner(new SpinnerNumberModel(50.0, 1.0, 1000.0, 1.0));
+    private final Section guild;
     private final JPanel testResults = column();   // checklist from the last "Test connection"
 
     // Kept across rebuilds, so typed text survives a status change.
@@ -88,6 +92,10 @@ public class ServerPanel extends JPanel {
         buildScoring();
         showWeights();
         lootgobbler.ItemScore.get().onChange(() -> SwingUtilities.invokeLater(this::showWeights));
+        guild = new Section("Guild", Palette.GREEN, guildBody);
+        buildGuild();
+        showGuildSettings();
+        Guildmates.get().onChange(this::showGuildSettings);
 
         JPanel sections = new JPanel();
         sections.setLayout(new BoxLayout(sections, BoxLayout.Y_AXIS));
@@ -105,6 +113,8 @@ public class ServerPanel extends JPanel {
         sections.add(pool);
         sections.add(Box.createVerticalStrut(8));
         sections.add(scoring);
+        sections.add(Box.createVerticalStrut(8));
+        sections.add(guild);
 
         JPanel holder = new JPanel(new BorderLayout());   // keeps sections at their natural height
         holder.add(sections, BorderLayout.NORTH);
@@ -131,12 +141,14 @@ public class ServerPanel extends JPanel {
             lastIssued = null;
             if (mod) refreshModeration();
             if (mod && u.atLeastAdmin()) lootgobbler.ItemScore.get().reload();
+            if (mod && u.atLeastAdmin()) Guildmates.get().reloadSettings();
         }
         sync.setVisible(u != null);
         moderation.setVisible(mod);
         tokens.setVisible(mod && u.atLeastAdmin());
         pool.setVisible(mod && u.atLeastAdmin());
         scoring.setVisible(mod && u.atLeastAdmin());
+        guild.setVisible(mod && u.atLeastAdmin());
 
         buildConnection();
         buildAccount();
@@ -600,6 +612,10 @@ public class ServerPanel extends JPanel {
     }
 
     private void saveScoring() {
+        if (!commit(feedWeight, difficultyWeight, rarityWeight)) {
+            scoringFeedback.setText("Each weight must be a number from 0 to 1.");
+            return;
+        }
         GobblerServer.ScoreWeights w = new GobblerServer.ScoreWeights();
         w.feedPower = ((Number) feedWeight.getValue()).doubleValue();
         w.difficulty = ((Number) difficultyWeight.getValue()).doubleValue();
@@ -615,11 +631,69 @@ public class ServerPanel extends JPanel {
         }));
     }
 
+    /**
+     * Takes what was typed into the spinners as their values. The buttons here take no focus, so a typed number is
+     * not committed by leaving the field: without this, Save would send the value from before typing. False if a
+     * text is not a valid number (that spinner then shows its value again).
+     */
+    private static boolean commit(JSpinner... spinners) {
+        boolean ok = true;
+        for (JSpinner s : spinners) {
+            try {
+                s.commitEdit();
+            } catch (java.text.ParseException e) {
+                ok = false;
+                if (s.getEditor() instanceof JSpinner.DefaultEditor d) d.getTextField().setValue(s.getValue());
+            }
+        }
+        return ok;
+    }
+
     private static JSpinner weightSpinner() {
         JSpinner s = new JSpinner(new SpinnerNumberModel(1.0, 0.0, 1.0, 0.05));
         s.setEditor(new JSpinner.NumberEditor(s, "0.00"));
         s.setPreferredSize(new Dimension(90, s.getPreferredSize().height));
         return s;
+    }
+
+    // --- guild ---
+
+    /** Admins (not moderators) set what the guild part of a dungeon's details computes with, for everyone. */
+    private void buildGuild() {
+        baselineHpm.setEditor(new JSpinner.NumberEditor(baselineHpm, "0.#"));
+        baselineHpm.setPreferredSize(new Dimension(90, baselineHpm.getPreferredSize().height));
+        guildBody.add(left(muted("\"Zero Hit?\" in a dungeon's Guild part: hits per minute (HPM) = hits / minutes in the dungeon, "
+                + "hit% = HPM / (HPM + baseline HPM) × 100. A player hit as often as the baseline gets 50%.")));
+        guildBody.add(Box.createVerticalStrut(6));
+        guildBody.add(formRow("Baseline HPM", baselineHpm));
+        JPanel actions = row();
+        actions.add(button("Save", "primary", this::saveGuild));
+        actions.add(button("Reset", null, this::showGuildSettings));
+        guildBody.add(actions);
+        guildBody.add(guildFeedback);
+    }
+
+    /** Shows the guild settings in use (after loading, saving or Reset). */
+    private void showGuildSettings() {
+        baselineHpm.setValue(Guildmates.get().settings().baselineHpm);
+    }
+
+    private void saveGuild() {
+        if (!commit(baselineHpm)) {
+            guildFeedback.setText("The baseline must be a number from 1 to 1000.");
+            return;
+        }
+        GobblerServer.GuildSettings g = new GobblerServer.GuildSettings();
+        g.baselineHpm = ((Number) baselineHpm.getValue()).doubleValue();
+        guildFeedback.setText("Saving...");
+        server.putGuildSettings(g).whenComplete((saved, e) -> SwingUtilities.invokeLater(() -> {
+            if (e != null) {
+                guildFeedback.setText(GobblerServer.message(e));
+                return;
+            }
+            Guildmates.get().setSettings(saved);
+            guildFeedback.setText("Saved. Everyone's dungeon details use it.");
+        }));
     }
 
     // --- moderator tokens ---

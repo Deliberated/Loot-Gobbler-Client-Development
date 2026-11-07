@@ -105,6 +105,8 @@ public class TomatoPacketCapture implements Controller {
         } else if (packet instanceof ExaltationUpdatePacket) {
             ExaltationUpdatePacket p = (ExaltationUpdatePacket) packet;
             data.exaltUpdate(p);
+        } else if (packet instanceof UseItemPacket) {
+            lootgobbler.DungeonVisits.get().itemUsed(data, (UseItemPacket) packet);   // quick slot consumables
         } else if (packet instanceof NotificationPacket) {
             NotificationPacket p = (NotificationPacket) packet;
             data.notification(p);

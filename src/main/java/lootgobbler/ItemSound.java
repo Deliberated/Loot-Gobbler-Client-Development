@@ -32,6 +32,13 @@ public final class ItemSound {
             new Builtin("sound/alien_saucer.wav", "Saucer"),
             new Builtin("sound/alien_arpeggio.wav", "Arpeggio"),
             new Builtin("sound/alien_signal.wav", "Signal")));
+    /** Your Fitted Protective Matrix is charged again (ItemCooldowns): five cues (a jacket's Zip first). */
+    public static final ItemSound MATRIX = new ItemSound("matrixSoundFile", "Fitted Protective Matrix", List.of(
+            new Builtin("sound/matrix_zip.wav", "Zip"),
+            new Builtin("sound/matrix_shield.wav", "Shield"),
+            new Builtin("sound/matrix_pulse.wav", "Pulse"),
+            new Builtin("sound/matrix_recharge.wav", "Recharge"),
+            new Builtin("sound/matrix_lock.wav", "Lock")));
 
     private static final String OFF = "off", BUILTIN = "builtin:";
     private final String key;   // setting: "" or unset = the first builtin; "builtin:<name>"; "off"; or a WAV file's path

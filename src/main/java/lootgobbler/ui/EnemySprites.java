@@ -18,6 +18,7 @@ import java.util.Map;
 final class EnemySprites {
     private static final String LIST = "assets/ObjectID.list", XML_DIR = "assets/xml";
     private static Map<Integer, Integer> fileOf;
+    private static final java.util.Set<Integer> sizeless = new java.util.HashSet<>();   // Size 0: never drawn
     private static Map<String, List<Integer>> enemiesByName;   // lower-case name -> visible enemies of that name
     private static final java.util.Set<Integer> combatants = new java.util.HashSet<>();   // bosses, minions, quests
 
@@ -62,6 +63,17 @@ final class EnemySprites {
     }
 
     /**
+     * Whether the game never draws the object: its size is 0. Its texture is then only a placeholder, e.g. the
+     * Spectral Penitentiary's "M4 Lanes" (Soulwarden Murcian's spinners) point at a tile that looks like an amulet.
+     */
+    static boolean hidden(int type) {
+        files();
+        synchronized (EnemySprites.class) {
+            return sizeless.contains(type);
+        }
+    }
+
+    /**
      * Visible enemy objects by name, from the extracted ObjectID.list (id;display;class;group;stats;texture;labels;
      * idName); the Characters among them with combat labels are also noted in combatants.
      */
@@ -79,6 +91,7 @@ final class EnemySprites {
                 String name = (f[1].isEmpty() ? f[7] : f[1]).toLowerCase(Locale.ROOT).trim();
                 try {
                     int id = Integer.parseInt(f[0]);
+                    if (hidden(id)) continue;   // never drawn: not a sprite to fall back to
                     out.computeIfAbsent(name, k -> new ArrayList<>()).add(id);
                     if (combatant) combatants.add(id);
                 } catch (NumberFormatException ignored) {
@@ -92,17 +105,26 @@ final class EnemySprites {
         return out;
     }
 
-    /** Object type -> the extracted XML file it is defined in (as an index), read once. */
+    /** Object type -> the extracted XML file it is defined in (as an index), read once; notes the sizeless too. */
     private static synchronized Map<Integer, Integer> files() {
         if (fileOf != null) return fileOf;
         Map<Integer, Integer> out = new HashMap<>();
         java.io.File[] xml = new java.io.File(XML_DIR).listFiles((d, n) -> n.toLowerCase(Locale.ROOT).endsWith(".xml"));
         if (xml == null) return Map.of();   // not extracted yet: try again next time
-        java.util.regex.Pattern object = java.util.regex.Pattern.compile("<Object type=\"(0x[0-9a-fA-F]+)\"");
+        // the type comes before or after the id; the body up to the object's end tells its size
+        java.util.regex.Pattern object = java.util.regex.Pattern.compile("<Object\\b([^>]*)>(.*?)</Object>", java.util.regex.Pattern.DOTALL);
+        java.util.regex.Pattern typeAttr = java.util.regex.Pattern.compile("type=\"(0x[0-9a-fA-F]+)\"");
+        java.util.regex.Pattern noSize = java.util.regex.Pattern.compile("<Size>\\s*0\\s*</Size>");
         for (int i = 0; i < xml.length; i++) {
             try {
                 java.util.regex.Matcher m = object.matcher(Files.readString(xml[i].toPath(), StandardCharsets.UTF_8));
-                while (m.find()) out.putIfAbsent(Integer.decode(m.group(1)), i);
+                while (m.find()) {
+                    java.util.regex.Matcher t = typeAttr.matcher(m.group(1));
+                    if (!t.find()) continue;
+                    int type = Integer.decode(t.group(1));
+                    out.putIfAbsent(type, i);
+                    if (noSize.matcher(m.group(2)).find()) sizeless.add(type);
+                }
             } catch (IOException | RuntimeException ignored) {
                 // an unreadable file only costs its own objects
             }

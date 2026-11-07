@@ -191,6 +191,9 @@ public class TomatoData {
     public void updatePlayersPos(MovePacket p) {
         if (player != null && p.records != null && p.records.length > 0) {
             player.pos = p.records[p.records.length - 1].pos;
+            packets.data.WorldPosData[] way = new packets.data.WorldPosData[p.records.length];
+            for (int i = 0; i < way.length; i++) way[i] = p.records[i] == null ? null : p.records[i].pos;
+            lootgobbler.DungeonVisits.get().moved(way);   // how far you walked in the dungeon
         }
     }
 

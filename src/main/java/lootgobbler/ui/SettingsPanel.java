@@ -81,7 +81,10 @@ public class SettingsPanel extends JPanel {
         return body;
     }
 
-    /** Sounds for what items do, each in its own part: the Amulet of Restoration and the quickslot items' cooldowns. */
+    /**
+     * Sounds for what items do, each in its own part: the Amulet of Restoration, and the cooldowns of the quickslot
+     * items and the Fitted Protective Matrix.
+     */
     private JPanel itemSoundsBody() {
         JPanel body = body();
         itemSound(body, lootgobbler.ItemSound.AMULET, "Played when your Amulet of Restoration saves you.");
@@ -91,6 +94,9 @@ public class SettingsPanel extends JPanel {
         body.add(Box.createVerticalStrut(14));
         itemSound(body, lootgobbler.ItemSound.ALIEN,
                 "Played when your Miniature Alien Generator can be used again (45 seconds after using it).");
+        body.add(Box.createVerticalStrut(14));
+        itemSound(body, lootgobbler.ItemSound.MATRIX,
+                "Played when your Fitted Protective Matrix is charged again (180 seconds after it shielded you).");
         return body;
     }
 

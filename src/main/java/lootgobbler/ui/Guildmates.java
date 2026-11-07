@@ -18,6 +18,7 @@ final class Guildmates {
     private final GobblerServer server = GobblerServer.get();
     private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
     private Set<String> names = Set.of();
+    private GobblerServer.GuildSettings settings = new GobblerServer.GuildSettings();
 
     static Guildmates get() {
         return INSTANCE;
@@ -39,19 +40,40 @@ final class Guildmates {
 
     private void load() {
         runLooks.clear();   // another server or account: ask again
-        askedAt.clear();
         generation++;   // retries still pending belong to the old server
         GobblerServer.User me = server.user();
         if (me == null || server.state() != GobblerServer.State.ONLINE) {
             set(Set.of());
             return;
         }
+        reloadSettings();
         server.leaderboard().whenComplete((b, e) -> SwingUtilities.invokeLater(() -> {
             if (e != null || b == null) return;   // keep what was known
             Set<String> mates = new HashSet<>();
             for (GobblerServer.Member m : b.members) if (m.id != me.id) mates.add(m.ign.toLowerCase(Locale.ROOT));
             set(mates);
         }));
+    }
+
+    /** The server's guild settings (the defaults until it answered). */
+    GobblerServer.GuildSettings settings() {
+        return settings;
+    }
+
+    /** Asks the server for the guild settings again; the views redraw if they changed. */
+    void reloadSettings() {
+        int asked = generation;
+        server.guildSettings().whenComplete((g, e) -> SwingUtilities.invokeLater(() -> {
+            if (g != null && asked == generation) setSettings(g);
+        }));
+    }
+
+    /** Takes new guild settings (from the server, or after an admin saved them). */
+    void setSettings(GobblerServer.GuildSettings g) {
+        if (g.baselineHpm == settings.baselineHpm) return;
+        settings = g;
+        version++;
+        for (Runnable r : listeners) r.run();
     }
 
     private void set(Set<String> mates) {
@@ -110,10 +132,13 @@ final class Guildmates {
         return out;
     }
 
-    /** Whether the server will still be asked again about the visit for the guildmates it is missing. */
+    /**
+     * Whether the server will still be asked again about the visit for the guildmates it is missing: only within
+     * RETRY_FOR_MS of leaving it, while their clients may still be syncing it. Older runs are asked once.
+     */
     boolean retrying(DungeonVisits.Visit v) {
-        Long first = askedAt.get(v.dungeon + "/" + v.start);
-        return first != null && System.currentTimeMillis() - first + RETRY_MS <= RETRY_FOR_MS && !awaited(v).isEmpty();
+        long left = v.start + v.durationMs;
+        return System.currentTimeMillis() - left + RETRY_MS <= RETRY_FOR_MS && !awaited(v).isEmpty();
     }
 
     // per finished visit (dungeon/start): the guildmates' looks and hits the server has for it, by lower-case name;
@@ -122,9 +147,8 @@ final class Guildmates {
     private static final Map<String, List<GobblerServer.RunLook>> ASKING = new HashMap<>(), FAILED = new HashMap<>();
     private int version;   // goes up with every answer, so views know to rebuild
     // a guildmate's client syncs their visit a little after they left: until all who fought with you are there,
-    // the server is asked again every RETRY_MS, for RETRY_FOR_MS after the first question
+    // the server is asked again every RETRY_MS, until RETRY_FOR_MS after you left the dungeon
     private static final int RETRY_MS = 20_000, RETRY_FOR_MS = 180_000;
-    private final Map<String, Long> askedAt = new HashMap<>();
     private int generation;
 
     int version() {
@@ -138,7 +162,6 @@ final class Guildmates {
         Map<String, List<GobblerServer.RunLook>> looks = runLooks.get(key);
         if (looks == null) {
             runLooks.put(key, ASKING);
-            askedAt.put(key, System.currentTimeMillis());
             ask(v, key);
             return null;
         }

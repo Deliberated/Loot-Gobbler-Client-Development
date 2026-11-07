@@ -15,8 +15,10 @@ import java.util.Map;
  * on the left). Slices taking 30% of your life or 300 damage are orange, with the icon of the enemy that dealt most of
  * it on the floor of the graph. Every slice is SLICE_PX wide, whatever the dungeon and the window size: a wider window
  * shows more of them. Scrolled with the bar under it (see withScrollbar) and starting at the latest end; dangerous slices outside the window show as a
- * teardrop at that edge with the nearest one's enemy (click: scroll to it). Reads the visit on every paint, so the
- * dungeon in progress follows along on repaint().
+ * teardrop at that edge with the nearest one's enemy (click: scroll to it). Each boss fight is framed by two red
+ * lines, with a red bar under the time axis carrying the boss's icon: in the middle of the bar, or as near to it as
+ * the window lets it stay on the bar. Reads the visit on every paint, so the dungeon in progress follows along on
+ * repaint().
  */
 final class DamageGraph extends JComponent {
     static final double BIG_SHARE = 0.30;   // of your maximum life, within one slice
@@ -29,10 +31,12 @@ final class DamageGraph extends JComponent {
     private static final int BARS = 60;    // slices shown until the graph knows its width
     private static final int SLICE_PX = 14;   // one slice's width (the bar and a 1 px gap)
     private static final int BUBBLE = 13, BUBBLE_ICON = 18;   // the off-screen teardrops: radius, enemy icon
+    private static final int HEIGHT = 230, LANE = 30, LANE_BAR = 6, LANE_ICON = 22;   // the boss lane under the axis
+    private static final Color FIGHT = new Color(190, 51, 45);
     private final Visit visit;
     private final int windowMs;
     private long viewMs;   // the window shown: as many slices as fit the width
-    private final Map<Integer, Icon> icons = new HashMap<>(), smallIcons = new HashMap<>();
+    private final Map<Integer, Icon> icons = new HashMap<>(), smallIcons = new HashMap<>(), laneIcons = new HashMap<>();
     private final JScrollBar bar = new JScrollBar(JScrollBar.HORIZONTAL);
     private long viewStart;                           // ms after entering, at the left edge
     private boolean pendingUpdate, wasAdjusting;
@@ -52,7 +56,6 @@ final class DamageGraph extends JComponent {
         this.visit = visit;
         this.windowMs = windowMs;
         this.viewMs = (long) BARS * windowMs;
-        setPreferredSize(new Dimension(300, 230));
         setToolTipText("");   // per slice, see getToolTipText(MouseEvent)
         // the numbers pop up at once over the graph (the usual tooltip delay elsewhere)
         addMouseListener(new java.awt.event.MouseAdapter() {
@@ -100,6 +103,34 @@ final class DamageGraph extends JComponent {
             }
         });
         update(true);
+    }
+
+    /** One boss fight: its boss, from its first to its last hit (ms after entering). */
+    private record Fight(String boss, int type, long from, long to) {
+    }
+
+    /** The boss fights of the visit's run (runs saved before their times were kept have none). */
+    private java.util.List<Fight> fights() {
+        lootgobbler.DpsHistory.Run run = visit == lootgobbler.DungeonVisits.get().current()
+                ? lootgobbler.DpsHistory.get().live() : lootgobbler.DungeonVisits.run(visit);
+        if (run == null || run.guildHall || !run.dungeon.equals(visit.dungeon)) return java.util.List.of();
+        java.util.List<Fight> out = new java.util.ArrayList<>();
+        for (lootgobbler.DpsHistory.Boss b : run.bosses) {
+            if (b.fightStart <= 0 || b.fightStart < visit.start) continue;
+            long from = b.fightStart - visit.start;
+            out.add(new Fight(b.name, b.objectType, from, from + Math.max(1, b.fightMs)));
+        }
+        return out;
+    }
+
+    /** Room under the plot: the time axis, and the boss lane under it if a boss was fought. */
+    private int padBottom() {
+        return PAD_BOTTOM + (fights().isEmpty() ? 0 : LANE);
+    }
+
+    @Override
+    public Dimension getPreferredSize() {
+        return isPreferredSizeSet() ? super.getPreferredSize() : new Dimension(300, HEIGHT + padBottom() - PAD_BOTTOM);
     }
 
     /** The graph with its scrollbar under it (shown when the dungeon is longer than the window). */
@@ -215,15 +246,17 @@ final class DamageGraph extends JComponent {
     }
 
     private int y(long dmg, long scale) {
-        int h = getHeight() - PAD_TOP - PAD_BOTTOM;
-        return getHeight() - PAD_BOTTOM - (int) Math.round(Math.min(1.0, (double) dmg / scale) * h);
+        int h = getHeight() - PAD_TOP - padBottom();
+        return getHeight() - padBottom() - (int) Math.round(Math.min(1.0, (double) dmg / scale) * h);
     }
 
     @Override
     protected void paintComponent(Graphics g) {
         Graphics2D g2 = (Graphics2D) g.create();
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        int w = getWidth(), h = getHeight(), base = h - PAD_BOTTOM;
+        java.util.List<Fight> fights = fights();
+        int lane = fights.isEmpty() ? 0 : LANE;
+        int w = getWidth(), h = getHeight(), base = h - PAD_BOTTOM - lane;
         Font small = getFont().deriveFont(Math.max(10f, getFont().getSize2D() - 2));
         g2.setFont(small);
         FontMetrics fm = g2.getFontMetrics();
@@ -236,7 +269,7 @@ final class DamageGraph extends JComponent {
             String s = DpsPanel.duration(t);
             int x = x(t) - fm.stringWidth(s) / 2;
             x = Math.max(PAD_LEFT, Math.min(w - PAD_RIGHT - fm.stringWidth(s), x));
-            g2.drawString(s, x, h - 4);
+            g2.drawString(s, x, h - lane - 4);
         }
         long[] dealt = dealtSlices(visit, windowMs);
         long dealtPeak = 0;
@@ -274,6 +307,14 @@ final class DamageGraph extends JComponent {
         java.util.List<Object[]> icons = new java.util.ArrayList<>();   // {Icon, x, y}: painted last, on top
         Shape oldClip = g2.getClip();
         g2.clipRect(PAD_LEFT, 0, w - PAD_LEFT - PAD_RIGHT, h);   // only the window
+        for (Fight f : fights) {   // the boss fights, behind the bars: a faint red with a red line at each end
+            int x0 = x(f.from()), x1 = Math.max(x0 + 1, x(f.to()));
+            g2.setColor(new Color(FIGHT.getRed(), FIGHT.getGreen(), FIGHT.getBlue(), 40));
+            g2.fillRect(x0, PAD_TOP, x1 - x0, base - PAD_TOP);
+            g2.setColor(new Color(FIGHT.getRed(), FIGHT.getGreen(), FIGHT.getBlue(), 170));
+            g2.drawLine(x0, PAD_TOP, x0, base - 1);
+            g2.drawLine(x1, PAD_TOP, x1, base - 1);
+        }
         int first = (int) (viewStart / windowMs), last = (int) ((viewStart + viewMs) / windowMs);
         for (int i = Math.max(0, first); i <= Math.min(last, Math.max(sl.count(), dealt.length) - 1); i++) {   // a bar up and one down
             int x0 = x((long) i * windowMs), x1 = x((long) (i + 1) * windowMs);
@@ -303,11 +344,51 @@ final class DamageGraph extends JComponent {
             for (int t : visit.amuletSaves) g2.fillRect(x(t) - 1, mid + 1, 2, base - mid - 1);
         }
         for (Object[] i : icons) ((Icon) i[0]).paintIcon(this, g2, (int) i[1], (int) i[2]);
+        lane(g2, fights, h - lane, w - PAD_RIGHT);
         g2.setClip(oldClip);
         g2.setColor(Palette.MUTED);   // the line between dealt and taken
         g2.drawLine(PAD_LEFT, mid, w - PAD_RIGHT, mid);
         bubbles(g2, sl, threshold, first, last, mid, base);
         g2.dispose();
+    }
+
+    /**
+     * The boss lane (from y top): a red bar per fight, with the boss's icon on it, in its middle while that is in the
+     * window, else pushed along the bar so that it stays in the window while it fits on the bar's visible part.
+     */
+    private void lane(Graphics2D g2, java.util.List<Fight> fights, int top, int right) {
+        int barY = top + (LANE - LANE_BAR) / 2 + 4;
+        for (Fight f : fights) {
+            int x0 = x(f.from()), x1 = Math.max(x0 + 2, x(f.to()));
+            if (x1 < PAD_LEFT || x0 > right) continue;
+            g2.setColor(FIGHT);
+            g2.fillRoundRect(x0, barY, x1 - x0, LANE_BAR, 4, 4);
+        }
+        FontMetrics fm = g2.getFontMetrics();
+        for (Fight f : fights) {   // the icons over all bars, each with the fight's length behind it
+            int x0 = x(f.from()), x1 = Math.max(x0 + 2, x(f.to()));
+            int from = Math.max(x0, PAD_LEFT), to = Math.min(x1, right);
+            if (to <= from) continue;
+            Icon icon = laneIcons.computeIfAbsent(f.type(), t -> bigIcon(t, LANE_ICON));
+            long secs = (f.to() - f.from()) / 1000;
+            String len = String.format(Locale.ROOT, "(%02d:%02d)", secs / 60, secs % 60);
+            int iw = icon == null ? 0 : icon.getIconWidth(), gap = icon == null ? 0 : 3, tw = fm.stringWidth(len) + 6;
+            int width = iw + gap + tw, half = width / 2;   // icon and length move along the bar as one
+            int cx = to - from >= width ? Math.max(from + half, Math.min(to - half, (x0 + x1) / 2)) : (from + to) / 2;
+            int left = cx - half, cy = barY + LANE_BAR / 2;
+            if (icon != null) icon.paintIcon(this, g2, left, cy - icon.getIconHeight() / 2);
+            int tx = left + iw + gap, th = fm.getAscent() + 2;
+            g2.setColor(new Color(0, 0, 0, 170));   // a dark backing, readable over the red bar
+            g2.fillRoundRect(tx, cy - th / 2, tw, th, 6, 6);
+            g2.setColor(Section.color("LootGobbler.ink", Color.WHITE));
+            g2.drawString(len, tx + 3, cy + fm.getAscent() / 2 - 1);
+        }
+    }
+
+    /** The boss fight at the mouse's x (with a little slack for short ones), or null. */
+    private Fight fightAt(MouseEvent e) {
+        for (Fight f : fights()) if (e.getX() >= x(f.from()) - 4 && e.getX() <= x(f.to()) + 4) return f;
+        return null;
     }
 
     /**
@@ -369,7 +450,7 @@ final class DamageGraph extends JComponent {
 
     /** The line between damage dealt (above) and taken (below). */
     private int mid() {
-        return PAD_TOP + (getHeight() - PAD_BOTTOM - PAD_TOP) * 2 / 5;
+        return PAD_TOP + (getHeight() - padBottom() - PAD_TOP) * 2 / 5;
     }
 
     private int up(long dmg, long scale) {
@@ -377,7 +458,7 @@ final class DamageGraph extends JComponent {
     }
 
     private int down(long dmg, long scale) {
-        int bottom = getHeight() - PAD_BOTTOM;
+        int bottom = getHeight() - padBottom();
         return mid() + (int) Math.round(Math.min(1.0, (double) dmg / scale) * (bottom - mid()));
     }
 
@@ -399,7 +480,7 @@ final class DamageGraph extends JComponent {
     }
 
     private static Icon bigIcon(int type, int size) {
-        Icon own = croppedIcon(type, size);
+        Icon own = EnemySprites.hidden(type) ? null : croppedIcon(type, size);   // a sizeless helper: its boss
         if (own != null) return own;
         // a helper object (spawn portal, beam, invisible boss part): show the enemy it belongs to
         for (int enemy : EnemySprites.candidates(type)) {
@@ -484,6 +565,11 @@ final class DamageGraph extends JComponent {
         if (leftBubble != null && leftBubble.contains(e.getPoint())) return bubbleTip(leftTarget, leftCount, "left");
         if (rightBubble != null && rightBubble.contains(e.getPoint())) return bubbleTip(rightTarget, rightCount, "right");
         if (e.getX() < PAD_LEFT) return null;
+        if (!fights().isEmpty() && e.getY() >= getHeight() - LANE) {   // the boss lane: which boss, when and how long
+            Fight f = fightAt(e);
+            return f == null ? null : "<html><b>" + f.boss() + "</b><br>" + DpsPanel.duration(f.from()) + " to "
+                    + DpsPanel.duration(f.to()) + "  ·  " + DpsPanel.duration(f.to() - f.from()) + "</html>";
+        }
         Slices sl = slices(visit, windowMs);
         long[] dealt = dealtSlices(visit, windowMs);
         int i = sliceAt(e.getX());
