@@ -267,7 +267,7 @@ public class DpsLoggerView extends JPanel {
                 v.hitDamage == null ? new int[0] : v.hitDamage));
         who.add(myRow(v, run, current));
         maxHp.add(v.maxHp);
-        quick.add(v.quickItem == null ? new int[0] : v.quickItem);
+        quick.add(v.quickItem);
 
         String note = guildmates(v, current, series, who, maxHp, quick);
         if (note != null) {
@@ -306,7 +306,7 @@ public class DpsLoggerView extends JPanel {
             if (p == null) p = rowOf(visit, e.getValue());
             who.add(p);
             maxHp.add(visit.maxHp);
-            quick.add(visit.quickUsed == null ? new int[0] : visit.quickUsed);
+            quick.add(visit.quickUsed);   // null: their client does not send it
         }
         // guildmates who fought with you but whose client has not synced this visit yet
         List<String> awaited = Guildmates.get().awaited(v);
@@ -320,10 +320,11 @@ public class DpsLoggerView extends JPanel {
     private static final int FACT_LOOK = 36, PODIUM_FIRST = 56, PODIUM_LOOK = 48;
 
     /**
-     * You and the guildmates ranked four ways, worst first, each as their character and the value: Critical Hits (the
-     * damage graph's 2 s slices that took 30% of their life or 300), Most Hurt (the most damage taken within one
-     * second), Zero Hit? (how often they were hit for the time in the dungeon against the server's baseline: hit% =
-     * HPM / (HPM + baseline HPM) x 100) and the quick slot items they used up. Below, a podium of who did best over
+     * You and the guildmates ranked four ways, worst first, each as their character and the value: Most Critical Hits
+     * (the damage graph's 2 s slices that took 30% of their life or 300), Biggest Slap (the most damage taken within
+     * one second, in HP), Dodging Bullets (100% - hit%, the lowest first; hit% is how often they were hit for the
+     * time in the dungeon against the server's baseline: HPM / (HPM + baseline HPM) x 100) and the quick slot items
+     * they used ("none", or "-" when their client does not send them). Below, a podium of who did best over
      * all four: each player's average place in them (1 = worst), the highest average winning. All from what the
      * clients synced.
      */
@@ -351,7 +352,7 @@ public class DpsLoggerView extends JPanel {
             }
             double hpm = hits.size() / minutes;
             hitPct[i] = hpm <= 0 ? 0 : 100 * hpm / (hpm + baseline);
-            used[i] = quick.get(i).length;
+            used[i] = quick.get(i) == null ? 0 : quick.get(i).length;
         }
         JPanel grid = new JPanel(new WrapLayout(36, 14)) {   // side by side, wrapping only when the column is narrow
             @Override
@@ -373,9 +374,10 @@ public class DpsLoggerView extends JPanel {
         });
         grid.setOpaque(false);
         grid.setAlignmentX(LEFT_ALIGNMENT);
-        grid.add(fact("Critical Hits", series, who, critical, i -> numberLabel(String.valueOf((int) critical[i]))));
-        grid.add(fact("Most Hurt", series, who, hurt, i -> numberLabel(String.format(Locale.ROOT, "%,d", (long) hurt[i]))));
-        grid.add(fact("Zero Hit?", series, who, hitPct, i -> numberLabel(String.format(Locale.ROOT, "%.0f%%", hitPct[i]))));
+        grid.add(fact("Most Critical Hits", series, who, critical, i -> numberLabel(String.valueOf((int) critical[i]))));
+        grid.add(fact("Biggest Slap", series, who, hurt, i -> numberLabel(String.format(Locale.ROOT, "%,dHP", (long) hurt[i]))));
+        // how much of the fire they dodged (100% - hit%): the lowest on top (ordered by hit%, the most hit first)
+        grid.add(fact("Dodging Bullets", series, who, hitPct, i -> numberLabel(String.format(Locale.ROOT, "%.0f%%", 100 - hitPct[i]))));
         grid.add(fact("Quickslots Used", series, who, used, i -> quickItems(quick.get(i))));
         out.add(grid);
 
@@ -417,8 +419,9 @@ public class DpsLoggerView extends JPanel {
         JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
         row.setOpaque(false);
         Map<Integer, Integer> items = new java.util.LinkedHashMap<>();
-        for (int type : used) items.merge(type, 1, Integer::sum);
-        if (items.isEmpty()) row.add(numberLabel("-"));
+        if (used != null) for (int type : used) items.merge(type, 1, Integer::sum);
+        if (used == null) row.add(numberLabel("-"));   // not known (an older client)
+        else if (items.isEmpty()) row.add(numberLabel("none"));
         items.entrySet().stream().sorted((x, y) -> y.getValue() - x.getValue()).forEach(en -> {
             lootgobbler.ItemDb.Item item = lootgobbler.ItemDb.get().item(en.getKey());
             JLabel l = new JLabel(en.getValue() + "x", itemIcon(en.getKey()), SwingConstants.LEFT);
