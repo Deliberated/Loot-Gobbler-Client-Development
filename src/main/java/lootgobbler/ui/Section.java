@@ -112,4 +112,11 @@ public class Section extends JPanel {
             return size;
         }
     }
+
+    /** After each layout: labels in the body that do not fit are wrapped onto more lines (see LabelFit). */
+    @Override
+    protected void validateTree() {
+        super.validateTree();
+        LabelFit.fitLater(body);
+    }
 }

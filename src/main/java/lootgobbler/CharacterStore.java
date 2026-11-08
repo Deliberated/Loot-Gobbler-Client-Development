@@ -674,6 +674,30 @@ public final class CharacterStore implements Syncable {
         return false;
     }
 
+    /**
+     * The game's death packet (it is only sent to the player who died): that character goes to the graveyard at once,
+     * not only when the next character list leaves it out.
+     */
+    public static void install() {
+        packets.packetcapture.register.Register.INSTANCE.register(packets.PacketType.DEATH, p -> {
+            packets.incoming.DeathPacket d = (packets.incoming.DeathPacket) p;
+            get().died(d.charId, d.killedBy);
+        });
+    }
+
+    private void died(int charId, String killedBy) {
+        synchronized (this) {
+            Char c = chars.get(charId);
+            AppLog.log("game", "Died: character " + charId + (c == null ? " (unknown)" : " (" + c.className + ")")
+                    + ", killed by " + killedBy);
+            if (c == null || !c.alive) return;
+            c.alive = false;
+            c.diedBy = "game";
+            save();
+        }
+        fire();
+    }
+
     public enum Flag {FAVORITE, DEAD}
 
     /**

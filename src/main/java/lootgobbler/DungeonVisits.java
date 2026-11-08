@@ -56,6 +56,9 @@ public final class DungeonVisits implements Syncable {
         public int[] amuletSaves = new int[0];   // when your amulet saved you, ms after entering (AmuletSaves)
         // the consumables you used from a quick slot: item type, and when (ms after entering)
         public int[] quickItem = new int[0], quickTime = new int[0];
+        // your death in it: when (ms after entering) and what the game says killed you; -1 / null = you survived
+        public int diedAt = -1;
+        public String killedBy;
         public int[] moved = new int[0];   // how far you walked, in tenths of a tile, per second after entering
         public List<MvPhase> mvPhases = new ArrayList<>();   // Moonlight Village: its boss phases in order (MoonlightLog)
         // whether it was completed can be told (visits from before this was kept cannot), and the game's "Victory"
@@ -182,7 +185,7 @@ public final class DungeonVisits implements Syncable {
     }
 
     /** Your character's look now (CharacterStore keeps it, not while transformed), or null before you played. */
-    private static Look lookNow() {
+    public static Look lookNow() {
         CharacterStore.Char c = CharacterStore.get().playing();
         String name = CharacterStore.get().playerName();
         if (c == null || name == null || c.classType <= 0) return null;
@@ -304,26 +307,35 @@ public final class DungeonVisits implements Syncable {
     /**
      * You used an item (the use packet, on the packet thread): one in a quick slot, used up when used, counts for the
      * visit in progress. A quick slot's item is told by the slot stats; the same item used from an inventory slot
-     * (where the packet's slot holds it) does not count, nor does quick-slot gear used again and again (Refinery...).
+     * (where the packet's slot holds it) does not count. Reusable quick-slot gear (Coral Juice Refinery...) counts every use.
      */
+    private static final int QUICK_SLOT_ID = 1_000_000;
+
     public void itemUsed(tomato.backend.data.TomatoData data, packets.outgoing.UseItemPacket u) {
         tomato.backend.data.Entity player = data == null ? null : data.player;
-        if (current == null || player == null || u == null || u.slotObject == null || u.slotObject.objectId != player.id) return;
+        if (current == null || u == null || u.slotObject == null) return;
         int type = u.slotObject.objectType, slot = u.slotObject.slotId;
-        boolean quick = false;
-        for (packets.data.enums.StatType q : LootEvents.QUICKSLOTS) {
-            packets.data.StatData sd = player.stat.get(q);
-            if (sd != null && sd.statValue == type) quick = true;
+        // the game sends a quick slot's use with slot 1000000 + its index (seen November 2026)
+        boolean quickSlotId = slot >= QUICK_SLOT_ID && slot < QUICK_SLOT_ID + LootEvents.QUICKSLOTS.length;
+        if (!quickSlotId && (player == null || u.slotObject.objectId != player.id)) return;
+        boolean quick = quickSlotId;
+        if (player != null) {
+            for (packets.data.enums.StatType q : LootEvents.QUICKSLOTS) {
+                packets.data.StatData sd = player.stat.get(q);
+                if (sd != null && sd.statValue == type) quick = true;
+            }
         }
-        if (!quick || type <= 0) return;
-        if (slot >= 0 && slot < 28) {
+        if (!quick || type <= 0) {
+            if (quickSlotId) AppLog.log("game", "Quick slot use not counted: item " + type + " (slot " + slot + ")");
+            return;
+        }
+        if (player != null && slot >= 0 && slot < 28) {
             int stat = slot >= 12 ? packets.data.enums.StatType.BACKPACK_0_STAT.get() + (slot - 12)
                     : packets.data.enums.StatType.INVENTORY_0_STAT.get() + slot;
             packets.data.StatData sd = player.stat.get(stat);
             if (sd != null && sd.statValue == type) return;   // the inventory's copy
         }
         ItemDb.Item item = ItemDb.get().item(type);
-        if (item != null && item.quickslotOnly) return;   // gear, not used up
         synchronized (this) {
             Visit v = current;
             if (v == null) return;
@@ -334,6 +346,44 @@ public final class DungeonVisits implements Syncable {
             v.quickTime[n] = (int) (System.currentTimeMillis() - v.start);
             AppLog.log("game", "Quick slot used in " + v.dungeon + ": " + (item == null ? type : item.name) + " (slot " + slot + ")");
         }
+    }
+
+    /**
+     * You died (the game's death packet, packet thread): the hits up to now are copied into the visit in progress
+     * first, then the moment and the killer are kept, so the visit shows the hits that led to it (see recap).
+     */
+    public void died(tomato.backend.data.TomatoData data, packets.incoming.DeathPacket p) {
+        if (p == null) return;
+        hits(data, true);
+        synchronized (this) {
+            Visit v = current;
+            if (v == null) {
+                AppLog.log("game", "Died outside a dungeon, killed by " + p.killedBy);
+                return;
+            }
+            v.diedAt = (int) (System.currentTimeMillis() - v.start);
+            v.killedBy = p.killedBy;
+            AppLog.log("game", "Died in " + v.dungeon + " after " + v.diedAt / 1000 + "s, killed by " + p.killedBy
+                    + "; " + recap(v, RECAP_MS).size() + " hits in the last " + RECAP_MS / 1000 + "s");
+        }
+        for (Runnable r : hitListeners) r.run();
+    }
+
+    /** How far back the hits that led to a death go. */
+    public static final int RECAP_MS = 10_000;
+
+    /**
+     * The hits you took within windowMs before your death in the visit, oldest first, as {ms before the death,
+     * damage, enemy type}; empty if you did not die in it.
+     */
+    public static List<int[]> recap(Visit v, int windowMs) {
+        List<int[]> out = new ArrayList<>();
+        if (v == null || v.diedAt < 0 || v.hitTime == null) return out;
+        for (int i = 0; i < v.hits(); i++) {
+            int before = v.diedAt - v.hitTime[i];
+            if (before >= 0 && before <= windowMs) out.add(new int[]{before, v.hitDamage[i], v.hitEnemy[i]});
+        }
+        return out;
     }
 
     private float lastX = Float.NaN, lastY;   // your last position seen in this visit
@@ -594,7 +644,7 @@ public final class DungeonVisits implements Syncable {
     private static int detail(Visit v) {
         return v.hits() + (v.dealt == null ? 0 : v.dealt.length) + (v.exalts == null ? 0 : v.exalts.size())
                 + (v.amuletSaves == null ? 0 : v.amuletSaves.length) + (v.runStart != 0 ? 1 : 0)
-                + (v.quickItem == null ? 0 : v.quickItem.length) + (v.moved == null ? 0 : v.moved.length);
+                + (v.quickItem == null ? 0 : v.quickItem.length) + (v.moved == null ? 0 : v.moved.length) + (v.diedAt >= 0 ? 1 : 0);
     }
 
     private void fire() {

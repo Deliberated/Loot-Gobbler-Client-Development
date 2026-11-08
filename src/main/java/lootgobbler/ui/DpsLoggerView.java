@@ -243,7 +243,8 @@ public class DpsLoggerView extends JPanel {
         return v.start + "|" + current + "|" + v.dungeon + "|" + (current ? v.duration() / 5000 : v.durationMs) + "|" + v.hits() + "|"
                 + (v.dealt == null ? 0 : v.dealt.length) + "|" + (v.exalts == null ? 0 : v.exalts.size()) + "|"
                 + (v.amuletSaves == null ? 0 : v.amuletSaves.length) + "|" + v.runStart + "|" + v.lanternActiveMs / 1000
-                + "|" + (run == null ? 0 : run.bosses.size()) + "|" + bosses + "|" + Guildmates.get().version();
+                + "|" + (run == null ? 0 : run.bosses.size()) + "|" + bosses + "|" + (v.quickItem == null ? 0 : v.quickItem.length)
+                + "|" + Guildmates.get().version();
     }
 
     // the players' colors (shown when their look is unknown): you first, then the guildmates in turn
@@ -256,27 +257,7 @@ public class DpsLoggerView extends JPanel {
      */
     private static JComponent guildSection(Visit v, Run run, boolean current) {
         JPanel out = column();
-        lootgobbler.GobblerServer server = lootgobbler.GobblerServer.get();
-        if (server.state() != lootgobbler.GobblerServer.State.ONLINE || server.user() == null) {
-            out.add(muted("Log in to a Loot Gobbler server to see your guild's damage taken here."));
-            return out;
-        }
-        if (current) {
-            out.add(muted("Shown once you have left the dungeon."));
-            return out;
-        }
-        Map<String, List<lootgobbler.GobblerServer.RunLook>> looks = Guildmates.get().runLooks(v);
-        if (looks == null) {
-            out.add(muted("Asking the server..."));
-            return out;
-        }
-        if (Guildmates.get().failed(v)) {
-            out.add(muted("The server could not answer right now."));
-            return out;
-        }
-        // the guildmates who were in it (their visit of it is on the server), in the look the run shows them in
-        Map<String, PlayerRow> inTable = new java.util.HashMap<>();
-        for (PlayerRow p : Guildmates.get().with(v)) inTable.put(p.name.toLowerCase(Locale.ROOT), p);
+        // you first, at once; the guildmates join once the server has answered (the section is rebuilt then)
         List<GuildDamageGraph.Series> series = new ArrayList<>();
         List<PlayerRow> who = new ArrayList<>();
         List<Integer> maxHp = new ArrayList<>();
@@ -284,9 +265,38 @@ public class DpsLoggerView extends JPanel {
         String myName = lootgobbler.CharacterStore.get().playerName();
         series.add(new GuildDamageGraph.Series(myName == null ? "You" : myName, GUILD_COLORS[0], myHits(v),
                 v.hitDamage == null ? new int[0] : v.hitDamage));
-        who.add(myRow(v, run));
+        who.add(myRow(v, run, current));
         maxHp.add(v.maxHp);
         quick.add(v.quickItem == null ? new int[0] : v.quickItem);
+
+        String note = guildmates(v, current, series, who, maxHp, quick);
+        if (note != null) {
+            JLabel w = muted(note);
+            w.setAlignmentX(LEFT_ALIGNMENT);
+            out.add(w);
+            out.add(Box.createVerticalStrut(6));
+        }
+        facts(out, series, who, maxHp, quick, current ? v.duration() : v.durationMs);
+        return out;
+    }
+
+    /**
+     * Adds the guildmates who were in the visit (from their synced visits on the server) to the lists. Returns what
+     * to say above them: why they are not (yet) there, who is still awaited, or null when all are in.
+     */
+    private static String guildmates(Visit v, boolean current, List<GuildDamageGraph.Series> series, List<PlayerRow> who,
+                                     List<Integer> maxHp, List<int[]> quick) {
+        lootgobbler.GobblerServer server = lootgobbler.GobblerServer.get();
+        if (server.state() != lootgobbler.GobblerServer.State.ONLINE || server.user() == null) {
+            return "Log in to a Loot Gobbler server to compare with your guildmates.";
+        }
+        if (current) return "Your guildmates are added once you have left the dungeon.";
+        Map<String, List<lootgobbler.GobblerServer.RunLook>> looks = Guildmates.get().runLooks(v);
+        if (looks == null) return "Asking the server for your guildmates...";
+        if (Guildmates.get().failed(v)) return "The server could not answer right now.";
+        // the guildmates who were in it (their visit of it is on the server), in the look the run shows them in
+        Map<String, PlayerRow> inTable = new java.util.HashMap<>();
+        for (PlayerRow p : Guildmates.get().with(v)) inTable.put(p.name.toLowerCase(Locale.ROOT), p);
         for (Map.Entry<String, List<lootgobbler.GobblerServer.RunLook>> e : new java.util.TreeMap<>(looks).entrySet()) {
             lootgobbler.GobblerServer.RunLook visit = e.getValue().stream().filter(l -> "visit".equals(l.source)).findFirst().orElse(null);
             if (visit == null) continue;
@@ -300,20 +310,11 @@ public class DpsLoggerView extends JPanel {
         }
         // guildmates who fought with you but whose client has not synced this visit yet
         List<String> awaited = Guildmates.get().awaited(v);
-        String waiting = awaited.isEmpty() ? null : (Guildmates.get().retrying(v) ? "Waiting for " : "Not on the server: ")
-                + String.join(", ", awaited) + (Guildmates.get().retrying(v) ? " to sync this run..." : "");
-        if (series.size() == 1) {
-            out.add(muted(waiting != null ? waiting : "No guildmates with Loot Gobbler were in this dungeon."));
-            return out;
+        if (!awaited.isEmpty()) {
+            return (Guildmates.get().retrying(v) ? "Waiting for " : "Not on the server: ") + String.join(", ", awaited)
+                    + (Guildmates.get().retrying(v) ? " to sync this run..." : "");
         }
-        if (waiting != null) {
-            JLabel w = muted(waiting);
-            w.setAlignmentX(LEFT_ALIGNMENT);
-            out.add(w);
-            out.add(Box.createVerticalStrut(6));
-        }
-        facts(out, series, who, maxHp, quick, v.durationMs);
-        return out;
+        return series.size() == 1 ? "No guildmates with Loot Gobbler were in this dungeon." : null;
     }
 
     private static final int FACT_LOOK = 36, PODIUM_FIRST = 56, PODIUM_LOOK = 48;
@@ -420,7 +421,9 @@ public class DpsLoggerView extends JPanel {
         if (items.isEmpty()) row.add(numberLabel("-"));
         items.entrySet().stream().sorted((x, y) -> y.getValue() - x.getValue()).forEach(en -> {
             lootgobbler.ItemDb.Item item = lootgobbler.ItemDb.get().item(en.getKey());
-            JLabel l = new JLabel("\u00d7" + en.getValue(), itemIcon(en.getKey()), SwingConstants.LEFT);
+            JLabel l = new JLabel(en.getValue() + "x", itemIcon(en.getKey()), SwingConstants.LEFT);
+            l.setHorizontalTextPosition(SwingConstants.LEADING);   // "3x" before the icon
+            l.setIconTextGap(2);
             l.setFont(l.getFont().deriveFont(Font.BOLD));
             l.setToolTipText(item == null ? "Item " + en.getKey() : item.name);
             row.add(l);
@@ -483,14 +486,16 @@ public class DpsLoggerView extends JPanel {
     }
 
     /** You as the run shows you (your damage table row), else your look saved with the visit; null if neither. */
-    private static PlayerRow myRow(Visit v, Run run) {
+    private static PlayerRow myRow(Visit v, Run run, boolean current) {
         if (run != null) for (Boss b : run.bosses) if (b.me() != null) return b.me();
-        if (v.look == null || v.look.classType <= 0) return null;
+        // the dungeon in progress has no look saved yet (that happens on leaving): the character you play now
+        lootgobbler.DungeonVisits.Look look = v.look == null && current ? lootgobbler.DungeonVisits.lookNow() : v.look;
+        if (look == null || look.classType <= 0) return null;
         PlayerRow p = new PlayerRow();
-        p.classType = v.look.classType;
-        p.skin = v.look.skin;
-        p.tex1 = v.look.tex1;
-        p.tex2 = v.look.tex2;
+        p.classType = look.classType;
+        p.skin = look.skin;
+        p.tex1 = look.tex1;
+        p.tex2 = look.tex2;
         return p;
     }
 
@@ -595,6 +600,7 @@ public class DpsLoggerView extends JPanel {
             graphCaptions.add(caption);
         }
         detail.add(CharactersView.box("Damage", Palette.RED, taken));   // dealt above the line, taken below
+        if (v.diedAt >= 0) detail.add(CharactersView.box("Death", Palette.RED, deathRecap(v)));
 
         JPanel exalts = column();
         if (v.exalts == null || v.exalts.isEmpty()) {
@@ -680,6 +686,59 @@ public class DpsLoggerView extends JPanel {
         if (saves > 0) dealtText = (saves == 1 ? "Amulet saved you once" : "Amulet saved you " + saves + " times") + "  \u00B7  " + dealtText;
         return dealtText + String.format(Locale.ROOT, "taken %,d in %,d hits", total, n)
                 + "  \u00B7  biggest " + v.hitDamage[biggest] + who;
+    }
+
+    /**
+     * Your death in a visit: what the game says killed you, and every hit you took in the seconds before it, the
+     * last (the killing one) at the bottom, each with how long before the death, the enemy and its share of your life.
+     */
+    private static JComponent deathRecap(Visit v) {
+        JPanel out = column();
+        JLabel head = new JLabel("Killed by " + (v.killedBy == null || v.killedBy.isBlank() ? "?" : v.killedBy)
+                + " after " + DpsPanel.duration(v.diedAt));
+        head.setFont(head.getFont().deriveFont(Font.BOLD));
+        head.setAlignmentX(LEFT_ALIGNMENT);
+        out.add(head);
+        List<int[]> hits = lootgobbler.DungeonVisits.recap(v, lootgobbler.DungeonVisits.RECAP_MS);
+        long total = 0;
+        for (int[] h : hits) total += h[1];
+        JLabel sum = muted(hits.isEmpty() ? "No hits recorded in the last " + lootgobbler.DungeonVisits.RECAP_MS / 1000 + " s."
+                : String.format(Locale.ROOT, "%d hits, %,d damage in the last %d s%s", hits.size(), total,
+                lootgobbler.DungeonVisits.RECAP_MS / 1000, v.maxHp > 0 ? String.format(Locale.ROOT, " (%.0f%% of your life)", 100.0 * total / v.maxHp) : ""));
+        sum.setAlignmentX(LEFT_ALIGNMENT);
+        out.add(sum);
+        out.add(Box.createVerticalStrut(6));
+        JPanel rows = new JPanel(new GridBagLayout());
+        rows.setOpaque(false);
+        rows.setAlignmentX(LEFT_ALIGNMENT);
+        GridBagConstraints c = new GridBagConstraints();
+        c.anchor = GridBagConstraints.WEST;
+        c.insets = new Insets(1, 0, 1, 12);
+        for (int k = 0; k < hits.size(); k++) {
+            int[] h = hits.get(k);
+            boolean last = k == hits.size() - 1;
+            String name = h[2] > 0 ? assets.IdToAsset.objectName(h[2]) : "Ground or area effect";
+            Icon icon = h[2] > 0 ? CharactersView.sprite(h[2], 24) : null;
+            JLabel when = muted(String.format(Locale.ROOT, "-%.1f s", h[0] / 1000.0));
+            JLabel who = new JLabel(name, icon, SwingConstants.LEFT);
+            JLabel dmg = new JLabel(String.format(Locale.ROOT, "%,d", h[1])
+                    + (v.maxHp > 0 ? String.format(Locale.ROOT, "  (%.0f%%)", 100.0 * h[1] / v.maxHp) : ""));
+            if (last) {   // the killing blow, most likely
+                who.setFont(who.getFont().deriveFont(Font.BOLD));
+                dmg.setFont(dmg.getFont().deriveFont(Font.BOLD));
+            }
+            c.gridy = k;
+            c.gridx = 0;
+            rows.add(when, c);
+            c.gridx = 1;
+            rows.add(who, c);
+            c.gridx = 2;
+            c.weightx = 1;
+            rows.add(dmg, c);
+            c.weightx = 0;
+        }
+        out.add(rows);
+        return out;
     }
 
     private static JPanel column() {

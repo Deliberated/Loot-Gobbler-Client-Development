@@ -243,6 +243,8 @@ public class Tomato {
         );
         Register.INSTANCE.register(PacketType.AOE, packCap::packetCapture);
         Register.INSTANCE.register(PacketType.MOVE, packCap::packetCapture);
+        Register.INSTANCE.register(PacketType.USEITEM, packCap::packetCapture);   // quick slot consumables per visit
+        Register.INSTANCE.register(PacketType.DEATH, packCap::packetCapture);     // your death: the hits before it
         Register.INSTANCE.register(
             PacketType.SERVERPLAYERSHOOT,
             packCap::packetCapture

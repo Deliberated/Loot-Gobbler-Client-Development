@@ -297,7 +297,7 @@ public final class ActiveDungeonBadge extends JPanel {
             FontMetrics fm = g2.getFontMetrics(getFont());
             // where both stand: on the same line as the box's other text, else centered on what is drawn
             int floor = -1;
-            if (lineOf != null && lineOf.isShowing()) {
+            if (lineOf != null && lineOf.isShowing() && lineOf.getWidth() >= 0 && lineOf.getHeight() >= 0) {
                 int b = lineOf.getBaseline(lineOf.getWidth(), lineOf.getHeight());
                 if (b >= 0) floor = SwingUtilities.convertPoint(lineOf, 0, b, this).y;
             }

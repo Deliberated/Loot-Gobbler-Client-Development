@@ -109,19 +109,40 @@ final class DamageGraph extends JComponent {
     private record Fight(String boss, int type, long from, long to) {
     }
 
-    /** The boss fights of the visit's run (runs saved before their times were kept have none). */
+    /**
+     * The boss fights of the visit's run (runs saved before their times were kept have none). A boss that comes as
+     * several objects of the same name during one fight (a second form spawned mid-fight, e.g. Doctor Lobotomik) is
+     * one fight: its overlapping (or nearly touching) spans are joined, under the icon of the first.
+     */
     private java.util.List<Fight> fights() {
         lootgobbler.DpsHistory.Run run = visit == lootgobbler.DungeonVisits.get().current()
                 ? lootgobbler.DpsHistory.get().live() : lootgobbler.DungeonVisits.run(visit);
         if (run == null || run.guildHall || !run.dungeon.equals(visit.dungeon)) return java.util.List.of();
-        java.util.List<Fight> out = new java.util.ArrayList<>();
+        java.util.List<Fight> all = new java.util.ArrayList<>();
         for (lootgobbler.DpsHistory.Boss b : run.bosses) {
             if (b.fightStart <= 0 || b.fightStart < visit.start) continue;
             long from = b.fightStart - visit.start;
-            out.add(new Fight(b.name, b.objectType, from, from + Math.max(1, b.fightMs)));
+            all.add(new Fight(b.name, b.objectType, from, from + Math.max(1, b.fightMs)));
+        }
+        all.sort(java.util.Comparator.comparingLong(Fight::from));
+        java.util.List<Fight> out = new java.util.ArrayList<>();
+        for (Fight f : all) {
+            int same = -1;
+            for (int i = out.size() - 1; i >= 0 && same < 0; i--) {
+                Fight o = out.get(i);
+                if (java.util.Objects.equals(o.boss(), f.boss()) && f.from() <= o.to() + JOIN_MS) same = i;
+            }
+            if (same < 0) {
+                out.add(f);
+            } else {
+                Fight o = out.get(same);
+                out.set(same, new Fight(o.boss(), o.type(), o.from(), Math.max(o.to(), f.to())));
+            }
         }
         return out;
     }
+
+    private static final long JOIN_MS = 3000;   // same-named fights this close are one
 
     /** Room under the plot: the time axis, and the boss lane under it if a boss was fought. */
     private int padBottom() {
@@ -330,7 +351,7 @@ final class DamageGraph extends JComponent {
             g2.setColor(big ? BIG : BAR);
             g2.fillRect(x0, mid + 1, bw, Math.max(1, y - mid - 1));
             if (big && x0 - lastIcon >= ICON) {   // the enemy behind a dangerous slice, below its bar
-                Icon icon = enemyIcon(sl.enemy()[i]);
+                Icon icon = enemyIcon(sl.enemy()[i], fightAt(fights, (long) i * windowMs + windowMs / 2));
                 if (icon != null) {
                     icons.add(new Object[]{icon, x0 + bw / 2 - ICON / 2, base - ICON - 2});   // all on the floor
                     lastIcon = x0;
@@ -342,6 +363,13 @@ final class DamageGraph extends JComponent {
         if (visit.amuletSaves != null) {
             g2.setColor(AMULET);
             for (int t : visit.amuletSaves) g2.fillRect(x(t) - 1, mid + 1, 2, base - mid - 1);
+        }
+        if (visit.diedAt >= 0) {   // your death: a white line over the whole plot, the recap's window shaded before it
+            int xd = x(visit.diedAt), xr = x(visit.diedAt - lootgobbler.DungeonVisits.RECAP_MS);
+            g2.setColor(new Color(255, 255, 255, 28));
+            g2.fillRect(xr, PAD_TOP, xd - xr, base - PAD_TOP);
+            g2.setColor(Color.WHITE);
+            g2.fillRect(xd - 1, PAD_TOP, 2, base - PAD_TOP);
         }
         for (Object[] i : icons) ((Icon) i[0]).paintIcon(this, g2, (int) i[1], (int) i[2]);
         lane(g2, fights, h - lane, w - PAD_RIGHT);
@@ -365,6 +393,7 @@ final class DamageGraph extends JComponent {
             g2.fillRoundRect(x0, barY, x1 - x0, LANE_BAR, 4, 4);
         }
         FontMetrics fm = g2.getFontMetrics();
+        int taken = Integer.MIN_VALUE;   // right end of the last label: overlapping fights' labels go side by side
         for (Fight f : fights) {   // the icons over all bars, each with the fight's length behind it
             int x0 = x(f.from()), x1 = Math.max(x0 + 2, x(f.to()));
             int from = Math.max(x0, PAD_LEFT), to = Math.min(x1, right);
@@ -375,7 +404,8 @@ final class DamageGraph extends JComponent {
             int iw = icon == null ? 0 : icon.getIconWidth(), gap = icon == null ? 0 : 3, tw = fm.stringWidth(len) + 6;
             int width = iw + gap + tw, half = width / 2;   // icon and length move along the bar as one
             int cx = to - from >= width ? Math.max(from + half, Math.min(to - half, (x0 + x1) / 2)) : (from + to) / 2;
-            int left = cx - half, cy = barY + LANE_BAR / 2;
+            int left = Math.max(cx - half, taken + 4), cy = barY + LANE_BAR / 2;
+            taken = left + width;
             if (icon != null) icon.paintIcon(this, g2, left, cy - icon.getIconHeight() / 2);
             int tx = left + iw + gap, th = fm.getAscent() + 2;
             g2.setColor(new Color(0, 0, 0, 170));   // a dark backing, readable over the red bar
@@ -527,10 +557,21 @@ final class DamageGraph extends JComponent {
         return new ImageIcon(out);
     }
 
-    /** The enemy's sprite, or a warning badge for the ground, area effects and enemies with an invisible sprite. */
-    private Icon enemyIcon(int type) {
+    /**
+     * The enemy's sprite. An enemy without one of its own or a named relative (an invisible minion such as the
+     * Spectral Penitentiary's Overseer Eyesmall) shows the boss being fought then, if any; the ground and area effects
+     * without a known source, and the rest, a warning badge.
+     */
+    private Icon enemyIcon(int type, Fight during) {
         Icon icon = type <= 0 ? null : icons.computeIfAbsent(type, DamageGraph::bigIcon);
+        if (icon == null && type > 0 && during != null) icon = icons.computeIfAbsent(during.type(), DamageGraph::bigIcon);
         return icon != null ? icon : icons.computeIfAbsent(0, t -> warning(ICON));
+    }
+
+    /** The boss fight going on at t (ms after entering), or null. */
+    private static Fight fightAt(java.util.List<Fight> fights, long t) {
+        for (Fight f : fights) if (t >= f.from() && t <= f.to()) return f;
+        return null;
     }
 
     /** A small round warning badge ("!"), for a dangerous slice without a recognisable enemy. */
@@ -573,6 +614,9 @@ final class DamageGraph extends JComponent {
         Slices sl = slices(visit, windowMs);
         long[] dealt = dealtSlices(visit, windowMs);
         int i = sliceAt(e.getX());
+        if (visit.diedAt >= 0 && Math.abs(x(visit.diedAt) - e.getX()) <= 3) {
+            return DpsPanel.duration(visit.diedAt) + ":  you died" + (visit.killedBy == null ? "" : " (" + visit.killedBy + ")");
+        }
         if (visit.amuletSaves != null && e.getY() > mid()) {
             for (int t : visit.amuletSaves) {
                 if (Math.abs(x(t) - e.getX()) <= 3) return DpsPanel.duration(t) + ":  your Amulet of Restoration fired";

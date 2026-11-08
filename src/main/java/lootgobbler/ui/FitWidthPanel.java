@@ -5,7 +5,7 @@ import java.awt.*;
 
 /**
  * Holder for scrolled content that always takes the viewport's width: it only ever scrolls vertically, and text
- * too long for the column is shortened ("...") instead of widening the column and adding a horizontal scrollbar.
+ * too long for the column is wrapped onto more lines (LabelFit) instead of widening the column or being cut off.
  * The content sits at the top (BorderLayout.NORTH).
  */
 public class FitWidthPanel extends JPanel implements Scrollable {
@@ -23,6 +23,13 @@ public class FitWidthPanel extends JPanel implements Scrollable {
         sp.setBorder(null);
         sp.getVerticalScrollBar().setUnitIncrement(unitIncrement);
         return sp;
+    }
+
+    /** After each layout: text too long for the column is wrapped onto more lines (see LabelFit). */
+    @Override
+    protected void validateTree() {
+        super.validateTree();
+        LabelFit.fitLater(this);
     }
 
     @Override
