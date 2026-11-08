@@ -322,10 +322,10 @@ public class DpsLoggerView extends JPanel {
     /**
      * You and the guildmates ranked four ways, worst first, each as their character and the value: Most Critical Hits
      * (the damage graph's 2 s slices that took 30% of their life or 300), Biggest Slap (the most damage taken within
-     * one second, in HP), Dodging Bullets (100% - hit%, the lowest first; hit% is how often they were hit for the
-     * time in the dungeon against the server's baseline: HPM / (HPM + baseline HPM) x 100) and the quick slot items
+     * one second, in HP), Most Hit % (how often they were hit for the time in the dungeon against the server's
+     * baseline: HPM / (HPM + baseline HPM) x 100, the highest first) and the quick slot items
      * they used ("none", or "-" when their client does not send them). Below, a podium of who did best over
-     * all four: each player's average place in them (1 = worst), the highest average winning. All from what the
+     * all four: each player's average place in them (1 = best, the lowest value), the lowest average winning. All from what the
      * clients synced.
      */
     private static void facts(JPanel out, List<GuildDamageGraph.Series> series, List<PlayerRow> who, List<Integer> maxHp,
@@ -375,25 +375,25 @@ public class DpsLoggerView extends JPanel {
         grid.setOpaque(false);
         grid.setAlignmentX(LEFT_ALIGNMENT);
         grid.add(fact("Most Critical Hits", series, who, critical, i -> numberLabel(String.valueOf((int) critical[i]))));
-        grid.add(fact("Biggest Slap", series, who, hurt, i -> numberLabel(String.format(Locale.ROOT, "%,dHP", (long) hurt[i]))));
-        // how much of the fire they dodged (100% - hit%): the lowest on top (ordered by hit%, the most hit first)
-        grid.add(fact("Dodging Bullets", series, who, hitPct, i -> numberLabel(String.format(Locale.ROOT, "%.0f%%", 100 - hitPct[i]))));
+        grid.add(fact("Biggest Slap", series, who, hurt, i -> numberLabel(String.format(Locale.ROOT, "%,d HP", (long) hurt[i]))));
+        grid.add(fact("Most Hit %", series, who, hitPct, i -> numberLabel(String.format(Locale.ROOT, "%.0f%%", hitPct[i]))));   // the most hit first
         grid.add(fact("Quickslots Used", series, who, used, i -> quickItems(quick.get(i))));
         out.add(grid);
 
-        // the podium: the average place over the four, the highest (the least often worst) first
+        // the podium: in every fact the highest value is the worst and the lowest the best; the average place over
+        // the four (1 = best), the lowest first
         double[] average = new double[n];
         for (double[] values : List.of(critical, hurt, hitPct, used)) {
             for (int i = 0; i < n; i++) average[i] += place(values, i) / 4.0;
         }
         List<Integer> best = new ArrayList<>();
         for (int i = 0; i < n; i++) best.add(i);
-        best.sort((a, b) -> Double.compare(average[b], average[a]));
+        best.sort((a, b) -> Double.compare(average[a], average[b]));
         List<Podium.Place> places = new ArrayList<>();
         for (int k = 0; k < Math.min(3, n); k++) {
             int i = best.get(k);
             places.add(new Podium.Place(series.get(i).name(), look(series.get(i), who.get(i), k == 0 ? PODIUM_FIRST : PODIUM_LOOK),
-                    String.format(Locale.ROOT, "%s: average place %.2f of %d (1 = worst)", series.get(i).name(), average[i], n)));
+                    String.format(Locale.ROOT, "%s: average place %.2f of %d (1 = best)", series.get(i).name(), average[i], n)));
         }
         out.add(Box.createVerticalStrut(20));
         Podium podium = new Podium(places);
@@ -401,10 +401,10 @@ public class DpsLoggerView extends JPanel {
         out.add(podium);
     }
 
-    /** The player's place in one fact, 1 for the highest value (the worst); equal values share a place. */
+    /** The player's place in one fact, 1 for the lowest value (the best); equal values share a place. */
     private static int place(double[] values, int i) {
         int place = 1;
-        for (double v : values) if (v > values[i]) place++;
+        for (double v : values) if (v < values[i]) place++;
         return place;
     }
 
