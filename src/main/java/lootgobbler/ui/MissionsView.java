@@ -146,6 +146,14 @@ public class MissionsView extends JPanel {
         picked.removeIf(k -> !views.containsKey(k) || !hasPath(views.get(k)) || hidden.contains("season:" + views.get(k).season().id));
         Set<String> pathKeys = new HashSet<>();
         for (Path p : paths()) pathKeys.addAll(p.missions());
+        // with arrows drawn: the missions on them you can do now glow, everything else is greyed out
+        pathView = !picked.isEmpty();
+        Set<String> now = new HashSet<>();
+        for (String k : pathKeys) {
+            Status s = views.get(k).status();
+            if (s == Status.IN_PROGRESS || s == Status.CLAIMABLE) now.add(k);   // claimed or locked: nothing to do now
+        }
+        startNow = now;
         // only what your character can do (a mission on a drawn path stays, faded, so the path is whole)
         if (!allMissions && character != null) {
             claimable.removeIf(v -> forYou(v.mission()) != null && !pathKeys.contains(key(v)));
@@ -160,7 +168,12 @@ public class MissionsView extends JPanel {
             hint.setBorder(new EmptyBorder(6, 0, 0, 0));
             body.add(left(hint));
         }
-        JPanel rows = new JPanel();
+        JPanel rows = new JPanel() {
+            @Override
+            protected void paintComponent(Graphics g) {
+                paintHalos(this, this, g);   // the glow behind bars, here so no row or column cuts it off
+            }
+        };
         rows.setLayout(new BoxLayout(rows, BoxLayout.Y_AXIS));
         rows.setOpaque(false);
         rows.setBorder(new EmptyBorder(10, GUTTER, 0, GUTTER));   // the arrows run left of the rows (as much room right: centered)
@@ -168,13 +181,13 @@ public class MissionsView extends JPanel {
         for (View v : claimable) {
             JComponent row = row(v, index++);
             body.rows.put(key(v), row);
-            rows.add(left(row));
+            addRow(rows, row);
         }
-        if (!hidden.contains(TINKERER_KEY)) for (lootgobbler.TinkererQuests.Quest q : tinkerer) rows.add(left(tinkererRow(q)));
+        if (!hidden.contains(TINKERER_KEY)) for (lootgobbler.TinkererQuests.Quest q : tinkerer) addRow(rows, tinkererRow(q));
         for (View v : rest) {
             JComponent row = row(v, index++);
             body.rows.put(key(v), row);
-            rows.add(left(row));
+            addRow(rows, row);
         }
         if (rows.getComponentCount() == 0) {
             JLabel none = muted(hidden.size() > all.size() ? "Pick the Tinkerer or a battle pass above to see their quests."
@@ -192,6 +205,15 @@ public class MissionsView extends JPanel {
         body.paths = paths();
         body.revalidate();
         body.repaint();
+    }
+
+    private static final int ROW_GAP = 10;
+    private static final int FRAME_ARC = 16;   // the round corners of a row's frame   // between rows: room for the glow, the same with or without paths
+
+    /** A row added to the list, a fixed gap above it (but the first). */
+    private static void addRow(JPanel rows, JComponent row) {
+        if (rows.getComponentCount() > 0) rows.add(Box.createVerticalStrut(ROW_GAP));
+        rows.add(left(row));
     }
 
     // ---- the cards on top ------------------------------------------------------------------------------------------
@@ -396,38 +418,30 @@ public class MissionsView extends JPanel {
         Icon icon = q.rewards.length > 0 ? itemIcon(q.rewards[0], 36) : null;
         cell(row, c, 0, W_ICON, new JLabel(icon != null ? icon : CharactersView.sprite(lootgobbler.TinkererQuests.TINKERER, 36)));
         cell(row, c, 1, W_KIND, tag("TINKERER", new Color(0xA48CF0)));
-        JPanel state = column();
-        JLabel st = new JLabel(q.completed ? "Done" : "Hand in");
-        st.setForeground(q.completed ? CLAIMED : IN_PROGRESS);
-        state.add(st);
-        String ends = endsIn(q.expiration);
-        if (ends != null) state.add(small(muted(ends)));
-        else if (q.repeatable) state.add(small(muted("↻ Repeatable")));
-        cell(row, c, 2, W_STATE, state);
         JPanel name = column();
         JLabel n = new JLabel(q.name);
         n.setFont(n.getFont().deriveFont(17f));
         name.add(n);
-        name.add(small(muted("The Tinkerer")));
-        cell(row, c, 3, W_NAME, name);
-        JPanel goal = column();
-        goal.add(small(new JLabel("Hand in:")));
+        String ends = endsIn(q.expiration);
+        name.add(small(muted("The Tinkerer" + (ends != null ? "  ·  " + ends : ""))));
+        cell(row, c, 2, W_NAME, name);
+        // the items to hand in (every Tinkerer quest is a hand-in), on the right: next to the arrow to what you get
         JPanel items = itemsCounted(q.requirements);
-        items.setAlignmentX(LEFT_ALIGNMENT);
-        goal.add(items);
-        cell(row, c, 4, W_GOAL, goal);
-        JPanel rewards = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
-        rewards.setOpaque(false);
-        rewards.add(muted("→  "));
-        if (q.itemOfChoice && q.rewards.length > 1) rewards.add(muted("["));
-        for (int i = 0; i < q.rewards.length; i++) {
-            if (i > 0) rewards.add(q.itemOfChoice ? small(muted("or")) : muted("+"));
-            rewards.add(itemLabel(q.rewards[i]));
-        }
-        if (q.itemOfChoice && q.rewards.length > 1) rewards.add(muted("]"));
+        ((FlowLayout) items.getLayout()).setAlignment(FlowLayout.RIGHT);
+        items.setPreferredSize(new Dimension(W_GOAL - 8, Math.max(32, items.getPreferredSize().height)));
+        cell(row, c, 3, W_GOAL + W_LINK, linked(items, false));
         List<JComponent> parts = new ArrayList<>();
-        for (Component part : rewards.getComponents()) parts.add((JComponent) part);
-        cell(row, c, 5, W_REWARD, packed(parts, W_REWARD));
+        if (q.itemOfChoice && q.rewards.length > 1) {
+            List<JComponent> options = new ArrayList<>();
+            for (int id : q.rewards) options.add(itemLabel(id));
+            parts.add(choices(options, 1, false));
+        } else {
+            for (int i = 0; i < q.rewards.length; i++) {
+                if (i > 0) parts.add(muted("+"));
+                parts.add(itemLabel(q.rewards[i]));
+            }
+        }
+        cell(row, c, 4, W_REWARD, packed(parts, W_REWARD));
         if (q.description != null && !q.description.isBlank()) row.setToolTipText(q.description);
         return row;
     }
@@ -451,7 +465,7 @@ public class MissionsView extends JPanel {
 
     private static JLabel itemLabel(int id) {
         ItemDb.Item item = id > 0 ? ItemDb.get().item(id) : null;
-        Icon icon = itemIcon(id, 28);
+        Icon icon = itemIcon(id, REWARD_ICON);
         JLabel l = new JLabel(icon);
         String name = item != null && !item.name.isEmpty() ? item.name : "Item " + id;
         l.setToolTipText(name);
@@ -575,7 +589,7 @@ public class MissionsView extends JPanel {
                     Rectangle r = rect(k);
                     if (r == null) continue;
                     g2.setStroke(new BasicStroke(k.equals(p.target()) ? 3f : 1.5f));
-                    g2.drawRect(r.x + 1, r.y + 1, r.width - 3, r.height - 3);
+                    g2.drawRoundRect(r.x + 1, r.y + 1, r.width - 3, r.height - 3, FRAME_ARC, FRAME_ARC);
                 }
                 g2.setStroke(new BasicStroke(2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND, 1f, new float[]{2f, 6f}, i * 2f));
                 for (String[] e : p.edges()) {
@@ -622,7 +636,7 @@ public class MissionsView extends JPanel {
     // ---- a row -------------------------------------------------------------------------------------------------
 
     // every row as wide (the rewards too, wrapping onto more lines), so the list stands in the middle
-    private static final int W_ICON = 44, W_KIND = 92, W_STATE = 118, W_NAME = 230, W_GOAL = 250, W_REWARD = 330;
+    private static final int W_ICON = 44, W_KIND = 92, W_NAME = 230, W_GOAL = 218, W_REWARD = 330;   // objectives: the bars and a little more of their text
 
     /** The parts in lines left to right, a new line when the next part does not fit the width. */
     private static JComponent packed(List<JComponent> parts, int width) {
@@ -644,18 +658,37 @@ public class MissionsView extends JPanel {
         return lines;
     }
 
+    private boolean pathView;                  // arrows are drawn
+    private Set<String> startNow = Set.of();   // on them: the missions you can do now
+
     /** One mission: icon, kind, state, name and tree, objectives with bars, then its rewards. */
     private JComponent row(View v, int index) {
+        boolean glow = pathView && startNow.contains(key(v)), grey = pathView && !glow;
         Mission m = v.mission();
         String notForYou = character == null ? null : forYou(m);
         boolean faded = v.status() == Status.CLAIMED || v.status() == Status.COOLDOWN || v.status() == Status.LOCKED || notForYou != null;
         JPanel row = new JPanel(new GridBagLayout()) {
             @Override
+            public void paint(Graphics g) {
+                if (!grey) {
+                    super.paint(g);
+                    return;
+                }
+                Graphics2D g2 = (Graphics2D) g.create();   // done or not to be done yet: faded
+                g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.35f));
+                super.paint(g2);
+                g2.dispose();
+            }
+
+            @Override
             protected void paintComponent(Graphics g) {
                 if (v.status() == Status.CLAIMABLE) {   // ready: a gold frame
-                    g.setColor(CLAIMABLE);
-                    g.drawRect(0, 0, getWidth() - 1, getHeight() - 1);
-                    g.drawRect(1, 1, getWidth() - 3, getHeight() - 3);
+                    Graphics2D g2 = (Graphics2D) g.create();
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                    g2.setColor(CLAIMABLE);
+                    g2.setStroke(new BasicStroke(2f));
+                    g2.drawRoundRect(1, 1, getWidth() - 3, getHeight() - 3, FRAME_ARC, FRAME_ARC);
+                    g2.dispose();
                 }
             }
 
@@ -674,42 +707,29 @@ public class MissionsView extends JPanel {
         cell(row, c, 0, W_ICON, icon);
         cell(row, c, 1, W_KIND, kind(m));
 
-        JPanel state = column();
-        JLabel st = new JLabel(stateText(v));
-        st.setForeground(switch (v.status()) {
-            case CLAIMABLE -> CLAIMABLE;
-            case IN_PROGRESS -> IN_PROGRESS;
-            case CLAIMED, COOLDOWN -> CLAIMED;
-            default -> Palette.MUTED;
-        });
-        state.add(st);
-        if (v.status() == Status.COOLDOWN) state.add(small(muted("Resets in " + span(Math.max(0, v.resetsAt() - System.currentTimeMillis() / 1000)))));
-        else if (m.repeatable()) state.add(small(muted("↻ Repeatable")));
-        boolean path = hasPath(v);
-        if (path) {   // what it waits for: a click draws the way there
-            int n = waitsFor(v).size();
-            JLabel after = small(new JLabel("⤴ after " + n + (n == 1 ? " mission" : " missions")));
-            after.setForeground(PATH_COLORS[0]);
-            state.add(after);
-        }
-        cell(row, c, 2, W_STATE, state);
-
         JPanel name = column();
         JLabel n = new JLabel(m.name.replace("(Repeatable)", "").trim());
         n.setFont(n.getFont().deriveFont(17f));
         if (faded) n.setForeground(Palette.MUTED);
         name.add(n);
         name.add(small(muted(v.season().name)));
+        boolean path = hasPath(v);
+        if (path) {   // locked, waiting for others: a click draws the way there
+            int count = waitsFor(v).size();
+            JLabel after = small(new JLabel("⤴ Locked: after " + count + (count == 1 ? " mission" : " missions")));
+            after.setForeground(PATH_COLORS[0]);
+            name.add(after);
+        }
         if (notForYou != null) {   // your character makes no progress on it
             JLabel no = small(new JLabel(notForYou));
             no.setForeground(new Color(0xE0679C));
             name.add(no);
         }
-        cell(row, c, 3, W_NAME, name);
+        cell(row, c, 2, W_NAME, name);
 
-        cell(row, c, 4, W_GOAL, goals(v));
+        cell(row, c, 3, W_GOAL + W_LINK, linked(goals(v, pathView, glow), v.mission().conds.size() > 1));
 
-        cell(row, c, 5, W_REWARD, rewards(m, faded));
+        cell(row, c, 4, W_REWARD, rewards(m, faded));
 
         row.setCursor(Cursor.getPredefinedCursor(path ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
         if (path) row.setToolTipText("Show the missions that lead to this one");
@@ -732,15 +752,6 @@ public class MissionsView extends JPanel {
         c.gridx = x;
         c.weightx = 0;
         row.add(box, c);
-    }
-
-    private static String stateText(View v) {
-        return switch (v.status()) {
-            case CLAIMABLE -> "Claimable";
-            case IN_PROGRESS -> "In progress";
-            case COOLDOWN, CLAIMED -> "Claimed";
-            case LOCKED -> "Locked";
-        };
     }
 
     private static final Map<String, Icon> ICONS = new HashMap<>();   // by "sheet/index"
@@ -834,10 +845,60 @@ public class MissionsView extends JPanel {
         return at;
     }
 
+    private static final int HALO = 12;   // how far the glow behind a bar reaches past it
+    private static final String HALO_KEY = "mission.halo";
+    private static final Map<Long, java.awt.image.BufferedImage> HALOS = new HashMap<>();
+
+    /**
+     * A soft gold glow for a bar of the given size: the bar's shape, blurred so it fades out to nothing within
+     * {@link #HALO} pixels around it (the image is that much larger on every side, and fully clear at its edge).
+     */
+    private static java.awt.image.BufferedImage halo(int w, int h) {
+        w = Math.max(1, w);
+        h = Math.max(1, h);
+        long key = (long) w << 32 | h;
+        java.awt.image.BufferedImage cached = HALOS.get(key);
+        if (cached != null) return cached;
+        // the blur leaves its own edge empty, so it works on a canvas one blur radius larger still, cut back after
+        int r = HALO, size = HALO + r;
+        java.awt.image.BufferedImage img = new java.awt.image.BufferedImage(w + 2 * size, h + 2 * size, java.awt.image.BufferedImage.TYPE_INT_ARGB_PRE);
+        Graphics2D g2 = img.createGraphics();
+        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        // premultiplied, so the blur fades the gold out instead of mixing it with the clear pixels' black;
+        // a little larger than the bar, so the light shows around it
+        g2.setColor(new Color(255, 200, 40, 215));
+        g2.fillRoundRect(size - 3, size - 3, w + 6, h + 6, h + 6, h + 6);
+        g2.dispose();
+        // a gaussian blur, across and then down; sigma a third of the reach, so at the image's edge it is gone
+        double sigma = r / 3.0;
+        float[] k = new float[2 * r + 1];
+        float sum = 0;
+        for (int i = -r; i <= r; i++) sum += k[i + r] = (float) Math.exp(-(i * i) / (2 * sigma * sigma));
+        for (int i = 0; i < k.length; i++) k[i] /= sum;
+        java.awt.image.ConvolveOp across = new java.awt.image.ConvolveOp(new java.awt.image.Kernel(k.length, 1, k), java.awt.image.ConvolveOp.EDGE_ZERO_FILL, null);
+        java.awt.image.ConvolveOp down = new java.awt.image.ConvolveOp(new java.awt.image.Kernel(1, k.length, k), java.awt.image.ConvolveOp.EDGE_ZERO_FILL, null);
+        java.awt.image.BufferedImage out = down.filter(across.filter(img, null), null).getSubimage(r, r, w + 2 * HALO, h + 2 * HALO);
+        if (HALOS.size() > 200) HALOS.clear();
+        HALOS.put(key, out);
+        return out;
+    }
+
+    /** Paints the glow behind every bar marked for it among the given container's descendants, onto {@code on}. */
+    private static void paintHalos(Container in, JComponent on, Graphics g) {
+        for (Component c : in.getComponents()) {
+            if (!c.isVisible()) continue;
+            if (c instanceof JComponent j && j.getClientProperty(HALO_KEY) != null) {
+                Rectangle b = SwingUtilities.convertRectangle(in, c.getBounds(), on);
+                g.drawImage(halo(b.width, b.height), b.x - HALO, b.y - HALO, null);
+            }
+            if (c instanceof Container box) paintHalos(box, on, g);
+        }
+    }
+
     /** Each objective: what it asks, a bar with how far you are; "One of" before alternatives. */
-    private static JComponent goals(View v) {
+    private static JComponent goals(View v, boolean greyDone, boolean glow) {
         Mission m = v.mission();
-        JPanel p = column();
+        JPanel p = column();   // the bars still to fill on a mission you can do now glow (see paintHalos)
         boolean done = v.status() == Status.CLAIMED || v.status() == Status.COOLDOWN;
         for (String w : m.worn()) {
             JLabel need = small(new JLabel("Requires " + w + " equipped"));
@@ -859,45 +920,252 @@ public class MissionsView extends JPanel {
                 one.setForeground(new Color(0x3FC4D6));
                 p.add(one);
             }
+            // a choice already made (one of them met): the others need nothing either
+            boolean groupMet = false;
+            for (int i : g) if (done || (i < v.progress().length && v.progress()[i] >= Math.max(1, m.conds.get(i).amount))) groupMet = true;
             for (int i : g) {
                 Missions.Cond cond = m.conds.get(i);
                 int need = Math.max(1, cond.amount);
                 int have = done ? need : Math.min(i < v.progress().length ? v.progress()[i] : 0, need);
+                boolean met = have >= need;
+                boolean toDo = !met && !(g.size() > 1 && groupMet);
+                // what is still to do on a mission you can do now: a soft gold light behind it
+                JPanel obj = new JPanel();
+                obj.setLayout(new BoxLayout(obj, BoxLayout.Y_AXIS));
+                obj.setOpaque(false);
+                obj.setBorder(new EmptyBorder(1, 2, 3, 2));
+                obj.setAlignmentX(LEFT_ALIGNMENT);
                 JLabel text = small(new JLabel(cond.text()));
-                if (v.status() == Status.LOCKED) text.setForeground(Palette.MUTED);
-                p.add(text);
+                text.setAlignmentX(LEFT_ALIGNMENT);
+                if (v.status() == Status.LOCKED || (greyDone && !toDo)) text.setForeground(Palette.MUTED);   // nothing to do there
+                obj.add(text);
                 JProgressBar bar = new JProgressBar(0, need);
                 bar.setValue(have);
                 bar.setStringPainted(true);
                 bar.putClientProperty("FlatLaf.style", "arc: 14");   // round ends (the theme's bars are square)
                 bar.setString(String.format(Locale.ENGLISH, "%,d/%,d", have, need));
-                if (have >= need) bar.setForeground(CLAIMED);   // green: the white numbers stay readable
-                bar.setPreferredSize(new Dimension(W_GOAL - 40, 14));
+                if (met) bar.setForeground(greyDone ? Palette.MUTED : CLAIMED);   // green: the white numbers stay readable
+                bar.setPreferredSize(new Dimension(W_BAR, 14));
                 bar.setMaximumSize(bar.getPreferredSize());
                 bar.setAlignmentX(LEFT_ALIGNMENT);
-                p.add(bar);
-                p.add(Box.createVerticalStrut(2));
+                if (glow && toDo) bar.putClientProperty(HALO_KEY, true);
+                obj.add(bar);
+                obj.setMaximumSize(new Dimension(W_GOAL, obj.getPreferredSize().height));
+                p.add(obj);
             }
         }
         return p;
     }
 
-    /** "→ 4,500 BXP + [a or b] + c": the points and the items, alternatives in brackets. */
-    private static JComponent rewards(Mission m, boolean faded) {
-        List<JComponent> row = new ArrayList<>();
-        row.add(muted("→  "));
-        boolean first = true;
-        for (List<Missions.Reward> group : m.rewardGroups()) {
-            if (!first) row.add(muted("+"));
-            first = false;
-            if (group.size() > 1) row.add(muted("["));
-            for (int i = 0; i < group.size(); i++) {
-                if (i > 0) row.add(small(muted("or")));
-                row.add(reward(group.get(i), faded));
+    private static final int W_BAR = 210;
+    private static final int W_LINK = 58;   // the arrow (and swoosh) from the objectives to the rewards
+
+    /**
+     * The objectives with the arrow to the rewards on their right, in the middle; with several objectives, a brush
+     * swoosh along their right side gathers them into the arrow, so they read as one package. Every row's arrow
+     * stands at the same place.
+     */
+    private static JComponent linked(JComponent goals, boolean bracket) {
+        JPanel p = new JPanel(new BorderLayout());
+        p.setOpaque(false);
+        JPanel left = new JPanel(new BorderLayout());
+        left.setOpaque(false);
+        left.add(goals, BorderLayout.WEST);
+        left.setPreferredSize(new Dimension(W_GOAL, goals.getPreferredSize().height));
+        p.add(left, BorderLayout.CENTER);
+        JComponent link = new JComponent() {
+            @Override
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                Color gold = Section.color("LootGobbler.gold", Palette.GOLD);
+                g2.setColor(new Color(gold.getRed(), gold.getGreen(), gold.getBlue(), 215));
+                int w = getWidth();
+                double h = getHeight(), mid = h / 2, join = w - 13;
+                if (bracket) {
+                    // its ends at the first and the last bar, the point in the middle of the objectives
+                    double top = 4, bottom = h - 4;
+                    JProgressBar first = bar(goals, true), last = bar(goals, false);
+                    if (first != null && last != null) {
+                        Rectangle f = SwingUtilities.convertRectangle(first.getParent(), first.getBounds(), this);
+                        Rectangle l = SwingUtilities.convertRectangle(last.getParent(), last.getBounds(), this);
+                        top = f.y - 4;
+                        bottom = l.y + l.height + 1;
+                        mid = Math.min(h, l.y + l.height + 4) / 2;
+                    }
+                    // a thick stroke swings out at the top and comes down into the arrow; a thin tail curls up
+                    // from below to meet it (a short one swings out less)
+                    double span = mid - top, reach = Math.min(1, Math.max(0, span) / 40);
+                    brush(g2, new java.awt.geom.CubicCurve2D.Double(1, top, w * (0.45 + 0.4 * reach), top - 5,
+                            w * 0.12, mid - span * 0.15, join, mid), 3.5f, 6.5f, 4.5f);
+                    brush(g2, new java.awt.geom.CubicCurve2D.Double(0, bottom, w * 0.5, bottom + 2,
+                            w * 0.3, mid + (bottom - mid) * 0.2, join, mid + 0.5), 1f, 2.8f, 4.5f);
+                } else {   // one gentle wave, thin where it starts
+                    brush(g2, new java.awt.geom.CubicCurve2D.Double(2, mid + 5, w * 0.3, mid + 9, w * 0.45, mid - 7, join, mid),
+                            1f, 4.5f, 4.5f);
+                }
+                arrowHead(g2, w - 3, mid, 9);
+                g2.dispose();
             }
-            if (group.size() > 1) row.add(muted("]"));
+        };
+        link.setPreferredSize(new Dimension(W_LINK, 20));
+        p.add(link, BorderLayout.EAST);
+        return p;
+    }
+
+    /** The first (or last) progress bar inside the container, or null. */
+    private static JProgressBar bar(Container in, boolean first) {
+        Component[] cs = in.getComponents();
+        for (int k = 0; k < cs.length; k++) {
+            Component c = cs[first ? k : cs.length - 1 - k];
+            if (c instanceof JProgressBar found) return found;
+            if (c instanceof Container box) {
+                JProgressBar found = bar(box, first);
+                if (found != null) return found;
+            }
         }
-        return packed(row, W_REWARD);
+        return null;
+    }
+
+    /** A brush stroke along the curve, its width going from w0 at the start through wm halfway to w1 at the end. */
+    private static void brush(Graphics2D g, Shape curve, float w0, float wm, float w1) {
+        List<java.awt.geom.Point2D> pts = new ArrayList<>();
+        java.awt.geom.PathIterator it = new java.awt.geom.FlatteningPathIterator(curve.getPathIterator(null), 0.25);
+        float[] c = new float[6];
+        for (; !it.isDone(); it.next()) {
+            it.currentSegment(c);
+            pts.add(new java.awt.geom.Point2D.Float(c[0], c[1]));
+        }
+        int n = pts.size();
+        if (n < 2) return;
+        double[] len = new double[n];
+        for (int i = 1; i < n; i++) len[i] = len[i - 1] + pts.get(i).distance(pts.get(i - 1));
+        // the outline: one side forwards, the other back
+        java.awt.geom.Path2D outline = new java.awt.geom.Path2D.Double();
+        List<java.awt.geom.Point2D> back = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            java.awt.geom.Point2D at = pts.get(i), next = pts.get(Math.min(n - 1, i + 1)), prev = pts.get(Math.max(0, i - 1));
+            double dx = next.getX() - prev.getX(), dy = next.getY() - prev.getY(), d = Math.max(1e-6, Math.hypot(dx, dy));
+            double t = len[i] / Math.max(1e-6, len[n - 1]);
+            double width = t < 0.5 ? w0 + (wm - w0) * ease(t * 2) : wm + (w1 - wm) * ease((t - 0.5) * 2);
+            double nx = -dy / d * width / 2, ny = dx / d * width / 2;
+            if (i == 0) outline.moveTo(at.getX() + nx, at.getY() + ny);
+            else outline.lineTo(at.getX() + nx, at.getY() + ny);
+            back.add(new java.awt.geom.Point2D.Double(at.getX() - nx, at.getY() - ny));
+        }
+        for (int i = back.size() - 1; i >= 0; i--) outline.lineTo(back.get(i).getX(), back.get(i).getY());
+        outline.closePath();
+        g.fill(outline);
+        // round ends
+        java.awt.geom.Point2D s = pts.get(0), e = pts.get(n - 1);
+        g.fill(new java.awt.geom.Ellipse2D.Double(s.getX() - w0 / 2, s.getY() - w0 / 2, w0, w0));
+        g.fill(new java.awt.geom.Ellipse2D.Double(e.getX() - w1 / 2, e.getY() - w1 / 2, w1, w1));
+    }
+
+    private static double ease(double t) {
+        return t * t * (3 - 2 * t);
+    }
+
+    /** A slim arrowhead with a hollow back, its tip at (x, y), pointing right. */
+    private static void arrowHead(Graphics2D g, double x, double y, double size) {
+        java.awt.geom.Path2D head = new java.awt.geom.Path2D.Double();
+        head.moveTo(x, y);
+        head.lineTo(x - size * 1.25, y - size * 0.8);
+        head.quadTo(x - size * 0.8, y, x - size * 1.25, y + size * 0.8);
+        head.closePath();
+        g.fill(head);
+    }
+
+    private static final int REWARD_ICON = 34;   // a reward item's picture
+
+    /**
+     * The items on top, alternatives (pick one) side by side with a slim divider between them, items you all get
+     * joined by "+"; the battle pass points below them, on the left.
+     */
+    private static JComponent rewards(Mission m, boolean faded) {
+        List<JComponent> items = new ArrayList<>(), points = new ArrayList<>();
+        for (List<Missions.Reward> group : m.rewardGroups()) {
+            if (group.size() == 1 && group.get(0).type == 1) {
+                points.add(reward(group.get(0), faded));
+                continue;
+            }
+            if (!items.isEmpty()) items.add(muted("+"));
+            if (group.size() == 1) {
+                items.add(reward(group.get(0), faded));
+                continue;
+            }
+            // to pick from: in lines as tall as the objectives beside it (one line up to 2 bars, then one more line
+            // for each further bar), as many on each line as can be
+            List<JComponent> options = new ArrayList<>();
+            for (Missions.Reward r : group) options.add(reward(r, faded));
+            items.add(choices(options, Math.max(1, m.conds.size() - 1), faded));
+        }
+        if (items.isEmpty()) return packed(points, W_REWARD);
+        JPanel p = column();
+        JComponent top = packed(items, W_REWARD);
+        top.setAlignmentX(LEFT_ALIGNMENT);
+        p.add(top);
+        if (!points.isEmpty()) {
+            List<JComponent> below = new ArrayList<>();
+            for (JComponent pt : points) {
+                if (!below.isEmpty()) below.add(muted("+"));
+                below.add(pt);
+            }
+            JComponent bottom = packed(below, W_REWARD);
+            bottom.setAlignmentX(LEFT_ALIGNMENT);
+            p.add(bottom);
+        }
+        return p;
+    }
+
+    /**
+     * Rewards to pick one of, in the given number of lines (more when they do not fit the width), spread as evenly
+     * as can be (10 in 3 lines: 4, 3, 3), a divider between neighbours on a line.
+     */
+    private static JComponent choices(List<JComponent> options, int lines, boolean faded) {
+        int n = options.size(), widest = 0;
+        for (JComponent o : options) widest = Math.max(widest, o.getPreferredSize().width);
+        int step = widest + 12 + 8;   // an option, a divider, the gaps beside it
+        int fit = Math.max(1, (W_REWARD + 12 + 8) / step);
+        lines = Math.min(n, Math.max(lines, (n + fit - 1) / fit));
+        JPanel p = column();
+        int at = 0;
+        for (int line = 0; line < lines; line++) {
+            int count = n / lines + (line < n % lines ? 1 : 0);
+            JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 1));
+            row.setOpaque(false);
+            row.setAlignmentX(LEFT_ALIGNMENT);
+            for (int i = 0; i < count; i++) {
+                if (i > 0) row.add(optionDivider(faded));
+                JComponent o = options.get(at++);
+                o.setPreferredSize(new Dimension(widest, o.getPreferredSize().height));   // the dividers line up
+                row.add(o);
+            }
+            p.add(row);
+        }
+        return p;
+    }
+
+    /** Between two rewards to pick from: a slim gold line with small end caps, as between a character's packs. */
+    private static JComponent optionDivider(boolean faded) {
+        JComponent d = new JComponent() {
+            @Override
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                Color gold = faded ? Palette.MUTED : Section.color("LootGobbler.gold", Palette.GOLD);
+                g2.setColor(new Color(gold.getRed(), gold.getGreen(), gold.getBlue(), 170));
+                g2.setStroke(new BasicStroke(2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                int x = getWidth() / 2, y0 = 2, y1 = getHeight() - 3;
+                g2.drawLine(x, y0, x, y1);
+                g2.drawLine(x - 3, y0, x + 3, y0);
+                g2.drawLine(x - 3, y1, x + 3, y1);
+                g2.dispose();
+            }
+        };
+        d.setPreferredSize(new Dimension(12, REWARD_ICON + 8));
+        d.setToolTipText("Pick one");
+        return d;
     }
 
     private static JComponent reward(Missions.Reward r, boolean faded) {
@@ -910,7 +1178,7 @@ public class MissionsView extends JPanel {
         int id = r.itemId();
         Image img = id > 0 ? CollectionGrid.icon(id) : null;
         ItemDb.Item item = id > 0 ? ItemDb.get().item(id) : null;
-        JLabel l = new JLabel(r.amount > 1 ? "x" + r.amount : "", img == null ? null : new ImageIcon(img.getScaledInstance(28, 28, Image.SCALE_FAST)),
+        JLabel l = new JLabel(r.amount > 1 ? "x" + r.amount : "", img == null ? null : new ImageIcon(img.getScaledInstance(REWARD_ICON, REWARD_ICON, Image.SCALE_FAST)),
                 SwingConstants.LEFT);
         l.setIconTextGap(2);
         l.setToolTipText(item != null && !item.name.isEmpty() ? item.name : "Item " + id);
