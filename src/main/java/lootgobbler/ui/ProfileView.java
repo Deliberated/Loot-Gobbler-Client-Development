@@ -80,8 +80,10 @@ public class ProfileView extends SubTabs {
         holder.setOpaque(false);
         holder.add(body, BorderLayout.NORTH);
         page("Overview", FitWidthPanel.scroll(holder, 24));
+        page("Quests", new MissionsView());   // the Tinkerer's quests and the battle pass missions
         page("Dungeon Stats", dungeonStats);
         done();
+        disablePage("Dungeon Stats");   // greyed out for now
 
         Runnable later = ViewRefresh.of(this, this::refresh);   // only while it can be seen, once per burst
         CharacterStore.get().onChange(later);

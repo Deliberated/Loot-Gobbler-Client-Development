@@ -386,10 +386,12 @@ public final class DpsHistory implements Syncable {
         return run;
     }
 
+    private static final long TEST_MS = 6000;   // a shooting range test takes 5 seconds: a block lasts at most this long
+
     /**
-     * A guild hall visit: one block (shown with the weapon rack) per loadout you shot with, in order, holding your
-     * damage. Every hit carries your equipment at that moment; a new block starts whenever it differs from your
-     * previous hit. Nothing is shown until you hit something yourself.
+     * A guild hall visit: one block (shown with the weapon rack) per test, in order, holding your damage. A block
+     * lasts at most 6 seconds from its first hit (a test takes 5); every hit carries your equipment at that moment, and
+     * a new block also starts whenever it differs from your previous hit. Nothing is shown until you hit something.
      */
     private static Run shootingRange(Collection<Entity> hitList, long durationMs) {
         List<Damage> mine = new ArrayList<>();
@@ -408,10 +410,13 @@ public final class DpsHistory implements Syncable {
         Boss block = null;
         for (Damage d : mine) {
             int[] loadout = d.ownerInvntory == null ? null : Arrays.copyOf(d.ownerInvntory, 4);
-            if (block == null || !Arrays.equals(block.loadout, loadout)) {
+            // a new block with another loadout, and for every test: one lasts 5 seconds, so a block ends 6 seconds
+            // after its first hit
+            boolean newTest = block != null && d.time - spans.get(spans.size() - 1)[0] >= TEST_MS;
+            if (block == null || newTest || !Arrays.equals(block.loadout, loadout)) {
                 block = new Boss();
                 block.id = run.bosses.size() + 1;
-                block.name = "Loadout " + block.id;
+                block.name = "Test " + block.id;
                 block.objectType = WEAPON_RACK;
                 block.loadout = loadout;
                 PlayerRow you = new PlayerRow();

@@ -40,6 +40,11 @@ public class SubTabs extends JPanel {
         return this;
     }
 
+    /** Greys a page's button out (after done()): the page can no longer be opened. */
+    public void disablePage(String name) {
+        if (buttons != null) buttons.disable(names.indexOf(name));
+    }
+
     /**
      * Opens a page from code, as if its button was clicked.
      */

@@ -50,6 +50,11 @@ public class DpsLoggerView extends JPanel {
     private Visit nowVisit;
     private final JPanel detail = new JPanel();
     private final Map<Long, Long> fame = new HashMap<>();   // fame gained per finished visit (by its start)
+    private final Map<Long, Boolean> done = new HashMap<>();   // whether a finished visit was completed (by its start)
+    private final java.util.Set<java.time.LocalDate> openDays = new java.util.HashSet<>();   // days showing their summary
+    private Map<java.time.LocalDate, DaySum> daySums = new HashMap<>();   // per day in the list, from the last refresh
+    private Map<java.time.LocalDate, long[]> bagDays;   // white and orange bags per day (cached: from the whole collection)
+    private long bagDaysAt;
     private final List<DamageGraph> graphs = new ArrayList<>();   // of the visit shown on the right (one per slice size)
     private final List<JLabel> graphCaptions = new ArrayList<>();
     private JLabel takenStats;
@@ -196,6 +201,7 @@ public class DpsLoggerView extends JPanel {
             empty.setForeground(Palette.MUTED);
             list.add(empty);
         }
+        daySums = daySums(visits, now);
         java.time.LocalDate day = null;
         JPanel grid = null;
         if (now != null) {
@@ -872,17 +878,129 @@ public class DpsLoggerView extends JPanel {
         return fame.computeIfAbsent(v.start, k -> DungeonVisits.fameGained(v));
     }
 
+    private static java.time.LocalDate dayAt(long epochMs) {
+        return Instant.ofEpochMilli(epochMs).atZone(ZoneId.systemDefault()).toLocalDate();
+    }
+
     private static java.time.LocalDate dayOf(Visit v) {
         return Instant.ofEpochMilli(v.start).atZone(ZoneId.systemDefault()).toLocalDate();
     }
 
+    /** What a day in the list adds up to: its bags, exaltations, completed dungeons, fame and exalt dungeons. */
+    private static final class DaySum {
+        int white, orange, exalts, completed, exaltDungeons;
+        int bestItem, bestEnchants = -1;   // the rarest item dropped that day (its enchantments); -1 = none known
+        long fame;
+    }
+
+    private static final int EXALT_CAP = lootgobbler.ExaltStore.THRESHOLDS[lootgobbler.ExaltStore.THRESHOLDS.length - 1];
+
+    private static final double EXALT_DUNGEON = 7;   // the difficulty from which a dungeon counts as an exalt dungeon
+
+    /** Every day in the list, added up from its visits (and the one in progress) and the bags of the collection. */
+    private Map<java.time.LocalDate, DaySum> daySums(List<Visit> visits, Visit now) {
+        Map<java.time.LocalDate, DaySum> out = new HashMap<>();
+        List<Visit> all = new ArrayList<>(visits);
+        if (now != null) all.add(now);
+        for (Visit v : all) {
+            DaySum d = out.computeIfAbsent(dayOf(v), k -> new DaySum());
+            boolean current = v == now;
+            d.fame += Math.max(0, fame(v, current));
+            // exaltations as the game counts them: progress points (each counting kill), up to the last tier
+            if (v.exalts != null) for (DungeonVisits.Exalt e : v.exalts) d.exalts += Math.max(0, Math.min(e.after, EXALT_CAP) - Math.min(e.before, EXALT_CAP));
+            if (completed(v, current)) {
+                d.completed++;
+                Double difficulty = lootgobbler.DungeonDifficulty.of(v.dungeon);
+                if (difficulty != null && difficulty >= EXALT_DUNGEON) d.exaltDungeons++;
+            }
+        }
+        for (Map.Entry<java.time.LocalDate, long[]> e : bagsPerDay().entrySet()) {
+            DaySum d = out.get(e.getKey());
+            if (d == null) continue;   // only days the list shows
+            long[] b = e.getValue();
+            d.white = (int) b[0];
+            d.orange = (int) b[1];
+            d.bestItem = (int) b[2];
+            d.bestEnchants = (int) b[3];
+        }
+        return out;
+    }
+
+    private boolean completed(Visit v, boolean current) {
+        if (current) return Boolean.TRUE.equals(DungeonVisits.completed(v));
+        return done.computeIfAbsent(v.start, k -> Boolean.TRUE.equals(DungeonVisits.completed(v)));
+    }
+
+    /**
+     * White and orange bags per day, from the drops in the collection: the items of one bag are recorded together,
+     * so drops of the same kind of bag within 3 seconds are one bag. Worked out at most every 10 seconds.
+     */
+    private Map<java.time.LocalDate, long[]> bagsPerDay() {
+        long t = System.currentTimeMillis();
+        if (bagDays != null && t - bagDaysAt < 10_000) return bagDays;
+        List<long[]> drops = new ArrayList<>();   // when, and which bag (0 white, 1 orange)
+        // per day: white bags, orange bags, the rarest item dropped (any bag), its enchantments, when it dropped
+        Map<java.time.LocalDate, long[]> out = new HashMap<>();
+        for (Map.Entry<Integer, lootgobbler.CollectionStore.Entry> e : lootgobbler.CollectionStore.get().snapshot().entrySet()) {
+            List<lootgobbler.CollectionStore.Find> h = e.getValue().history;
+            if (h == null) continue;
+            try {
+                for (int i = 0; i < h.size(); i++) {
+                    lootgobbler.CollectionStore.Find f = h.get(i);
+                    if (f == null || f.at <= 0 || !lootgobbler.CollectionStore.DROP.equals(f.source)) continue;
+                    int enchants = f.enchantIds != null ? f.enchantIds.size() : f.enchants;
+                    if (enchants >= 0) {   // the rarest of the day (equally rare: the later one)
+                        long[] day = out.computeIfAbsent(dayAt(f.at), k -> new long[]{0, 0, 0, -1, 0});
+                        if (enchants > day[3] || (enchants == day[3] && f.at > day[4])) {
+                            day[2] = e.getKey();
+                            day[3] = enchants;
+                            day[4] = f.at;
+                        }
+                    }
+                    if (f.bag == null) continue;
+                    String bag = f.bag.startsWith("Boosted ") ? f.bag.substring(8) : f.bag;
+                    int kind = "White".equals(bag) ? 0 : "Orange".equals(bag) ? 1 : -1;
+                    if (kind >= 0) drops.add(new long[]{f.at, kind});
+                }
+            } catch (RuntimeException ignored) {   // a find recorded meanwhile: the next refresh counts it
+            }
+        }
+        drops.sort(java.util.Comparator.comparingLong(d -> d[0]));
+        long[] last = {Long.MIN_VALUE / 2, Long.MIN_VALUE / 2};
+        for (long[] d : drops) {
+            int kind = (int) d[1];
+            if (d[0] - last[kind] > 3000) out.computeIfAbsent(dayAt(d[0]), k -> new long[]{0, 0, 0, -1, 0})[kind]++;
+            last[kind] = d[0];
+        }
+        bagDays = out;
+        bagDaysAt = t;
+        return out;
+    }
+
     /** A day's group in the list: its date over a gold line, and an empty grid for its boxes (returned). */
     private JPanel dayGrid(java.time.LocalDate day) {
+        DaySum sum = daySums.getOrDefault(day, new DaySum());
+        boolean open = openDays.contains(day);
         JLabel date = new JLabel(DAY.format(day));
         date.setFont(date.getFont().deriveFont(18f));
         date.setForeground(Section.color("LootGobbler.gold", Palette.GOLD));
-        date.setBorder(new EmptyBorder(list.getComponentCount() == 0 ? 4 : 18, 4, 4, 0));
-        list.add(left(date));
+        // the date, a white bag and an arrow; a click shows what the day added up to
+        JPanel head = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        head.setOpaque(false);
+        head.setBorder(new EmptyBorder(list.getComponentCount() == 0 ? 4 : 18, 0, 4, 0));
+        head.add(date);
+        head.add(new JLabel(ProfileView.bagIcon("White", 26)));   // always: the sign that the day opens a summary
+        JLabel arrow = new JLabel(open ? "▾" : "▸");
+        arrow.setForeground(Palette.MUTED);
+        head.add(arrow);
+        head.setToolTipText(open ? "Hide the day's summary" : "Show what this day added up to");
+        head.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Clicks.onPress(head, () -> {
+            if (!openDays.remove(day)) openDays.add(day);
+            refresh();
+        });
+        head.setMaximumSize(new Dimension(Integer.MAX_VALUE, head.getPreferredSize().height));
+        list.add(left(head));
         JComponent line = new JComponent() {   // a gold line that stops short of both edges
             @Override
             protected void paintComponent(Graphics g) {
@@ -893,6 +1011,7 @@ public class DpsLoggerView extends JPanel {
         line.setPreferredSize(new Dimension(10, 4));
         line.setMaximumSize(new Dimension(Integer.MAX_VALUE, 4));
         list.add(left(line));
+        if (open) list.add(left(daySummary(sum)));
         list.add(Box.createVerticalStrut(8));
         JPanel grid = new JPanel(new GridLayout(0, 1, GAP, GAP)) {
             @Override
@@ -904,6 +1023,55 @@ public class DpsLoggerView extends JPanel {
         list.add(left(grid));
         dayGrids.add(grid);
         return grid;
+    }
+
+    /** A day's summary under its date: its bags, exaltations, completed dungeons, fame and exalt dungeons. */
+    private static JComponent daySummary(DaySum s) {
+        JPanel p = new JPanel(new WrapLayout(22, 6));
+        p.setOpaque(false);
+        p.setBorder(new EmptyBorder(8, 6, 2, 6));
+        p.add(daySumItem(ProfileView.bagIcon("White", 26), DAY_NUM.format(s.white), "White bags", null));
+        p.add(daySumItem(ProfileView.bagIcon("Orange", 26), DAY_NUM.format(s.orange), "Orange bags", null));
+        if (s.bestEnchants >= 0) {   // the rarest item of the day, with its rarity marker
+            Image img = CollectionGrid.icon(s.bestItem);
+            lootgobbler.ItemDb.Item item = lootgobbler.ItemDb.get().item(s.bestItem);
+            String name = item != null && !item.name.isEmpty() ? item.name : "Item " + s.bestItem;
+            JComponent best = daySumItem(img == null ? null : EnchantBadge.icon(img, 32, s.bestEnchants, 6),
+                    EnchantBadge.RARITY[Math.min(4, s.bestEnchants)], "Highest Rarity", null);
+            for (Component c : best.getComponents()) ((JComponent) c).setToolTipText("Highest Rarity: " + name + " ("
+                    + EnchantBadge.RARITY[Math.min(4, s.bestEnchants)] + ")");
+            p.add(best);
+        }
+        p.add(daySumItem(null, DAY_NUM.format(s.exalts), "Exaltations", null));
+        p.add(daySumItem(null, DAY_NUM.format(s.completed), "Completed", null));
+        p.add(daySumItem(null, (s.fame > 0 ? "+" : "") + DAY_NUM.format(s.fame), "Fame",
+                Section.color("LootGobbler.gold", Palette.GOLD)));
+        p.add(daySumItem(null, DAY_NUM.format(s.exaltDungeons), "Exalt dungeons", null));
+        return p;
+    }
+
+    private static final java.text.NumberFormat DAY_NUM = java.text.NumberFormat.getIntegerInstance(Locale.ENGLISH);
+
+    /** One number of a day's summary: an icon or a caption above, the number below (in color, if given), centered. */
+    private static JComponent daySumItem(Icon icon, String number, String caption, Color color) {
+        JPanel p = column();
+        JLabel top = icon != null ? new JLabel(icon) : new JLabel(caption.toUpperCase(Locale.ROOT));
+        if (icon == null) {
+            top.putClientProperty("FlatLaf.styleClass", "small");
+            top.setForeground(Palette.MUTED);
+        }
+        String tip = caption.equals("Exalt dungeons") ? "Completed dungeons of difficulty 7 or more"
+                : caption.equals("Exaltations") ? "Exaltation progress points earned in the day's dungeons" : caption;
+        top.setToolTipText(tip);
+        top.setAlignmentX(CENTER_ALIGNMENT);
+        JLabel n = new JLabel(number);
+        n.setFont(n.getFont().deriveFont(20f));
+        if (color != null) n.setForeground(color);
+        n.setToolTipText(tip);
+        n.setAlignmentX(CENTER_ALIGNMENT);
+        p.add(top);
+        p.add(n);
+        return p;
     }
 
     /** A box's time: how long the visit took (counting up, with NOW, for the one in progress). */

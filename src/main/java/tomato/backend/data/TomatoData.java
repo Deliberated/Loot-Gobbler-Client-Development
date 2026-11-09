@@ -1197,6 +1197,7 @@ public class TomatoData {
 
         lootgobbler.CharacterStore.get().tokenReady(token, this::charListHttpRequest);
         lootgobbler.Friends.get().fetch(token);
+        lootgobbler.Missions.get().tokenReady(token);   // the season's missions and your progress
         updateExalts(token);
     }
 

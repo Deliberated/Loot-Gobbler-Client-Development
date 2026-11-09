@@ -28,6 +28,11 @@ public class Segmented extends JPanel {
         }
     }
 
+    /** Greys a button out: it can no longer be picked. */
+    public void disable(int index) {
+        if (index >= 0 && index < buttons.size()) buttons.get(index).setEnabled(false);
+    }
+
     public void select(int index) {
         if (index >= 0 && index < buttons.size()) buttons.get(index).setSelected(true);
     }

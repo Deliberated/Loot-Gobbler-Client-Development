@@ -96,6 +96,11 @@ public final class ItemDb {
         }
     }
 
+    /** The name of an item slot type ("Sigil", "Orb", ...), or "Item" if unknown. */
+    public static String slotName(int slotType) {
+        return SLOT_NAMES.getOrDefault(slotType, "Item");
+    }
+
     private static final Map<Integer, String> SLOT_NAMES = Map.ofEntries(
             Map.entry(1, "Sword"), Map.entry(2, "Dagger"), Map.entry(3, "Bow"), Map.entry(4, "Tome"),
             Map.entry(5, "Shield"), Map.entry(6, "Leather Armor"), Map.entry(7, "Heavy Armor"), Map.entry(8, "Wand"),

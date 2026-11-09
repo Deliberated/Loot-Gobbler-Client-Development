@@ -50,3 +50,9 @@ error/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# mission data and pictures the app keeps
+missions-player.xml
+missions-seasons.json
+tinkerer-quests.json
+season-art/

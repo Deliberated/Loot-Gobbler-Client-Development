@@ -107,6 +107,10 @@ public class TomatoPacketCapture implements Controller {
             data.exaltUpdate(p);
         } else if (packet instanceof DeathPacket) {
             lootgobbler.DungeonVisits.get().died(data, (DeathPacket) packet);   // the hits that led to it
+        } else if (packet instanceof UnknownPacket165) {   // mission progress steps
+            lootgobbler.Missions.get().progressPacket(((UnknownPacket165) packet).unknownString);
+        } else if (packet instanceof ClaimMissionPacket) {   // a mission claimed: ask for the new state
+            lootgobbler.Missions.get().claimed();
         } else if (packet instanceof UseItemPacket) {
             data.usedItem((UseItemPacket) packet);   // started mid-map: your ability names your character
             lootgobbler.DungeonVisits.get().itemUsed(data, (UseItemPacket) packet);   // quick slot consumables
@@ -125,6 +129,7 @@ public class TomatoPacketCapture implements Controller {
             data.updateToken(p.accessToken);
         } else if (packet instanceof QuestFetchResponsePacket) {
             QuestFetchResponsePacket p = (QuestFetchResponsePacket) packet;
+            lootgobbler.TinkererQuests.get().received(p.quests);   // the Quests page shows them
             Stream<QuestData> list = Arrays.stream(p.quests).sorted(
                 Comparator.comparing(questData -> questData.category)
             );
