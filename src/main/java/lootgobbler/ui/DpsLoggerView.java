@@ -366,17 +366,18 @@ public class DpsLoggerView extends JPanel {
     /**
      * You and the guildmates ranked four ways, worst first, each as their character and the value: Most Critical Hits
      * (the damage graph's 2 s slices that took 30% of their life or 300), Biggest Slap (the most damage taken within
-     * one second, in HP), Most Hit % (how often they were hit for the time counted against the server's
-     * baseline: HPM / (HPM + baseline HPM) x 100, the highest first) and the quick slot items
+     * one second, in HP), Shots Dodged (100% minus how often they were hit for the time counted against the server's
+     * baseline: 100 - HPM / (HPM + baseline HPM) x 100, in whole percent, the highest first) and the quick slot items
      * they used ("none", or "-" when their client does not send them). Below, a podium of who did best over
-     * all four: each player's average place in them (1 = best, the lowest value), the lowest average winning. All from what the
-     * clients synced, which is the whole visit; only what happened during the boss fights (spans) counts, Most Hit % against
-     * their length. A visit without a boss fight counts all of it.
+     * all four: each player's average place in them (1 = best: the lowest value, but the highest Shots Dodged; equal
+     * values share a place), the lowest average winning. All from what the clients synced, which is the whole visit;
+     * only what happened during the boss fights (spans) counts, Shots Dodged against their length. A visit without
+     * a boss fight counts all of it.
      */
     private static void facts(JPanel out, List<GuildDamageGraph.Series> series, List<PlayerRow> who, List<Integer> maxHp,
                               List<Quick> quick, List<long[]> spans, long durationMs) {
         int n = series.size(), slice = DamageGraph.WINDOWS_MS[0];
-        double[] critical = new double[n], hurt = new double[n], hitPct = new double[n], used = new double[n];
+        double[] critical = new double[n], hurt = new double[n], dodged = new double[n], used = new double[n];
         long counted = 0;
         for (long[] sp : spans) counted += sp[1] - sp[0];
         boolean all = spans.isEmpty();
@@ -407,7 +408,8 @@ public class DpsLoggerView extends JPanel {
                 hurt[i] = Math.max(hurt[i], sum);
             }
             double hpm = hits.size() / minutes;
-            hitPct[i] = hpm <= 0 ? 0 : 100 * hpm / (hpm + baseline);
+            // in whole percent, as shown, so players who look equal also score equal on the podium
+            dodged[i] = Math.round(100 - (hpm <= 0 ? 0 : 100 * hpm / (hpm + baseline)));
             Quick q = quick.get(i);
             int[] items = q.items();
             if (items != null && !all && q.at() != null && q.at().length == items.length) {
@@ -439,16 +441,17 @@ public class DpsLoggerView extends JPanel {
         grid.setAlignmentX(LEFT_ALIGNMENT);
         grid.add(fact("Most Critical Hits", series, who, critical, i -> numberLabel(String.valueOf((int) critical[i]))));
         grid.add(fact("Biggest Slap", series, who, hurt, i -> numberLabel(String.format(Locale.ROOT, "%,d HP", (long) hurt[i]))));
-        grid.add(fact("Most Hit %", series, who, hitPct, i -> numberLabel(String.format(Locale.ROOT, "%.0f%%", hitPct[i]))));   // the most hit first
+        grid.add(fact("Shots Dodged", series, who, dodged, i -> numberLabel(String.format(Locale.ROOT, "%.0f%%", dodged[i]))));   // the most dodged first
         grid.add(fact("Quickslots Used", series, who, used, i -> quickItems(shown.get(i))));
         out.add(grid);
 
-        // the podium: in every fact the highest value is the worst and the lowest the best; the average place over
-        // the four (1 = best), the lowest first
+        // the podium: in every fact but Shots Dodged the highest value is the worst and the lowest the best (in Shots
+        // Dodged the other way round); the average place over the four (1 = best), the lowest first
         double[] average = new double[n];
-        for (double[] values : List.of(critical, hurt, hitPct, used)) {
-            for (int i = 0; i < n; i++) average[i] += place(values, i) / 4.0;
+        for (double[] values : List.of(critical, hurt, used)) {
+            for (int i = 0; i < n; i++) average[i] += place(values, i, false) / 4.0;
         }
+        for (int i = 0; i < n; i++) average[i] += place(dodged, i, true) / 4.0;
         List<Integer> best = new ArrayList<>();
         for (int i = 0; i < n; i++) best.add(i);
         best.sort((a, b) -> Double.compare(average[a], average[b]));
@@ -464,10 +467,13 @@ public class DpsLoggerView extends JPanel {
         out.add(podium);
     }
 
-    /** The player's place in one fact, 1 for the lowest value (the best); equal values share a place. */
-    private static int place(double[] values, int i) {
+    /**
+     * The player's place in one fact, 1 for the best: the lowest value, or the highest when higher is better. Equal
+     * values share a place (two firsts, then a third).
+     */
+    private static int place(double[] values, int i, boolean higherBetter) {
         int place = 1;
-        for (double v : values) if (v < values[i]) place++;
+        for (double v : values) if (higherBetter ? v > values[i] : v < values[i]) place++;
         return place;
     }
 
