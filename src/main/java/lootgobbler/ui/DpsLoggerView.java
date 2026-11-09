@@ -441,7 +441,11 @@ public class DpsLoggerView extends JPanel {
         grid.setAlignmentX(LEFT_ALIGNMENT);
         grid.add(fact("Most Critical Hits", series, who, critical, i -> numberLabel(String.valueOf((int) critical[i]))));
         grid.add(fact("Biggest Slap", series, who, hurt, i -> numberLabel(String.format(Locale.ROOT, "%,d HP", (long) hurt[i]))));
-        grid.add(fact("Shots Dodged", series, who, dodged, i -> numberLabel(String.format(Locale.ROOT, "%.0f%%", dodged[i]))));   // the most dodged first
+        grid.add(fact("Shots Dodged", series, who, dodged, i -> {   // the most dodged first, red to green
+            JComponent l = numberLabel(String.format(Locale.ROOT, "%.0f%%", dodged[i]));
+            l.setForeground(dodgeColor(dodged[i]));
+            return l;
+        }));
         grid.add(fact("Quickslots Used", series, who, used, i -> quickItems(shown.get(i))));
         out.add(grid);
 
@@ -475,6 +479,20 @@ public class DpsLoggerView extends JPanel {
         int place = 1;
         for (double v : values) if (higherBetter ? v > values[i] : v < values[i]) place++;
         return place;
+    }
+
+    // Shots Dodged from 0% to 100%: red, orange, yellow, green (bright enough for the dark cards)
+    private static final Color[] DODGE_STOPS = {new Color(0xE0533F), new Color(0xE8893A), new Color(0xE6C84A), new Color(0x5DBB63)};
+
+    /** The color of a Shots Dodged value (0..100) along the red - orange - yellow - green gradient. */
+    private static Color dodgeColor(double pct) {
+        double t = Math.max(0, Math.min(1, pct / 100)) * (DODGE_STOPS.length - 1);
+        int k = Math.min((int) t, DODGE_STOPS.length - 2);
+        double f = t - k;
+        Color a = DODGE_STOPS[k], b = DODGE_STOPS[k + 1];
+        return new Color((int) Math.round(a.getRed() + (b.getRed() - a.getRed()) * f),
+                (int) Math.round(a.getGreen() + (b.getGreen() - a.getGreen()) * f),
+                (int) Math.round(a.getBlue() + (b.getBlue() - a.getBlue()) * f));
     }
 
     private static JComponent numberLabel(String text) {
