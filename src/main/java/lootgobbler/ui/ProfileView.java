@@ -59,6 +59,8 @@ public class ProfileView extends SubTabs {
     private String guildName, guildNote = "";   // guildNote: why there is nothing to show; "" while loading
     private CaravanMember myWagon;
     private QuestMap questMap;
+    private List<GobblerServer.MemberFacts> guildFacts = List.of();   // numbers about every guildmate, from the server
+    private String loverKey = "-";
     private int guildVersion;
     private boolean guildLoading, guildAgain, guildStale;
 
@@ -126,6 +128,8 @@ public class ProfileView extends SubTabs {
             return;
         }
         guildLoading = true;
+        // facts about the guildmates: optional (older servers do not know them)
+        java.util.concurrent.CompletableFuture<GobblerServer.Facts> facts = server.guildFacts(FACT_DAYS).exceptionally(x -> null);
         server.caravan("week").thenCombine(server.questMaps(1), (c, q) -> {
             CaravanMember mine = c.members.stream().filter(m -> m.id == me.id).findFirst().orElseGet(() -> {
                 CaravanMember m = new CaravanMember();   // nothing found this week yet
@@ -133,9 +137,14 @@ public class ProfileView extends SubTabs {
                 m.ign = me.ign;
                 return m;
             });
-            return new Object[]{c.guild, mine, q.current};
+            return new Object[]{c.guild, mine, q.current, null};
+        }).thenCombine(facts, (r, f) -> {
+            r[3] = f == null ? null : f.members;
+            return r;
         }).whenComplete((r, e) -> SwingUtilities.invokeLater(() -> {
             guildLoading = false;
+            @SuppressWarnings("unchecked") List<GobblerServer.MemberFacts> got = e == null ? (List<GobblerServer.MemberFacts>) r[3] : null;
+            guildFacts = got == null ? List.of() : got;
             if (e != null) setGuild(null, null, null, GuildPanel.loadError(e));
             else setGuild((String) r[0], (CaravanMember) r[1], (QuestMap) r[2], null);
             if (guildAgain) {
@@ -146,12 +155,13 @@ public class ProfileView extends SubTabs {
     }
 
     private void setGuild(String name, CaravanMember mine, QuestMap map, String note) {
-        String before = guildName + "|" + guildNote + "|" + key(myWagon) + "|" + key(questMap);
+        String before = guildName + "|" + guildNote + "|" + key(myWagon) + "|" + key(questMap) + "|" + loverKey;
+        loverKey = factsKey(guildFacts);
         guildName = name;
         myWagon = mine;
         questMap = map;
         guildNote = note;
-        if (before.equals(guildName + "|" + guildNote + "|" + key(myWagon) + "|" + key(questMap))) return;
+        if (before.equals(guildName + "|" + guildNote + "|" + key(myWagon) + "|" + key(questMap) + "|" + loverKey)) return;
         guildVersion++;
         refresh();
     }
@@ -549,7 +559,367 @@ public class ProfileView extends SubTabs {
         items.add(caravan);
         items.add(quest);
         p.add(left(items));
+        JComponent facts = guildFacts();
+        if (facts != null) {
+            p.add(Box.createVerticalStrut(22));
+            p.add(left(facts));
+        }
         return card(p);
+    }
+
+    private static final int FACT_DAYS = 3;   // the facts besides the favourite dungeon cover these last days
+    private static final int GRAVESTONE = 1282, FAME = 24102, SWORD = 2827, HEAVY_ARMOR = 2812;   // their icons
+    private static final int FACT_ICON = 56, LOVER_PORTAL = 72, LOVER_CHAR = 44;
+
+    // how some facts are told, one picked each time the app starts
+    private static final java.util.Random PICK = new java.util.Random();
+    private static final String LOVER_VERB = pick("completed", "done", "cleared", "conquered", "beaten", "run",
+            "gobbled through", "survived");
+    private static final String TANK_VERB = pick("ate", "tanked", "took", "absorbed", "soaked up", "shrugged off");
+
+    private static String pick(String... words) {
+        return words[PICK.nextInt(words.length)];
+    }
+
+    private static String factsKey(List<GobblerServer.MemberFacts> facts) {
+        StringBuilder sb = new StringBuilder();
+        for (GobblerServer.MemberFacts f : facts) {
+            sb.append(f.userId).append(':').append(f.deaths).append(':').append(f.fame).append(':').append(f.dealt)
+                    .append(':').append(f.taken).append(':').append(f.hits).append(':').append(f.inMs).append(':').append(f.exalts)
+                    .append(':').append(f.loot).append(':').append(f.played);
+            if (f.look != null) sb.append(':').append(f.look.classType).append(':').append(f.look.skin);
+            if (f.favorite != null) sb.append(':').append(f.favorite.dungeon).append(':').append(f.favorite.count)
+                    .append(':').append(f.favorite.classType).append(':').append(f.favorite.skin);
+            sb.append('|');
+        }
+        return sb.toString();
+    }
+
+    /** The guildmate with the most of something (ties: the first, by name as the server sends them); null if none has any. */
+    private static GobblerServer.MemberFacts most(List<GobblerServer.MemberFacts> all, java.util.function.ToLongFunction<GobblerServer.MemberFacts> value) {
+        GobblerServer.MemberFacts best = null;
+        for (GobblerServer.MemberFacts f : all) if (value.applyAsLong(f) > 0 && (best == null || value.applyAsLong(f) > value.applyAsLong(best))) best = f;
+        return best;
+    }
+
+    /**
+     * Who of the guild stands out, each as a caption with an icon and a line below: Dungeon Lover (the most completions
+     * of one dungeon, all time), and over the last 3 days Death Lover (most characters died), Fame Producer (most fame
+     * gained), Punisher (most damage dealt), Panzer (most damage taken), Exalter! (most exaltations earned) and Just
+     * Dodge (the fewest hits for the time in dungeons, against the guild's baseline; at least 10 minutes in them), Looter
+     * (most items found) and Diversifier (most different characters played). Only those someone has; null if none.
+     */
+    private JComponent guildFacts() {
+        List<GobblerServer.MemberFacts> all = guildFacts;
+        List<JComponent> blocks = new ArrayList<>();
+        GobblerServer.MemberFacts lover = most(all, f -> f.favorite == null ? 0 : f.favorite.count);
+        if (lover != null) blocks.add(dungeonLover(lover));
+        GobblerServer.MemberFacts deaths = most(all, f -> f.deaths);
+        if (deaths != null) blocks.add(fact("DEATH LOVER", CharactersView.sprite(GRAVESTONE, FACT_ICON),
+                name(deaths) + " died most times: <b>" + NUM.format(deaths.deaths) + "x</b>",
+                deaths.ign + ": " + deaths.deaths + " characters died in the last " + FACT_DAYS + " days"));
+        GobblerServer.MemberFacts fame = most(all, f -> f.fame);
+        if (fame != null) blocks.add(fact("FAME PRODUCER", CharactersView.sprite(FAME, FACT_ICON),
+                "<b>" + NUM.format(fame.fame) + " fame</b> gained by " + name(fame),
+                "Fame gained by all of " + fame.ign + "'s characters in the last " + FACT_DAYS + " days"));
+        // damage as an average over the time in dungeons, so a long session does not win by itself
+        java.util.function.ToDoubleFunction<GobblerServer.MemberFacts> dps = f -> f.dealt / (f.inMs / 1000.0);
+        GobblerServer.MemberFacts dealt = highest(all, dps);
+        if (dealt != null && dealt.dealt > 0) blocks.add(fact("PUNISHER", CharactersView.sprite(SWORD, FACT_ICON),
+                name(dealt) + " has an average of <b>" + NUM.format(Math.round(dps.applyAsDouble(dealt))) + " DPS</b>",
+                String.format(java.util.Locale.ROOT, "%s: %,d damage dealt in %s in dungeons in the last %d days",
+                        dealt.ign, dealt.dealt, duration(dealt.inMs), FACT_DAYS)));
+        java.util.function.ToDoubleFunction<GobblerServer.MemberFacts> perMinute = f -> f.taken / (f.inMs / 60_000.0);
+        GobblerServer.MemberFacts taken = highest(all, perMinute);
+        if (taken != null && taken.taken > 0) blocks.add(fact("PANZER", CharactersView.sprite(HEAVY_ARMOR, FACT_ICON),
+                name(taken) + " " + TANK_VERB + " <b>" + NUM.format(Math.round(perMinute.applyAsDouble(taken))) + " HP</b> a minute",
+                String.format(java.util.Locale.ROOT, "%s: %,d HP taken in %s in dungeons in the last %d days",
+                        taken.ign, taken.taken, duration(taken.inMs), FACT_DAYS)));
+        GobblerServer.MemberFacts exalter = most(all, f -> f.exalts);
+        if (exalter != null) blocks.add(fact("EXALTER!", new ExaltIcon(FACT_ICON),
+                "<b>" + NUM.format(exalter.exalts) + "</b> exalt" + (exalter.exalts == 1 ? "" : "s") + " done by " + name(exalter),
+                "Exaltations " + exalter.ign + " earned in dungeons in the last " + FACT_DAYS + " days"));
+        double baseline = Guildmates.get().settings().baselineHpm;
+        java.util.function.ToDoubleFunction<GobblerServer.MemberFacts> dodged = f -> {   // in %, as Battles counts hits
+            double hpm = f.hits / (f.inMs / 60_000.0);
+            return 100 * baseline / (hpm + baseline);
+        };
+        GobblerServer.MemberFacts dodger = null;
+        for (GobblerServer.MemberFacts f : all) {
+            if (f.inMs < DODGE_MIN_MS || baseline <= 0) continue;
+            if (dodger == null || dodged.applyAsDouble(f) > dodged.applyAsDouble(dodger)) dodger = f;
+        }
+        if (dodger != null) blocks.add(fact("JUST DODGE", new DodgeIcon(lookOf(dodger, FACT_ICON), FACT_ICON),
+                name(dodger) + " just dodged <b>" + String.format(java.util.Locale.ROOT, "%.0f", dodged.applyAsDouble(dodger)) + " %</b> of bullets",
+                String.format(java.util.Locale.ROOT, "%s: %,d hits in %s in dungeons in the last %d days (%.1f a minute; the guild counts %.0f as average)",
+                        dodger.ign, dodger.hits, duration(dodger.inMs), FACT_DAYS, dodger.hits / (dodger.inMs / 60_000.0), baseline)));
+        GobblerServer.MemberFacts looter = most(all, f -> f.loot);
+        if (looter != null) blocks.add(fact("LOOTER", divineShiny(FACT_ICON),
+                name(looter) + " gathered the most items: <b>" + NUM.format(looter.loot) + "</b>",
+                "Items " + looter.ign + " found in the last " + FACT_DAYS + " days"));
+        GobblerServer.MemberFacts diverse = most(all, f -> f.played);
+        if (diverse != null) {
+            Icon look = lookOf(diverse, FACT_ICON);
+            blocks.add(fact("DIVERSIFIER", look != null ? look : CharactersView.sprite(CharacterClass.CHAR_CLASS_LIST[0].getId(), FACT_ICON),
+                    "Most different characters actively played by " + name(diverse) + ": <b>" + NUM.format(diverse.played) + "</b>",
+                    "Characters " + diverse.ign + " played in the last " + FACT_DAYS + " days"));
+        }
+        if (blocks.isEmpty()) return null;
+        JPanel grid = new JPanel(new WrapLayout(36, 18));   // side by side, wrapping when the card is narrow
+        grid.setOpaque(false);
+        for (JComponent b : blocks) grid.add(b);
+        grid.addComponentListener(new java.awt.event.ComponentAdapter() {
+            private int height = -1;
+
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent e) {   // a new width may wrap into more rows
+                int h = grid.getPreferredSize().height;
+                if (h != height) {
+                    height = h;
+                    grid.revalidate();
+                }
+            }
+        });
+        return grid;
+    }
+
+    private static final long DODGE_MIN_MS = 10 * 60_000L;   // less time in dungeons says too little about an average
+
+    /** The guildmate with the highest average (ties: the first); only those with at least 10 minutes in dungeons. */
+    private static GobblerServer.MemberFacts highest(List<GobblerServer.MemberFacts> all,
+                                                     java.util.function.ToDoubleFunction<GobblerServer.MemberFacts> value) {
+        GobblerServer.MemberFacts best = null;
+        for (GobblerServer.MemberFacts f : all) {
+            if (f.inMs < DODGE_MIN_MS) continue;
+            if (best == null || value.applyAsDouble(f) > value.applyAsDouble(best)) best = f;
+        }
+        return best;
+    }
+
+    /** The guildmate's character as they played it last; their class sprite, or null, when only that is known. */
+    private static Icon lookOf(GobblerServer.MemberFacts m, int size) {
+        if (m.look == null || m.look.classType <= 0) return null;
+        DpsHistory.PlayerRow p = new DpsHistory.PlayerRow();
+        p.name = m.ign;
+        p.classType = m.look.classType;
+        p.skin = m.look.skin;
+        p.tex1 = m.look.tex1;
+        p.tex2 = m.look.tex2;
+        Icon look = Guildmates.get().look(p, size);
+        return look != null ? look : CharactersView.sprite(m.look.classType, size);
+    }
+
+    private static final int SHINY_SWORD = 1230;   // Sword of the Colossus (Shiny)
+
+    /** A shiny item with the divine rarity marker, as the collection shows a divine copy. */
+    private static Icon divineShiny(int size) {
+        Icon sprite = CharactersView.sprite(SHINY_SWORD, size);
+        return new Icon() {
+            @Override
+            public void paintIcon(Component c, Graphics g, int x, int y) {
+                if (sprite != null) sprite.paintIcon(c, g, x, y);
+                EnchantBadge.draw((Graphics2D) g, x + size - 1, y + size - 1, 4, 5);
+            }
+
+            @Override
+            public int getIconWidth() {
+                return size;
+            }
+
+            @Override
+            public int getIconHeight() {
+                return size;
+            }
+        };
+    }
+
+    /** Exaltation: a Potion of Life with golden sparkles and an arrow up. */
+    static final class ExaltIcon implements Icon {
+        private final int size;
+        private final Icon potion;
+
+        ExaltIcon(int size) {
+            this.size = size;
+            this.potion = ClassesView.potion(DpsLoggerView.EXALT_POTION[ExaltStore.LIFE], size * 3 / 4);
+        }
+
+        @Override
+        public int getIconWidth() {
+            return size;
+        }
+
+        @Override
+        public int getIconHeight() {
+            return size;
+        }
+
+        @Override
+        public void paintIcon(Component c, Graphics g, int x, int y) {
+            if (potion != null) potion.paintIcon(c, g, x, y + size - potion.getIconHeight());
+            int px = Math.max(2, size / 14);
+            Color gold = Section.color("LootGobbler.gold", Palette.GOLD);
+            // the arrow up, at the top right
+            String[] arrow = {"..X..", ".XXX.", "XXXXX", ".XXX.", ".XXX."};
+            pixels(g, arrow, x + size - 5 * px, y, px, gold);
+            // sparkles
+            String[] spark = {".X.", "XXX", ".X."};
+            pixels(g, spark, x + px, y + px, px, gold);
+            pixels(g, spark, x + size - 4 * px, y + size / 2 + px, px, new Color(0xFFF2B0));
+        }
+    }
+
+    /** A character curving around a bullet: the bullet flying past, and a dotted arc of the path around it. */
+    static final class DodgeIcon implements Icon {
+        private final Icon character;
+        private final int size;
+
+        DodgeIcon(Icon character, int size) {
+            this.character = character;
+            this.size = size;
+        }
+
+        private static final int BULLET = 15;   // the game's Fire Bolt
+
+        @Override
+        public int getIconWidth() {
+            return size * 2;
+        }
+
+        @Override
+        public int getIconHeight() {
+            return size;
+        }
+
+        @Override
+        public void paintIcon(Component c, Graphics g, int x, int y) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            int w = getIconWidth(), h = size, px = Math.max(2, size / 14);
+            int charW = character == null ? 0 : character.getIconWidth();
+            // the path the character took: from the lower left, up over the bullet and down to where it stands now
+            g2.setColor(new Color(0xF2E6C8));
+            g2.setStroke(new BasicStroke(px * 0.7f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_ROUND, 1f, new float[]{px * 1.2f, px}, 0));
+            java.awt.geom.Path2D path = new java.awt.geom.Path2D.Double();
+            path.moveTo(x + px, y + h - px * 2);
+            path.curveTo(x + w * 0.15, y + px, x + w * 0.45, y + px, x + w - charW * 0.9, y + h * 0.45);
+            g2.draw(path);
+            g2.dispose();
+            // the bullet, flying up right under the arc, where the character was
+            Icon bullet = CharactersView.sprite(BULLET, size * 3 / 4);
+            if (bullet != null) bullet.paintIcon(c, g, x + w * 3 / 10 - bullet.getIconWidth() / 3, y + h - bullet.getIconHeight());
+            if (character != null) character.paintIcon(c, g, x + w - charW, y + h - character.getIconHeight());
+        }
+    }
+
+    /** Pixel art from rows of "X" (filled) and "." (empty), each pixel px square, at x, y. */
+    private static void pixels(Graphics g, String[] rows, int x, int y, int px, Color color) {
+        g.setColor(color);
+        for (int r = 0; r < rows.length; r++)
+            for (int k = 0; k < rows[r].length(); k++)
+                if (rows[r].charAt(k) == 'X') g.fillRect(x + k * px, y + r * px, px, px);
+    }
+
+    private static String name(GobblerServer.MemberFacts f) {
+        return "<span style='color:" + hex(gold()) + "'>" + escape(f.ign) + "</span>";
+    }
+
+    /** One fact: its caption, and below it the icon with the line (HTML) beside it. */
+    private static JComponent fact(String caption, Icon icon, String html, String tip) {
+        JPanel p = column();
+        p.add(left(caption(caption)));
+        p.add(Box.createVerticalStrut(6));
+        JLabel text = new JLabel("<html>" + html + "</html>");
+        text.setFont(text.getFont().deriveFont(20f));
+        JPanel row = new JPanel(new BorderLayout(12, 0));
+        row.setOpaque(false);
+        row.add(new JLabel(icon), BorderLayout.WEST);
+        row.add(text, BorderLayout.CENTER);
+        row.setToolTipText(tip);
+        p.add(left(row));
+        return p;
+    }
+
+    /**
+     * The guildmate who completed one dungeon the most (over all their characters, the game's own counts): its portal
+     * with their character in front of it, heart-eyed, and how often.
+     */
+    private JComponent dungeonLover(GobblerServer.MemberFacts m) {
+        GobblerServer.Favorite f = m.favorite;
+        DpsHistory.PlayerRow look = new DpsHistory.PlayerRow();
+        look.name = m.ign;
+        look.classType = f.classType;
+        look.skin = f.skin;
+        look.tex1 = f.tex1;
+        look.tex2 = f.tex2;
+        Icon character = Guildmates.get().look(look, LOVER_CHAR);
+        if (character == null) character = CharactersView.sprite(f.classType, LOVER_CHAR);
+        return fact("DUNGEON LOVER", new LoverIcon(dungeonIcon(f.dungeon, LOVER_PORTAL), character),
+                name(m) + " has " + LOVER_VERB + " <b>" + NUM.format(f.count) + "</b> " + escape(plural(f.dungeon)),
+                m.ign + ": " + NUM.format(f.count) + "x " + f.dungeon + " over all their characters");
+    }
+
+    /** A dungeon's name for many of them: "The Nest" -> "Nests", "Tomb of the Ancients" -> "Tombs of the Ancients". */
+    static String plural(String dungeon) {
+        String name = dungeon.startsWith("The ") ? dungeon.substring(4) : dungeon;
+        if (name.matches(".* I{1,3}")) return name;   // White Snake Invasion II: as it is
+        int of = name.indexOf(" of ");
+        if (of < 0) of = name.indexOf(" for ");   // Battle for the Nexus -> Battles for the Nexus
+        String head = of > 0 ? name.substring(0, of) : name, tail = of > 0 ? name.substring(of) : "";
+        String lower = head.toLowerCase(java.util.Locale.ROOT);
+        // already plural (Lost Halls, Deadwater Docks, Trials of Cronus) or a name in s (Untaris)
+        if (lower.endsWith("s") && !lower.endsWith("ss")) return name;
+        if (lower.endsWith("y") && !lower.matches(".*[aeiou]y")) head = head.substring(0, head.length() - 1) + "ies";
+        else if (lower.matches(".*(s|x|z|ch|sh)")) head += "es";
+        else head += "s";
+        return head + tail;
+    }
+
+    /** A dungeon's portal with a character standing in front of it, at its lower right, with hearts for eyes. */
+    static final class LoverIcon implements Icon {
+        static int HEART_X1 = 38, HEART_X2 = 62, HEART_Y = 28;   // where the eyes are, in % of the character
+        private final Icon portal, character;
+
+        LoverIcon(Icon portal, Icon character) {
+            this.portal = portal;
+            this.character = character;
+        }
+
+        @Override
+        public int getIconWidth() {
+            return LOVER_PORTAL + LOVER_CHAR / 2;
+        }
+
+        @Override
+        public int getIconHeight() {
+            return LOVER_PORTAL + LOVER_CHAR / 6;
+        }
+
+        @Override
+        public void paintIcon(Component c, Graphics g, int x, int y) {
+            if (portal != null) portal.paintIcon(c, g, x, y);
+            if (character == null) return;
+            int cx = x + getIconWidth() - character.getIconWidth(), cy = y + getIconHeight() - character.getIconHeight();
+            character.paintIcon(c, g, cx, cy);
+            // the eyes of a class sprite (8 x 8, facing right) sit in its upper middle: a heart on each
+            int px = Math.max(1, character.getIconWidth() / 16);
+            int ey = cy + character.getIconHeight() * HEART_Y / 100;
+            heart(g, cx + character.getIconWidth() * HEART_X1 / 100, ey, px);
+            heart(g, cx + character.getIconWidth() * HEART_X2 / 100, ey, px);
+        }
+
+        /** A pixel heart, 5 x 4 pixels of size px, centered on (x, y), with a dark rim so it reads on any skin. */
+        private static void heart(Graphics g, int x, int y, int px) {
+            String[] rows = {".X.X.", "XXXXX", ".XXX.", "..X.."};
+            int left = x - 5 * px / 2, top = y - 2 * px;
+            g.setColor(new Color(0x3A0A12));
+            for (int r = 0; r < rows.length; r++)
+                for (int k = 0; k < 5; k++)
+                    if (rows[r].charAt(k) == 'X') g.fillRect(left + k * px - 1, top + r * px - 1, px + 2, px + 2);
+            g.setColor(new Color(0xFF3B6B));
+            for (int r = 0; r < rows.length; r++)
+                for (int k = 0; k < 5; k++)
+                    if (rows[r].charAt(k) == 'X') g.fillRect(left + k * px, top + r * px, px, px);
+        }
     }
 
     private static JLabel link(String text) {

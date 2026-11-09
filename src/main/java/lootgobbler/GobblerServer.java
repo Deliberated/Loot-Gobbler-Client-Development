@@ -613,6 +613,39 @@ public final class GobblerServer {
         public int[] moved = new int[0];   // how far they walked, tenths of a tile per second (none from older clients)
     }
 
+    /** A guildmate's most completed dungeon over all their characters, and the look of the one that did it most. */
+    public static final class Favorite {
+        public String dungeon = "";
+        public int count;
+        public int classType, skin, tex1, tex2;
+    }
+
+    /** Numbers about one guildmate: their favourite dungeon (all time), and over the days asked their deaths and more. */
+    public static final class MemberFacts {
+        public long userId;
+        public String ign = "";
+        public Favorite favorite;   // null: their client does not send completion counts
+        public int deaths;          // characters that died
+        public long fame;           // fame gained by all their characters
+        public long dealt, taken;   // damage dealt and taken in dungeons
+        public int hits;            // hits taken in dungeons ...
+        public long inMs;           // ... in this much time spent in them
+        public int exalts;          // exaltations earned in dungeons
+        public Favorite look;       // the character they played last (only its look); null if unknown
+        public int loot;            // items they found
+        public int played;          // different characters they played
+    }
+
+    public static final class Facts {
+        public int days;
+        public List<MemberFacts> members = List.of();
+    }
+
+    /** Every guildmate's facts (yours too) over the last days. */
+    public CompletableFuture<Facts> guildFacts(int days) {
+        return call("GET", "/guild/facts?days=" + days, null, Facts.class);
+    }
+
     /** Looks of guildmates who may have been in this dungeon between from and to (epoch ms). */
     public CompletableFuture<RunLooks> runLooks(String dungeon, long from, long to) {
         return call("GET", "/guild/looks?dungeon=" + java.net.URLEncoder.encode(dungeon, java.nio.charset.StandardCharsets.UTF_8)

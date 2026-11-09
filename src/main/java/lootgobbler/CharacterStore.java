@@ -57,6 +57,7 @@ public final class CharacterStore implements Syncable {
         public int[] slots;            // every slot from the last char list: equipment, inventory, backpack; null = unknown
         public int[] quickslots;       // the three quick slots' items (-1 = empty), seen while playing; null = unknown
         public int[][] slotEnchantIds; // per slot of "slots": enchantment ids
+        public Map<String, Integer> dungeons;   // dungeon name -> times completed (the game's count); null = unknown
         public List<Sample> samples = new ArrayList<>();
 
         /**
@@ -143,6 +144,8 @@ public final class CharacterStore implements Syncable {
                     c.petName = r.petName;
                 }
                 c.level = r.level;
+                Map<String, Integer> done = dungeonsDone(r);
+                if (done != null) c.dungeons = done;
                 if (r.fame > 0) c.fame = r.fame;
                 c.seasonal = r.seasonal;
                 c.statsMaxed = maxed(r.classNum, new int[]{r.hp, r.mp, r.atk, r.def, r.spd, r.dex, r.vit, r.wis});
@@ -663,6 +666,16 @@ public final class CharacterStore implements Syncable {
     /**
      * Backpack extender from the char list: a tag mentioning it, or the extender item among the equipment.
      */
+    /** How often the character completed each dungeon, as the game counts it (only those done); null if not sent. */
+    private static Map<String, Integer> dungeonsDone(RealmCharacter r) {
+        if (r.charStats == null || r.charStats.dungeonStats == null) return null;
+        Map<String, Integer> out = new java.util.TreeMap<>();
+        int[] stats = r.charStats.dungeonStats;
+        List<String> names = tomato.realmshark.enums.CharacterStatistics.DUNGEON_NAMES;
+        for (int i = 0; i < Math.min(stats.length, names.size()); i++) if (stats[i] > 0) out.put(names.get(i), stats[i]);
+        return out;
+    }
+
     private static boolean extender(RealmCharacter r) {
         for (Map.Entry<String, String> t : r.rawTags.entrySet()) {
             if (t.getKey().toLowerCase(Locale.ROOT).contains("extender")) {
@@ -892,6 +905,10 @@ public final class CharacterStore implements Syncable {
         if (n.slots == null && o.slots != null) {
             n.slots = o.slots;
             n.slotEnchantIds = o.slotEnchantIds;
+            c = true;
+        }
+        if (n.dungeons == null && o.dungeons != null) {   // completions per dungeon (newer clients)
+            n.dungeons = o.dungeons;
             c = true;
         }
         if (n.petSkin == 0 && o.petSkin != 0) {
