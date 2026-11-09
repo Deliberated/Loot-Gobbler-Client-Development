@@ -611,6 +611,13 @@ public final class CharacterStore implements Syncable {
         return playerName;
     }
 
+    /** The living character played most recently (by lastPlayed), or null. */
+    public synchronized Char lastPlayedChar() {
+        Char best = null;
+        for (Char c : chars.values()) if (c.alive && c.classType > 0 && (best == null || c.lastPlayed > best.lastPlayed)) best = c;
+        return best;
+    }
+
     /** The character you are playing (or last played), or null. */
     public synchronized Char playing() {
         return chars.get(currentCharId);

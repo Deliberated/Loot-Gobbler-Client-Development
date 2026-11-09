@@ -127,11 +127,18 @@ public class Entity implements Serializable {
             lootTimers(status);
 
             if (isUser) {
-                fame(timePC);
+                if (stat.get(StatType.EXP_STAT) != null) fame(timePC);   // not before the game sent it (mid-map start)
+                try {
+                    tomatoData.player.charStat(charId, calculateBaseStats());
+                } catch (NullPointerException e) {
+                    // found in the middle of a map: not every stat was sent yet
+                }
 
-                tomatoData.player.charStat(charId, calculateBaseStats());
-
-                MyInfoGUI.updatePlayer(this);
+                try {
+                    MyInfoGUI.updatePlayer(this);
+                } catch (NullPointerException e) {
+                    // the same: shown once the game sent the stats
+                }
             } else if (isPlayer) {
                 baseStats = calculateBaseStats();
             }
@@ -156,6 +163,24 @@ public class Entity implements Serializable {
                     lootTierTime = lt * 1000L + time;
                 }
             }
+        }
+    }
+
+    /**
+     * A stat's value, or the fallback while the game has not sent it: a character found in the middle of a map (the
+     * sniffer started there) only gets the stats that change from then on.
+     */
+    private int statOr(StatType type, int fallback) {
+        StatData s = stat.get(type);
+        return s == null ? fallback : s.statValue;
+    }
+
+    /** Your class's maximum attack (or defense), as the stand-in for one not sent yet; 0 if the class is not known. */
+    private int classMax(boolean attack) {
+        try {
+            return attack ? CharacterClass.getAtk(objectType) : CharacterClass.getDef(objectType);
+        } catch (RuntimeException e) {
+            return 0;
         }
     }
 
@@ -196,12 +221,12 @@ public class Entity implements Serializable {
      * @return damage multiplier from player stats.
      */
     public float playerStatsMultiplier() {
-        int condition = stat.get(StatType.CONDITION_STAT).statValue;
+        int condition = statOr(StatType.CONDITION_STAT, 0);
         boolean weak = (condition & ConditionBits.WEAK.value()) != 0;
         boolean damaging = (condition & ConditionBits.DAMAGING.value()) != 0;
-        int attack = stat.get(StatType.ATTACK_STAT).statValue;
+        int attack = statOr(StatType.ATTACK_STAT, classMax(true));
         float exaltDmgBonus =
-            (float) stat.get(StatType.EXALTATION_BONUS_DAMAGE).statValue / 1000;
+            (float) statOr(StatType.EXALTATION_BONUS_DAMAGE, 1000) / 1000;
 
         if (weak) {
             return 0.5f;
@@ -499,8 +524,8 @@ public void genericDamageHit(
     }
 
     private int calculatePlayerDmg(int dmg, boolean ap) {
-        int def = stat.get(StatType.DEFENSE_STAT).statValue;
-        int condition = stat.get(StatType.CONDITION_STAT).statValue;
+        int def = statOr(StatType.DEFENSE_STAT, classMax(false));
+        int condition = statOr(StatType.CONDITION_STAT, 0);
         boolean invulnerable =
             (condition & ConditionBits.INVULNERABLE.value()) != 0;
 
@@ -553,6 +578,11 @@ public void genericDamageHit(
             tomatoData.hasGuardedPhaseEntity();
         damage.chancellorDammahDmg =
             objectType == CHANCELLOR_DAMMAH && !dammahCountered;
+    }
+
+    /** The name to show until the game sends the name stat (your own character, found in the middle of a map). */
+    void setFallbackName(String name) {
+        this.name = name;
     }
 
     public String name() {
@@ -624,7 +654,11 @@ public void genericDamageHit(
     public void setUser(int charId) {
         isUser = true;
         this.charId = charId;
-        baseStats = calculateBaseStats();
+        try {
+            baseStats = calculateBaseStats();
+        } catch (NullPointerException e) {   // found in the middle of a map: not every stat was sent yet
+            baseStats = new int[8];
+        }
     }
 
     private int[] calculateBaseStats() {

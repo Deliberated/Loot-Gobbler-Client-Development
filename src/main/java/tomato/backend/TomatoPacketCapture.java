@@ -108,6 +108,7 @@ public class TomatoPacketCapture implements Controller {
         } else if (packet instanceof DeathPacket) {
             lootgobbler.DungeonVisits.get().died(data, (DeathPacket) packet);   // the hits that led to it
         } else if (packet instanceof UseItemPacket) {
+            data.usedItem((UseItemPacket) packet);   // started mid-map: your ability names your character
             lootgobbler.DungeonVisits.get().itemUsed(data, (UseItemPacket) packet);   // quick slot consumables
         } else if (packet instanceof NotificationPacket) {
             NotificationPacket p = (NotificationPacket) packet;

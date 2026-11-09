@@ -259,7 +259,7 @@ public class DpsPanel extends JPanel {
             DungeonVisits.Visit v = DungeonVisits.get().current();
             return v != null && run.dungeon.equals(v.dungeon) ? v : null;
         }
-        for (DungeonVisits.Visit v : DungeonVisits.get().visits()) if (v.runStart == run.start) return v;
+        for (DungeonVisits.Visit v : DungeonVisits.get().allVisits()) if (v.runStart == run.start) return v;
         return null;
     }
 
@@ -507,7 +507,10 @@ public class DpsPanel extends JPanel {
         buttons.setOpaque(false);
         JLabel rank = runRank(r);
         if (rank != null) buttons.add(rank);
-        if (!current) buttons.add(button("x", "danger", () -> DpsHistory.get().remove(r)));
+        if (!current) buttons.add(button("x", "danger", () -> {   // only marked as removed: no longer shown
+            if (selected == r) selected = null;
+            DpsHistory.get().remove(r);
+        }));
         if (buttons.getComponentCount() > 0) row.add(buttons, BorderLayout.EAST);
         row.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         Clicks.onPress(row, () -> select(target));   // on press: the list is rebuilt every second during a run

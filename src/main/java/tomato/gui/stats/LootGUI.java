@@ -97,13 +97,15 @@ public class LootGUI extends JPanel {
         Entity player,
         long time
     ) {
-        if (player == null || !update) return;
-
-        JPanel panel = createMainBox(map, bag, dropper, player, time);
-        lootPanel.add(panel, 0);
-
-        panel.setVisible(isBagVisible(bag));
-
+        // the box needs your character (its class, look and loot bonus) and your exaltations (sent at login, so
+        // not when the sniffer started in the middle of a map); the bag is heard and counted either way
+        if (update && player != null) {
+            JPanel panel = createMainBox(map, bag, dropper, player, time);
+            lootPanel.add(panel, 0);
+            panel.setVisible(isBagVisible(bag));
+        }
+        // without it too (the sniffer started in the middle of a map and has not found you yet): the bag is still
+        // heard and counted; only bags of yours are ever sent to you
         if (Sound.playWhiteBagSound && isWhiteBag(bag)) Sound.whitebag.play();
         if (
             Sound.playOrangeBagSound && isOrangeBag(bag)

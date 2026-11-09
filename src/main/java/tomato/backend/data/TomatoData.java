@@ -39,7 +39,7 @@ public class TomatoData {
 
     private String token;
     public MapInfoPacket map;
-    protected int worldPlayerId;
+    protected int worldPlayerId = -1;   // -1: not known (before the game says, e.g. when the sniffer starts inside a map)
     protected int charId;
     public long time;
     public long timePc;
@@ -95,7 +95,140 @@ public class TomatoData {
      *
      * @param map New realm to be set.
      */
+    // ---- started in the middle of a map --------------------------------------------------------------------------
+    // The game says which map you are in, and which player is you, only on entering it. When the sniffer starts
+    // inside a map, both are unknown: you are found by the stats only your own character gets, and the dungeon by the
+    // enemies coming into view (those you hit in it before, see dungeon.stats).
+
+    private boolean mapGuessed, mapGuessFailed;
+    private java.util.Map<Integer, String> enemyDungeon;   // enemy type -> the one dungeon you met it in
+    private final java.util.Map<String, java.util.Set<Integer>> guessVotes = new java.util.HashMap<>();
+    private static final int GUESS_VOTES = 3;   // different enemies of one dungeon needed (a boss alone is enough)
+
+    /** Stats the game sends for your own character only (inventory past the equipment, gold, quick slots, XP). */
+    private static boolean onlyYours(packets.data.ObjectStatusData status) {
+        if (status.stats == null) return false;
+        for (StatData s : status.stats) {
+            if (s.statType == null) continue;
+            switch (s.statType) {
+                case INVENTORY_4_STAT, INVENTORY_5_STAT, INVENTORY_6_STAT, INVENTORY_7_STAT, INVENTORY_8_STAT,
+                     INVENTORY_9_STAT, INVENTORY_10_STAT, INVENTORY_11_STAT, CREDITS_STAT, POTION_ONE_TYPE,
+                     NEXT_LEVEL_EXP_STAT, EXP_STAT -> {
+                    return true;
+                }
+                default -> {
+                }
+            }
+        }
+        return false;
+    }
+
+    private final List<WorldPosData> ownPositions = new ArrayList<>();   // where your client said it moved, lately
+    private int standingId = -1;   // the object last seen where you are (once more and it is you)
+
+    /** Whether the object stands exactly where your client said it moved to, for the second update in a row. */
+    private boolean standsWhereYouAre(int id, packets.data.ObjectStatusData status) {
+        if (status.pos == null || ownPositions.isEmpty()) return false;
+        boolean there = false;
+        for (WorldPosData p : ownPositions) {
+            if (p.x == status.pos.x && p.y == status.pos.y) {
+                there = true;
+                break;
+            }
+        }
+        if (!there) return false;
+        if (standingId == id) return true;
+        standingId = id;
+        return false;
+    }
+
+    /**
+     * You used your ability or a quick slot: that slot is on your own character, so while the map started unknown this
+     * tells which object you are, whatever you do (abilities are used all the time).
+     */
+    public void usedItem(UseItemPacket p) {
+        if (worldPlayerId > 0 || !(map == null || mapGuessed) || p.slotObject == null || p.slotObject.objectId <= 0) return;
+        // only your ability (slot 1) and quick slots: an item used from a bag or chest names that container instead
+        if (p.slotObject.slotId != 1 && p.slotObject.slotId < 1_000_000) return;
+        int id = p.slotObject.objectId;
+        foundYourself(id, entityList.computeIfAbsent(id, idd -> new Entity(this, idd, timePc)));
+    }
+
+    private void foundYourself(int id, Entity entity) {
+        worldPlayerId = id;
+        player = entity;
+        ownPositions.clear();
+        // the game said nothing about your character either: the one you played last (its class for the tables)
+        lootgobbler.CharacterStore.Char last = lootgobbler.CharacterStore.get().lastPlayedChar();
+        if (last != null && entity.objectType == 0) entity.objectType = last.classType;
+        String yourName = lootgobbler.CharacterStore.get().playerName();   // the name stat comes only on entering
+        if (yourName != null && entity.getStatName() == null) entity.setFallbackName(yourName);
+        entity.setUser(charId);
+        // among the players too: your hits on enemies are told by their shooter, looked up there (the game only
+        // announces the players coming into view, and you were already there)
+        playerList.put(id, entity);
+        playerListUpdated.put(id, entity);
+        lootgobbler.AppLog.log("game", "Started in the middle of a map: found your character (" + id + ")");
+    }
+
+    /** One more enemy came into view while the map is unknown; enough of one dungeon's and it is that one. */
+    private void guessMap(int type) {
+        if (mapGuessed) return;
+        java.util.Map<Integer, String> known = enemyDungeon != null ? enemyDungeon : enemiesByDungeon();
+        if (enemyDungeon == null && GameFileEnemies.get() != null) enemyDungeon = known;
+        String dungeon = known.get(type);
+        if (dungeon == null) return;
+        java.util.Set<Integer> votes = guessVotes.computeIfAbsent(dungeon, k -> new java.util.HashSet<>());
+        votes.add(type);
+        String label = IdToAsset.getIdLabel(type);
+        boolean boss = label != null && java.util.Arrays.asList(label.split(",")).contains("BOSS");
+        if (!boss && votes.size() < GUESS_VOTES) return;
+        MapInfoPacket guessed = new MapInfoPacket();
+        guessed.name = dungeon;
+        guessed.displayName = dungeon;
+        guessed.seed = -1;
+        mapGuessed = true;
+        map = guessed;
+        lootgobbler.AppLog.log("game", "Started in the middle of a map: it is " + dungeon + " (by its enemies)");
+        lootgobbler.DungeonVisits.get().enteredLate(guessed);
+        lootgobbler.MoonlightLog.get().entered(dungeon);
+    }
+
+    /**
+     * Every enemy you hit in exactly one dungeon (dungeon.stats), by its type, then those the game files place in
+     * exactly one dungeon (see GameFileEnemies) for dungeons you have not hit them in; shared ones tell nothing.
+     */
+    private java.util.Map<Integer, String> enemiesByDungeon() {
+        java.util.Map<Integer, String> out = new java.util.HashMap<>();
+        java.util.Set<Integer> shared = new java.util.HashSet<>();
+        java.util.Map<Integer, String> fromFiles = GameFileEnemies.get();   // null while still loading
+        try {
+            if (dungeonStatData.data != null) {
+                for (DungeonStatData.DungeonInfo info : new ArrayList<>(dungeonStatData.data.values())) {
+                    String name = info.getName();
+                    if (name == null || "Realm of the Mad God".equals(name) || name.startsWith("{")) continue;
+                    for (int type : info.getEntityDamaged().keySet()) {
+                        String before = out.putIfAbsent(type, name);
+                        if (before != null && !before.equals(name)) shared.add(type);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            mapGuessFailed = true;   // read while it changed: no guessing this time
+            return java.util.Map.of();
+        }
+        shared.forEach(out::remove);
+        if (fromFiles != null) fromFiles.forEach(out::putIfAbsent);   // your own runs win
+        else enemyDungeon = null;   // ask again with the next enemy, once the game files are read
+        return out;
+    }
+
     public void setNewRealm(MapInfoPacket map) {
+        mapGuessed = false;   // the game told: no more guessing
+        ownPositions.clear();
+        standingId = -1;
+        mapGuessFailed = false;
+        guessVotes.clear();
         lootgobbler.AppLog.log("game", "Entered " + map.displayName + " (" + map.width + "x" + map.height + ")");
         lootgobbler.DungeonVisits.get().hits(this, true);   // damage taken and dealt in the map left, before it is cleared
         clear();
@@ -189,6 +322,10 @@ public class TomatoData {
      * @param p Move packet data
      */
     public void updatePlayersPos(MovePacket p) {
+        if (player == null && worldPlayerId <= 0 && (map == null || mapGuessed) && p.records != null) {
+            for (packets.data.MoveRecord r : p.records) if (r != null && r.pos != null) ownPositions.add(r.pos);
+            while (ownPositions.size() > 30) ownPositions.remove(0);
+        }
         if (player != null && p.records != null && p.records.length > 0) {
             player.pos = p.records[p.records.length - 1].pos;
             packets.data.WorldPosData[] way = new packets.data.WorldPosData[p.records.length];
@@ -259,6 +396,7 @@ public class TomatoData {
         entity.entityUpdate(idType, object.status, timePc);
         lootgobbler.LootEvents.objectStatus(id, object.status);   // a vault container's page
 
+        if (newObject && (map == null || mapGuessed) && !mapGuessFailed) guessMap(idType);
         if (newObject) {
             moonLightFlameCounter(idType);
             SecurityAbilityUseCheck.decoy(entity);
@@ -451,6 +589,9 @@ public class TomatoData {
                 new Entity(this, idd, timePc)
             );
             entity.updateStats(p.status[i], timePc);
+            if (worldPlayerId <= 0 && (map == null || mapGuessed) && (onlyYours(p.status[i]) || standsWhereYouAre(id, p.status[i]))) {
+                foundYourself(id, entity);
+            }
             if (id == worldPlayerId) lootgobbler.LootEvents.playerStatus(charId, entity, p.status[i], false);   // slots that changed
             else lootgobbler.LootEvents.objectStatus(id, p.status[i]);   // a vault container's page
             lootgobbler.MoonlightLog.get().changed(this, p.status[i]);

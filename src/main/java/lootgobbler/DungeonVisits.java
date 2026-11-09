@@ -45,6 +45,8 @@ public final class DungeonVisits implements Syncable {
         public long start;
         public long durationMs;
         public long runStart;   // DpsHistory.Run.start of the run with your boss damage; 0 = no boss fought
+        public boolean late;    // the sniffer started inside it: what happened before is missing
+        public boolean hidden;  // removed by you: kept (and synced) but no longer shown
         public Boolean completed;   // only in what is synced: whether you completed it (see completed()), null if unknown
         public List<Exalt> exalts = new ArrayList<>();   // exaltation progress the game reported in this dungeon
         // every hit you took, oldest first: ms after entering, damage (after your defense), and the enemy's object
@@ -153,6 +155,20 @@ public final class DungeonVisits implements Syncable {
      * Called on every map change, after the DPS Logger has saved the run of the map left: ends the visit in
      * progress (linking it to that run if you fought a boss) and starts one if the new map is a dungeon.
      */
+    /**
+     * The sniffer started inside a dungeon, recognised by its enemies (the game only names it on entering): its visit
+     * starts now, marked as joined late (what happened before is not in it).
+     */
+    public void enteredLate(MapInfoPacket map) {
+        entered(map);
+        Visit v = current;
+        if (v != null) {
+            v.late = true;
+            AppLog.log("game", "Dungeon visit joined late: " + map.name);
+            fire();
+        }
+    }
+
     public void entered(MapInfoPacket map) {
         long now = System.currentTimeMillis();
         synchronized (this) {
@@ -188,6 +204,7 @@ public final class DungeonVisits implements Syncable {
     /** Your character's look now (CharacterStore keeps it, not while transformed), or null before you played. */
     public static Look lookNow() {
         CharacterStore.Char c = CharacterStore.get().playing();
+        if (c == null) c = CharacterStore.get().lastPlayedChar();   // started mid-map: the game did not say yet
         String name = CharacterStore.get().playerName();
         if (c == null || name == null || c.classType <= 0) return null;
         Look l = new Look();
@@ -284,6 +301,11 @@ public final class DungeonVisits implements Syncable {
         v.hitDamage = java.util.Arrays.copyOf(dmg, n);
         v.hitEnemy = java.util.Arrays.copyOf(enemy, n);
         int max = player.maxHp();
+        if (max <= 0 && v.maxHp <= 0) {   // started mid-map: the game only sends your life when it changes
+            CharacterStore.Char c = CharacterStore.get().playing();
+            if (c == null) c = CharacterStore.get().lastPlayedChar();
+            if (c != null) max = c.maxHp;
+        }
         if (max > 0) v.maxHp = max;
         // your damage to every enemy hit in this map, per second
         int[] dealt = new int[(int) Math.max(1, (now - v.start) / 1000 + 1)];
@@ -511,9 +533,27 @@ public final class DungeonVisits implements Syncable {
         return current;
     }
 
-    /** The finished visits, newest first. */
+    /** The finished visits you have not removed, newest first. */
     public synchronized List<Visit> visits() {
+        List<Visit> shown = new ArrayList<>();
+        for (Visit v : visits) if (!v.hidden) shown.add(v);
+        return shown;
+    }
+
+    /** Every finished visit, the removed ones too, newest first. */
+    public synchronized List<Visit> allVisits() {
         return new ArrayList<>(visits);
+    }
+
+    /** Removes a finished visit from what is shown; it is only marked (and the mark synced), not deleted. */
+    public void remove(Visit v) {
+        synchronized (this) {
+            if (v.hidden || !visits.contains(v)) return;
+            v.hidden = true;
+            save();
+        }
+        fire();
+        ServerSync.get().uploadSoon();
     }
 
     /**
@@ -555,7 +595,7 @@ public final class DungeonVisits implements Syncable {
     /** The run with your boss damage of a finished visit, or null if you fought no boss (or it was deleted). */
     public static DpsHistory.Run run(Visit v) {
         if (v.runStart == 0) return null;
-        for (DpsHistory.Run r : DpsHistory.get().runs()) if (r.start == v.runStart) return r;
+        for (DpsHistory.Run r : DpsHistory.get().allRuns()) if (r.start == v.runStart) return r;
         return null;
     }
 
@@ -632,9 +672,17 @@ public final class DungeonVisits implements Syncable {
                 if (i == null) {
                     visits.add(t);
                     changed = true;
-                } else if (detail(t) > detail(visits.get(i))) {
-                    visits.set(i, t);
-                    changed = true;
+                } else {
+                    Visit mine = visits.get(i);
+                    boolean hidden = mine.hidden || t.hidden;   // removed on either side stays removed
+                    if (detail(t) > detail(mine)) {
+                        t.hidden = hidden;
+                        visits.set(i, t);
+                        changed = true;
+                    } else if (hidden && !mine.hidden) {
+                        mine.hidden = true;
+                        changed = true;
+                    }
                 }
             }
             if (changed) {

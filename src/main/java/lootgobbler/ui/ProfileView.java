@@ -753,9 +753,14 @@ public class ProfileView extends SubTabs {
                         + (guildFriends.count == 1 ? "" : "s") + " together in the last " + FACT_DAYS + " days"));
         if (blocks.isEmpty()) return null;
         // five of them, picked anew each day and each time the app starts (the same in between, so the card does
-        // not change with every refresh)
-        java.util.Collections.shuffle(blocks, new java.util.Random(FACT_SEED * 31 + java.time.LocalDate.now().toEpochDay()));
+        // not change with every refresh), those not shown the last time first
+        List<String> order = factOrder();
+        blocks.sort(java.util.Comparator.comparingInt(b -> {
+            int i = order.indexOf(String.valueOf(b.getClientProperty(FACT_NAME)));
+            return i < 0 ? Integer.MAX_VALUE : i;
+        }));
         if (blocks.size() > FACTS_SHOWN) blocks = new ArrayList<>(blocks.subList(0, FACTS_SHOWN));
+        rememberShown(blocks);
         JPanel grid = new JPanel(new WrapLayout(36, 18));   // side by side, wrapping when the card is narrow
         grid.setOpaque(false);
         // the icons all as tall as the tallest of those shown, standing on one line, so the texts of a row line up
@@ -787,7 +792,40 @@ public class ProfileView extends SubTabs {
     }
 
     private static final int FACTS_SHOWN = 5;
-    private static final long FACT_SEED = new java.util.Random().nextLong();   // which ones: new each start (and day)
+    private static final String FACTS_SHOWN_KEY = "guildFactsShown";   // the captions shown the last time, | between
+    private static final List<String> FACT_NAMES = List.of("DUNGEON LOVER", "DEATH LOVER", "FAME PRODUCER", "PUNISHER",
+            "PANZER", "EXALTER!", "JUST DODGE", "LOOTER", "DIVERSIFIER", "ST COLLECTOR", "BEST FRIENDS");
+    private static List<String> factOrder;      // this run's order of the facts (made once a start and a day)
+    private static long factOrderDay = Long.MIN_VALUE;
+    private static String factsSaved;           // what was saved last, so an unchanged pick is not written again
+
+    /**
+     * The order the facts are picked in: shuffled, those shown the last time (in an earlier start, or yesterday) at the
+     * end, so each start tries to show different ones. Made once a start and a day, so refreshes keep the same ones.
+     */
+    private static synchronized List<String> factOrder() {
+        long today = java.time.LocalDate.now().toEpochDay();
+        if (factOrder != null && factOrderDay == today) return factOrder;
+        java.util.Set<String> last = new java.util.HashSet<>();
+        String saved = util.PropertiesManager.getProperty(FACTS_SHOWN_KEY);
+        if (saved != null) last.addAll(java.util.Arrays.asList(saved.split("\\|")));
+        List<String> order = new ArrayList<>(FACT_NAMES);
+        java.util.Collections.shuffle(order);
+        order.sort(java.util.Comparator.comparing(last::contains));   // stable: the new ones first, still shuffled
+        factOrder = order;
+        factOrderDay = today;
+        return order;
+    }
+
+    /** Saves which facts are shown, for the next start to show others. */
+    private static synchronized void rememberShown(List<JComponent> shown) {
+        StringBuilder sb = new StringBuilder();
+        for (JComponent b : shown) sb.append(sb.length() == 0 ? "" : "|").append(b.getClientProperty(FACT_NAME));
+        String s = sb.toString();
+        if (s.equals(factsSaved)) return;
+        factsSaved = s;
+        util.PropertiesManager.setProperties(FACTS_SHOWN_KEY, s);
+    }
 
     private static final long DODGE_MIN_MS = 10 * 60_000L;   // less time in dungeons says too little about an average
 
@@ -1005,6 +1043,7 @@ public class ProfileView extends SubTabs {
     }
 
     private static final String FACT_PICTURE = "fact.picture";   // a fact's icon label, on the fact
+    private static final String FACT_NAME = "fact.name";         // a fact's caption, on the fact
 
     /** A thin gold line across the column, stopping short of both edges, as under the day headers in Battles. */
     private static JComponent goldLine() {
@@ -1047,6 +1086,7 @@ public class ProfileView extends SubTabs {
                 icon == null ? 1 : icon.getIconHeight()));
         picture.setMaximumSize(new Dimension(Integer.MAX_VALUE, Integer.MAX_VALUE));
         p.putClientProperty(FACT_PICTURE, picture);
+        p.putClientProperty(FACT_NAME, caption);
         p.add(left(picture));
         p.add(Box.createVerticalStrut(6));
         p.add(left(text));

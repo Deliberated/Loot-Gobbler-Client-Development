@@ -90,6 +90,7 @@ public final class DpsHistory implements Syncable {
         public long start;
         public long durationMs;
         public boolean guildHall;      // a guild hall visit: one block per loadout you shot with
+        public boolean hidden;         // removed by you: kept (and synced) but no longer shown
         public List<Boss> bosses = new ArrayList<>();
 
         /**
@@ -214,16 +215,27 @@ public final class DpsHistory implements Syncable {
         return live;
     }
 
+    /** The saved runs you have not removed, newest first. */
     public synchronized List<Run> runs() {
+        List<Run> shown = new ArrayList<>();
+        for (Run r : runs) if (!r.hidden) shown.add(r);
+        return shown;
+    }
+
+    /** Every saved run, the removed ones too (to find a visit's run), newest first. */
+    public synchronized List<Run> allRuns() {
         return new ArrayList<>(runs);
     }
 
+    /** Removes a run from what is shown; it is only marked (and the mark synced), not deleted. */
     public void remove(Run run) {
         synchronized (this) {
-            runs.remove(run);
+            if (run.hidden) return;
+            run.hidden = true;
             save();
         }
         fire();
+        ServerSync.get().uploadSoon();
     }
 
     public void clear() {
@@ -268,11 +280,15 @@ public final class DpsHistory implements Syncable {
         if (theirs == null) return false;
         boolean changed = false;
         synchronized (this) {
-            Set<String> known = new HashSet<>();
-            for (Run r : runs) known.add(r.start + "|" + r.dungeon);
+            java.util.Map<String, Run> known = new java.util.HashMap<>();
+            for (Run r : runs) known.put(r.start + "|" + r.dungeon, r);
             for (Run r : theirs) {
-                if (known.add(r.start + "|" + r.dungeon)) {
+                Run mine = known.putIfAbsent(r.start + "|" + r.dungeon, r);
+                if (mine == null) {
                     runs.add(r);
+                    changed = true;
+                } else if (r.hidden && !mine.hidden) {   // removed on the other side
+                    mine.hidden = true;
                     changed = true;
                 }
             }

@@ -180,7 +180,7 @@ public class DpsLoggerView extends JPanel {
         if (now != null && !clock.isRunning()) clock.start();
         if (now == null) clock.stop();
         List<Visit> visits = DungeonVisits.get().visits();
-        List<Run> runs = DpsHistory.get().runs();
+        List<Run> runs = DpsHistory.get().allRuns();
         list.removeAll();
         dayGrids.clear();
         nowWhen = null;
@@ -618,6 +618,11 @@ public class DpsLoggerView extends JPanel {
         name.setFont(name.getFont().deriveFont(26f));
         text.add(name);
         text.add(muted(whenText(v, current)));
+        if (v.late) {   // the yellow dot on its box
+            JLabel late = new JLabel("Joined late: the sniffer started in the middle of it");
+            late.setForeground(new Color(0xF2C230));
+            text.add(late);
+        }
         long gained = fame(v, current);
         if (gained > 0) {   // the fame you gained in it, as a number
             JLabel f = new JLabel("+" + String.format(Locale.ROOT, "%,d", gained) + " fame");
@@ -633,6 +638,23 @@ public class DpsLoggerView extends JPanel {
             text.add(lantern);
         }
         head.add(text, BorderLayout.CENTER);
+        if (!current) {   // a finished one can be removed from the list (only marked as removed, not deleted)
+            JButton remove = new JButton("DELETE");
+            remove.putClientProperty("FlatLaf.styleClass", "danger");
+            remove.setFocusable(false);
+            remove.setToolTipText("Remove this dungeon from the list");
+            remove.addActionListener(e -> {
+                if (JOptionPane.showConfirmDialog(this, "Delete " + v.dungeon + " (" + whenText(v, false) + ") from the list?",
+                        "Delete dungeon", JOptionPane.OK_CANCEL_OPTION) != JOptionPane.OK_OPTION) return;
+                selected = -1;
+                DungeonVisits.get().remove(v);
+                refresh();
+            });
+            JPanel side = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+            side.setOpaque(false);
+            side.add(remove);
+            head.add(side, BorderLayout.EAST);
+        }
         detail.add(CharactersView.box("Dungeon", Palette.BLUE, head));
 
         JPanel bosses = column();
@@ -927,6 +949,15 @@ public class DpsLoggerView extends JPanel {
                 g.setColor(isSelected ? accent : Color.BLACK);
                 g.drawRect(0, 0, getWidth() - 1, getHeight() - 1);
                 if (isSelected) g.drawRect(1, 1, getWidth() - 3, getHeight() - 3);
+                if (v.late) {   // joined late: a yellow dot at the top left
+                    Graphics2D g2 = (Graphics2D) g.create();
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                    g2.setColor(new Color(0x1A120A));
+                    g2.fillOval(4, 4, 12, 12);
+                    g2.setColor(new Color(0xF2C230));
+                    g2.fillOval(5, 5, 10, 10);
+                    g2.dispose();
+                }
             }
         };
         tile.setOpaque(false);

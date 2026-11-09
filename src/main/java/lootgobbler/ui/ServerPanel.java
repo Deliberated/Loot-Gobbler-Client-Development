@@ -63,6 +63,7 @@ public class ServerPanel extends JPanel {
     // Kept across rebuilds, so typed text survives a status change.
     private final JTextField address = field(28, "loot.example.com");
     private final JTextField ign = field(14, "Your IGN");
+    private String shownName = CharacterStore.get().playerName();   // the name the account form was built with
     private final JPasswordField password = new JPasswordField(14);
     private final JTextField registerToken = field(30, "Admin or moderator token (optional)");
     private final JTextField redeemToken = field(30, "LGM-... or LGA-...");
@@ -124,6 +125,13 @@ public class ServerPanel extends JPanel {
         add(scroll);
 
         server.onChange(() -> SwingUtilities.invokeLater(this::rebuild));
+        CharacterStore.get().onChange(() -> SwingUtilities.invokeLater(() -> {   // your name became known: registering opens
+            String name = CharacterStore.get().playerName();
+            if (!java.util.Objects.equals(name, shownName)) {
+                shownName = name;
+                if (server.user() == null) rebuild();
+            }
+        }));
         ServerSync.get().onChange(() -> SwingUtilities.invokeLater(this::rebuild));
         rebuild();
     }
@@ -279,16 +287,26 @@ public class ServerPanel extends JPanel {
         if (server.state() != State.ONLINE) {
             accountBody.add(left(muted("Connect to a server to log in or register.")));
         } else if (u == null) {
-            if (ign.getText().isBlank() && CharacterStore.get().playerName() != null) {
-                ign.setText(CharacterStore.get().playerName());
-            }
+            // your name as the game showed it: an account always carries your real IGN, so it can't be typed in
+            String known = CharacterStore.get().playerName();
+            boolean identified = known != null && !known.isBlank();
+            if (identified) ign.setText(known);
+            ign.setEnabled(!identified);   // greyed out: taken from the game
+            ign.setToolTipText(identified ? "Your name, as the game shows it" : null);
             accountBody.add(formRow("IGN", ign));
             accountBody.add(formRow("Password", password));
             accountBody.add(formRow("Token", registerToken));
             JPanel buttons = row();
             buttons.add(button("Log in", "primary", this::login));
-            buttons.add(button("Register", null, this::register));
+            JButton register = button("Register", null, this::register);
+            register.setEnabled(identified);
+            if (!identified) register.setToolTipText("Loot Gobbler needs to see your name in-game first");
+            buttons.add(register);
             accountBody.add(buttons);
+            if (!identified) {
+                accountBody.add(left(muted("To register, start the sniffer and enter the Nexus or your vault in-game:")));
+                accountBody.add(left(muted("Loot Gobbler then knows your name and fills it in here.")));
+            }
             accountBody.add(left(muted("New accounts wait until a moderator or admin accepts them.")));
             accountBody.add(left(muted("With an admin or moderator token, your new account is ready right away.")));
         } else {
@@ -335,7 +353,13 @@ public class ServerPanel extends JPanel {
     }
 
     private void register() {
-        if (ign.getText().isBlank() || password.getPassword().length == 0) {
+        String known = CharacterStore.get().playerName();
+        if (known == null || known.isBlank()) {   // only with the name the game showed
+            accountFeedback.setText("Enter the Nexus or your vault in-game first, so Loot Gobbler knows your name.");
+            return;
+        }
+        ign.setText(known);
+        if (password.getPassword().length == 0) {
             accountFeedback.setText("Enter the IGN and a password (at least 8 characters) for your new account.");
             return;
         }

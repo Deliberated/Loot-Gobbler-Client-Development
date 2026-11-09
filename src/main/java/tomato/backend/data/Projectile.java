@@ -46,7 +46,7 @@ public class Projectile implements Serializable {
      * @param projectileId Projectile ID used (retrieved from packet being sent).
      */
     public Projectile(RNG rng, Entity player, int weaponId, int projectileId) {
-        if (player == null || rng == null) return;
+        if (player == null) return;   // rng null: the map's seed is not known (the sniffer started in the map)
 
         if (projectileId == -1) {
             projectileId = 0;
@@ -78,7 +78,9 @@ public class Projectile implements Serializable {
         }
         boolean mainWeapon = isMainWeapon(slot);
         int dmg;
-        if (min != max) {
+        if (min != max && rng == null) {
+            dmg = (min + max) / 2;   // the exact roll needs the seed: on average this is right
+        } else if (min != max) {
             long r = rng.next();
             dmg = (int) (min + (r % (max - min)));
         } else {

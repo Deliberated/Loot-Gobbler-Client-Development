@@ -124,7 +124,7 @@ public final class ExaltStore implements Syncable {
         synchronized (this) {
             for (Change c : changes) if (c.t >= since && c.classType == classId && c.stat == stat) at = Math.min(at, c.before);
         }
-        for (DungeonVisits.Visit v : DungeonVisits.get().visits()) {
+        for (DungeonVisits.Visit v : DungeonVisits.get().allVisits()) {
             if (v.start + v.durationMs < since || v.exalts == null) continue;
             for (DungeonVisits.Exalt e : v.exalts) if (e.classType == classId && e.stat == stat) at = Math.min(at, e.before);
         }
