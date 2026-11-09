@@ -106,7 +106,7 @@ final class DamageGraph extends JComponent {
     }
 
     /** One boss fight: its boss, from its first to its last hit (ms after entering). */
-    private record Fight(String boss, int type, long from, long to) {
+    record Fight(String boss, int type, long from, long to) {
     }
 
     /**
@@ -115,6 +115,11 @@ final class DamageGraph extends JComponent {
      * one fight: its overlapping (or nearly touching) spans are joined, under the icon of the first.
      */
     private java.util.List<Fight> fights() {
+        return fights(visit);
+    }
+
+    /** The visit's boss fights (see fights()), in the order they began. */
+    static java.util.List<Fight> fights(lootgobbler.DungeonVisits.Visit visit) {
         lootgobbler.DpsHistory.Run run = visit == lootgobbler.DungeonVisits.get().current()
                 ? lootgobbler.DpsHistory.get().live() : lootgobbler.DungeonVisits.run(visit);
         if (run == null || run.guildHall || !run.dungeon.equals(visit.dungeon)) return java.util.List.of();

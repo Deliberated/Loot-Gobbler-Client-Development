@@ -17,6 +17,30 @@ public final class Clicks {
     }
 
     /**
+     * Runs action as soon as the left button is pressed on c. For rows of lists that are rebuilt while data comes in
+     * (every second in a dungeon): a rebuild between press and release would lose a full click.
+     */
+    public static void onPress(JComponent c, Runnable action) {
+        c.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mousePressed(MouseEvent e) {
+                if (SwingUtilities.isLeftMouseButton(e)) action.run();
+            }
+        });
+    }
+
+    /**
+     * Lays out a container whose children were just replaced right away instead of on the next layout pass: until
+     * then the new children have no size, and a click in that moment would hit the empty container behind them.
+     */
+    public static void layoutNow(JComponent c) {
+        c.revalidate();
+        java.awt.Container root = c;
+        while (root.getParent() != null && !(root instanceof JComponent j && j.isValidateRoot())) root = root.getParent();
+        root.validate();
+    }
+
+    /**
      * Same, with the release event, for components that look up what is under the mouse (tables, painted maps).
      */
     public static void onClick(JComponent c, java.util.function.Consumer<MouseEvent> action) {

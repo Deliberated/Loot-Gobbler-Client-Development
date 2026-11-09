@@ -1055,6 +1055,7 @@ public class TomatoData {
         this.token = token;
 
         lootgobbler.CharacterStore.get().tokenReady(token, this::charListHttpRequest);
+        lootgobbler.Friends.get().fetch(token);
         updateExalts(token);
     }
 

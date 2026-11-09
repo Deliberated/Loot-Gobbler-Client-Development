@@ -162,13 +162,20 @@ public final class AmuletSaves implements Syncable {
      */
     public boolean relevant() {
         long since = System.currentTimeMillis() - RECENT_MS;
+        if (wornRecently()) return true;
+        synchronized (this) {
+            for (Save s : saves) if (!s.removed && s.t >= since) return true;
+        }
+        return false;
+    }
+
+    /** Whether a living character played in the last two weeks wears an amulet. */
+    public boolean wornRecently() {
+        long since = System.currentTimeMillis() - RECENT_MS;
         for (CharacterStore.Char c : CharacterStore.get().all()) {
             if (c.alive && c.lastPlayed >= since && c.equipment != null && c.equipment.length > 3 && Amulets.isAmulet(c.equipment[3])) {
                 return true;
             }
-        }
-        synchronized (this) {
-            for (Save s : saves) if (!s.removed && s.t >= since) return true;
         }
         return false;
     }

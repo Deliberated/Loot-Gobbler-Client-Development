@@ -27,6 +27,8 @@ profile.json
 dps_history.json
 dungeon_visits.json
 amulet_saves.json
+friends.txt
+friends-list.xml
 dungeon.stats
 vault-contents.txt
 vault-debug.txt

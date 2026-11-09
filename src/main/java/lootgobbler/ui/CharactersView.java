@@ -40,6 +40,7 @@ public class CharactersView extends JPanel {
     private final JPanel list = column();
     private final JPanel panel = column();
     private static final String[] PAGES = {"characters", "classes", "pets"};
+    private final ClassesView classes = new ClassesView();
     private final Map<Integer, Long> gains = new HashMap<>();   // charId -> fame gained in the selected range
     private final CardLayout pages;
     private final JPanel views;
@@ -95,12 +96,19 @@ public class CharactersView extends JPanel {
         characters.minMain(left.getPreferredSize().width + 24);   // keep the header readable
 
         views.add(characters, PAGES[0]);
-        views.add(new ClassesView(), PAGES[1]);
+        views.add(classes, PAGES[1]);
         views.add(new PetsView(), PAGES[2]);
         add(views, BorderLayout.CENTER);
 
         CharacterStore.get().onChange(ViewRefresh.of(this, this::refresh));   // only while it can be seen
         refresh();
+    }
+
+    /** Opens the Classes page, with this class shown on the right (-1: just the page). */
+    public void showClass(int classId) {
+        pages.show(views, PAGES[1]);
+        viewPicker.select(1);
+        if (classId >= 0) classes.open(classId);
     }
 
     /**

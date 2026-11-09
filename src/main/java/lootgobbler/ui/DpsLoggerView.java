@@ -33,8 +33,8 @@ public class DpsLoggerView extends JPanel {
     private static final int ICON = 64, POTION = 22, MATE = 30, MATES = 4, SINGLES = 4, MULTIS = 2;
     private static final int TILE_MIN_WIDTH = 400, GAP = 8;
     // ExaltStore's stat order (dex, spd, vit, wis, def, att, mana, life): names, and the potion index ClassesView uses
-    private static final String[] EXALT_STATS = {"DEX", "SPD", "VIT", "WIS", "DEF", "ATT", "MP", "HP"};
-    private static final int[] EXALT_POTION = {5, 4, 6, 7, 3, 2, 1, 0};
+    static final String[] EXALT_STATS = {"DEX", "SPD", "VIT", "WIS", "DEF", "ATT", "MP", "HP"};
+    static final int[] EXALT_POTION = {5, 4, 6, 7, 3, 2, 1, 0};
 
     private final DpsPanel dps;
     private final CardLayout pages = new CardLayout();
@@ -261,31 +261,60 @@ public class DpsLoggerView extends JPanel {
         List<GuildDamageGraph.Series> series = new ArrayList<>();
         List<PlayerRow> who = new ArrayList<>();
         List<Integer> maxHp = new ArrayList<>();
-        List<int[]> quick = new ArrayList<>();
+        List<Quick> quick = new ArrayList<>();
         String myName = lootgobbler.CharacterStore.get().playerName();
         series.add(new GuildDamageGraph.Series(myName == null ? "You" : myName, GUILD_COLORS[0], myHits(v),
                 v.hitDamage == null ? new int[0] : v.hitDamage));
         who.add(myRow(v, run, current));
         maxHp.add(v.maxHp);
-        quick.add(v.quickItem);
+        quick.add(new Quick(v.quickItem, toLong(v.quickTime)));
 
-        String note = guildmates(v, current, series, who, maxHp, quick);
+        String note = guildmates(v, run, current, series, who, maxHp, quick);
         if (note != null) {
             JLabel w = muted(note);
             w.setAlignmentX(LEFT_ALIGNMENT);
             out.add(w);
             out.add(Box.createVerticalStrut(6));
         }
-        facts(out, series, who, maxHp, quick, current ? v.duration() : v.durationMs);
+        facts(out, series, who, maxHp, quick, bossSpans(v), current ? v.duration() : v.durationMs);
         return out;
     }
 
+    /** Items used from a quick slot, and when (ms after your visit's start; null when not known). */
+    private record Quick(int[] items, long[] at) {
+    }
+
+    private static long[] toLong(int[] a) {
+        if (a == null) return null;
+        long[] out = new long[a.length];
+        for (int i = 0; i < a.length; i++) out[i] = a[i];
+        return out;
+    }
+
+    /** The time of the visit spent fighting a boss, as {from, to} (ms after its start), overlapping fights joined. */
+    private static List<long[]> bossSpans(Visit v) {
+        List<long[]> out = new ArrayList<>();
+        for (DamageGraph.Fight f : DamageGraph.fights(v)) {   // in the order they began
+            long[] last = out.isEmpty() ? null : out.get(out.size() - 1);
+            if (last != null && f.from() <= last[1]) last[1] = Math.max(last[1], f.to());
+            else out.add(new long[]{f.from(), f.to()});
+        }
+        return out;
+    }
+
+    private static boolean during(List<long[]> spans, long t) {
+        for (long[] s : spans) if (t >= s[0] && t <= s[1]) return true;
+        return false;
+    }
+
     /**
-     * Adds the guildmates who were in the visit (from their synced visits on the server) to the lists. Returns what
-     * to say above them: why they are not (yet) there, who is still awaited, or null when all are in.
+     * Adds the guildmates who were in the visit (from their synced visits on the server) and finished its final boss
+     * with you to the lists: the dungeon was completed (or that cannot be told) and they are in the final boss's damage
+     * table. Returns what to say above them: why they are not (yet) there, who is still awaited or was left out, or null
+     * when all are in.
      */
-    private static String guildmates(Visit v, boolean current, List<GuildDamageGraph.Series> series, List<PlayerRow> who,
-                                     List<Integer> maxHp, List<int[]> quick) {
+    private static String guildmates(Visit v, Run run, boolean current, List<GuildDamageGraph.Series> series, List<PlayerRow> who,
+                                     List<Integer> maxHp, List<Quick> quick) {
         lootgobbler.GobblerServer server = lootgobbler.GobblerServer.get();
         if (server.state() != lootgobbler.GobblerServer.State.ONLINE || server.user() == null) {
             return "Log in to a Loot Gobbler server to compare with your guildmates.";
@@ -297,22 +326,37 @@ public class DpsLoggerView extends JPanel {
         // the guildmates who were in it (their visit of it is on the server), in the look the run shows them in
         Map<String, PlayerRow> inTable = new java.util.HashMap<>();
         for (PlayerRow p : Guildmates.get().with(v)) inTable.put(p.name.toLowerCase(Locale.ROOT), p);
+        // who finished the final boss: in its damage table, and only if it died (not when it cannot be told)
+        java.util.Set<String> finished = new java.util.HashSet<>();
+        Boss last = run == null ? null : run.mainBoss();
+        if (last != null && !Boolean.FALSE.equals(lootgobbler.DungeonVisits.completed(v))) {
+            for (PlayerRow p : last.players) if (p.name != null) finished.add(p.name.toLowerCase(Locale.ROOT));
+        }
+        List<String> leftOut = new ArrayList<>();
         for (Map.Entry<String, List<lootgobbler.GobblerServer.RunLook>> e : new java.util.TreeMap<>(looks).entrySet()) {
             lootgobbler.GobblerServer.RunLook visit = e.getValue().stream().filter(l -> "visit".equals(l.source)).findFirst().orElse(null);
             if (visit == null) continue;
+            if (!finished.contains(e.getKey())) {
+                leftOut.add(visit.player);
+                continue;
+            }
             Color c = GUILD_COLORS[series.size() % GUILD_COLORS.length];
             series.add(new GuildDamageGraph.Series(visit.player, c, visit.hitAt, visit.hitDamage));
             PlayerRow p = inTable.get(e.getKey());
             if (p == null) p = rowOf(visit, e.getValue());
             who.add(p);
             maxHp.add(visit.maxHp);
-            quick.add(visit.quickUsed);   // null: their client does not send it
+            quick.add(new Quick(visit.quickUsed, visit.quickAt));   // null: their client (or the server) does not send it
         }
         // guildmates who fought with you but whose client has not synced this visit yet
         List<String> awaited = Guildmates.get().awaited(v);
         if (!awaited.isEmpty()) {
             return (Guildmates.get().retrying(v) ? "Waiting for " : "Not on the server: ") + String.join(", ", awaited)
                     + (Guildmates.get().retrying(v) ? " to sync this run..." : "");
+        }
+        if (!leftOut.isEmpty()) {
+            return (last == null ? "No final boss fought, so no guildmates are compared: "
+                    : "Only guildmates who finished " + last.name + " are compared. Left out: ") + String.join(", ", leftOut);
         }
         return series.size() == 1 ? "No guildmates with Loot Gobbler were in this dungeon." : null;
     }
@@ -322,22 +366,34 @@ public class DpsLoggerView extends JPanel {
     /**
      * You and the guildmates ranked four ways, worst first, each as their character and the value: Most Critical Hits
      * (the damage graph's 2 s slices that took 30% of their life or 300), Biggest Slap (the most damage taken within
-     * one second, in HP), Most Hit % (how often they were hit for the time in the dungeon against the server's
+     * one second, in HP), Most Hit % (how often they were hit for the time counted against the server's
      * baseline: HPM / (HPM + baseline HPM) x 100, the highest first) and the quick slot items
      * they used ("none", or "-" when their client does not send them). Below, a podium of who did best over
      * all four: each player's average place in them (1 = best, the lowest value), the lowest average winning. All from what the
-     * clients synced.
+     * clients synced, which is the whole visit; only what happened during the boss fights (spans) counts, Most Hit % against
+     * their length. A visit without a boss fight counts all of it.
      */
     private static void facts(JPanel out, List<GuildDamageGraph.Series> series, List<PlayerRow> who, List<Integer> maxHp,
-                              List<int[]> quick, long durationMs) {
+                              List<Quick> quick, List<long[]> spans, long durationMs) {
         int n = series.size(), slice = DamageGraph.WINDOWS_MS[0];
         double[] critical = new double[n], hurt = new double[n], hitPct = new double[n], used = new double[n];
-        double baseline = Guildmates.get().settings().baselineHpm, minutes = Math.max(1000, durationMs) / 60_000.0;
+        long counted = 0;
+        for (long[] sp : spans) counted += sp[1] - sp[0];
+        boolean all = spans.isEmpty();
+        JLabel scope = muted(all ? "No boss fought: these count the whole visit."
+                : "Counted during the boss fights only (" + DpsPanel.duration(counted) + ").");
+        scope.setAlignmentX(LEFT_ALIGNMENT);
+        out.add(scope);
+        out.add(Box.createVerticalStrut(8));
+        double baseline = Guildmates.get().settings().baselineHpm, minutes = Math.max(1000, all ? durationMs : counted) / 60_000.0;
+        List<int[]> shown = new ArrayList<>();   // the quick slot items counted, per player (null: not known)
         for (int i = 0; i < n; i++) {
             long[] at = series.get(i).at();
             int[] dmg = series.get(i).damage();
             List<long[]> hits = new ArrayList<>();   // {time, damage}, in order
-            for (int k = 0; k < Math.min(at.length, dmg.length); k++) hits.add(new long[]{at[k], dmg[k]});
+            for (int k = 0; k < Math.min(at.length, dmg.length); k++) {
+                if (all || during(spans, at[k])) hits.add(new long[]{at[k], dmg[k]});
+            }
             hits.sort((x, y) -> Long.compare(x[0], y[0]));
             int threshold = maxHp.get(i) > 0 ? (int) Math.min(DamageGraph.BIG_DAMAGE, Math.round(maxHp.get(i) * DamageGraph.BIG_SHARE))
                     : DamageGraph.BIG_DAMAGE;
@@ -352,7 +408,14 @@ public class DpsLoggerView extends JPanel {
             }
             double hpm = hits.size() / minutes;
             hitPct[i] = hpm <= 0 ? 0 : 100 * hpm / (hpm + baseline);
-            used[i] = quick.get(i) == null ? 0 : quick.get(i).length;
+            Quick q = quick.get(i);
+            int[] items = q.items();
+            if (items != null && !all && q.at() != null && q.at().length == items.length) {
+                items = java.util.stream.IntStream.range(0, items.length).filter(k -> during(spans, q.at()[k]))
+                        .map(k -> q.items()[k]).toArray();
+            }
+            shown.add(items);
+            used[i] = items == null ? 0 : items.length;
         }
         JPanel grid = new JPanel(new WrapLayout(36, 14)) {   // side by side, wrapping only when the column is narrow
             @Override
@@ -377,7 +440,7 @@ public class DpsLoggerView extends JPanel {
         grid.add(fact("Most Critical Hits", series, who, critical, i -> numberLabel(String.valueOf((int) critical[i]))));
         grid.add(fact("Biggest Slap", series, who, hurt, i -> numberLabel(String.format(Locale.ROOT, "%,d HP", (long) hurt[i]))));
         grid.add(fact("Most Hit %", series, who, hitPct, i -> numberLabel(String.format(Locale.ROOT, "%.0f%%", hitPct[i]))));   // the most hit first
-        grid.add(fact("Quickslots Used", series, who, used, i -> quickItems(quick.get(i))));
+        grid.add(fact("Quickslots Used", series, who, used, i -> quickItems(shown.get(i))));
         out.add(grid);
 
         // the podium: in every fact the highest value is the worst and the lowest the best; the average place over
@@ -818,7 +881,7 @@ public class DpsLoggerView extends JPanel {
             int cols = Math.max(1, (width - 20 + GAP) / (TILE_MIN_WIDTH + GAP));
             for (JPanel grid : dayGrids) ((GridLayout) grid.getLayout()).setColumns(cols);
         }
-        list.revalidate();
+        Clicks.layoutNow(list);   // the new tiles take clicks at once
         list.repaint();
     }
 

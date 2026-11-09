@@ -76,6 +76,9 @@ public class TomatoGUI {
         }, run -> {
             dps.showRun(run);   // a recent run on the profile opens it in Battles
             tabbedPane.show("Battles");
+        }, cls -> {
+            characters.showClass(cls);   // the exaltations on the profile open the Classes page (or one class)
+            tabbedPane.show("Characters");
         }));
         chatPanel = new ChatGUI(data);
         questPanel = new QuestGUI();

@@ -82,6 +82,8 @@ public class DpsPanel extends JPanel {
         add(new SideSplit(bossSection, pastSection, "dps", 400, 220), BorderLayout.CENTER);   // drag the gap to resize
 
         DpsHistory.get().onChange(() -> SwingUtilities.invokeLater(this::refresh));
+        lootgobbler.Friends.get().onChange(() -> SwingUtilities.invokeLater(this::repaint));   // their labels
+        Guildmates.get().onChange(() -> SwingUtilities.invokeLater(this::repaint));
         refresh();
     }
 
@@ -153,7 +155,7 @@ public class DpsPanel extends JPanel {
                 bosses.add(Box.createVerticalStrut(6));
             }
         }
-        bosses.revalidate();
+        Clicks.layoutNow(bosses);   // the new blocks take clicks at once
         bosses.repaint();
     }
 
@@ -474,7 +476,7 @@ public class DpsPanel extends JPanel {
             past.add(empty);
         }
         for (Run r : runs) past.add(historyRow(r, false));
-        past.revalidate();
+        Clicks.layoutNow(past);   // the new rows take clicks at once
         past.repaint();
     }
 
@@ -508,7 +510,7 @@ public class DpsPanel extends JPanel {
         if (!current) buttons.add(button("x", "danger", () -> DpsHistory.get().remove(r)));
         if (buttons.getComponentCount() > 0) row.add(buttons, BorderLayout.EAST);
         row.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        Clicks.onClick(row, () -> select(target));
+        Clicks.onPress(row, () -> select(target));   // on press: the list is rebuilt every second during a run
         row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
         return row;
     }
@@ -738,6 +740,57 @@ public class DpsPanel extends JPanel {
     /**
      * Striped rows; the player cell shows a bar for the damage share, the class cell a colored marker.
      */
+    private record Mark(String text, Color color, boolean boxed) {
+    }
+
+    /** The marks after a player's name in a row: text in its color, in a slightly rounded outline if boxed. */
+    private static final class Marks implements Icon {
+        private static final int PAD_X = 4, PAD_Y = 1, GAP = 6, ARC = 6;
+        private final List<Mark> marks;
+        private final Font font;
+        private final FontMetrics fm;
+
+        Marks(List<Mark> marks, Font font) {
+            this.marks = marks;
+            this.font = font;
+            this.fm = new JLabel().getFontMetrics(font);
+        }
+
+        private int width(Mark m) {
+            return fm.stringWidth(m.text()) + (m.boxed() ? 2 * PAD_X : 0);
+        }
+
+        @Override
+        public int getIconWidth() {
+            int w = 0;
+            for (Mark m : marks) w += width(m) + GAP;
+            return w - GAP;
+        }
+
+        @Override
+        public int getIconHeight() {
+            return fm.getHeight() + 2 * PAD_Y;
+        }
+
+        @Override
+        public void paintIcon(Component c, Graphics g, int x, int y) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            g2.setFont(font);
+            g2.setStroke(new BasicStroke(1.2f));
+            int h = getIconHeight(), base = y + PAD_Y + fm.getAscent();
+            for (Mark m : marks) {
+                int w = width(m);
+                g2.setColor(m.color());
+                if (m.boxed()) g2.drawRoundRect(x, y, w - 1, h - 1, ARC, ARC);
+                g2.drawString(m.text(), x + (m.boxed() ? PAD_X : 0), base);
+                x += w + GAP;
+            }
+            g2.dispose();
+        }
+    }
+
     private static class PlayerRenderer extends DefaultTableCellRenderer {
         private final Boss boss;
         private final double maxShare;
@@ -769,10 +822,17 @@ public class DpsPanel extends JPanel {
             }
             if (column == 1) {
                 PlayerRow p = (PlayerRow) value;
-                setText(p.died ? "<html>" + escape(p.name) + " <font color='#BE332D' size='2'>DIED</font></html>" : p.name);
+                setText(p.name);
+                Icon marks = marks(p, table.getFont());   // the labels and DIED, after the name
+                if (marks != null) {
+                    setIcon(marks);
+                    setHorizontalTextPosition(SwingConstants.LEADING);
+                    setIconTextGap(8);
+                }
                 if (p.me && !selected) setForeground(Palette.GOLD);
                 bar = boss.share(p) / maxShare;
             } else if (column == 2) {
+                setHorizontalTextPosition(SwingConstants.TRAILING);
                 PlayerRow p = (PlayerRow) value;
                 Color c = CLASS_COLORS.getOrDefault(p.className(), Palette.STONE);
                 setText(p.className());
@@ -799,6 +859,26 @@ public class DpsPanel extends JPanel {
 
         private static String escape(String s) {
             return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+        }
+
+        /**
+         * After the name: an outlined box per thing they are to you, GUILD (green) when they were in your guild then
+         * (the same guild as yours in this fight, or a member of it on the Loot Gobbler server) and FRIEND (blue) when
+         * they are on your in-game friend list; then DIED (red, no box) if they died. null when there is none.
+         */
+        private Icon marks(PlayerRow p, Font font) {
+            List<Mark> marks = new ArrayList<>();
+            if (!p.me && isGuildmate(p)) marks.add(new Mark("GUILD", new Color(0x4CAF50), true));
+            if (!p.me && lootgobbler.Friends.get().isFriend(p.name)) marks.add(new Mark("FRIEND", new Color(0x4A90E2), true));
+            if (p.died) marks.add(new Mark("DIED", new Color(0xD8463F), false));
+            return marks.isEmpty() ? null : new Marks(marks, font.deriveFont(Font.BOLD, font.getSize2D() - 2f));
+        }
+
+        private boolean isGuildmate(PlayerRow p) {
+            PlayerRow me = boss.me();
+            String mine = me == null ? null : me.guild;
+            if (mine != null && !mine.isEmpty() && mine.equals(p.guild)) return true;
+            return p.name != null && Guildmates.get().names().contains(p.name.toLowerCase(java.util.Locale.ROOT));
         }
     }
 }

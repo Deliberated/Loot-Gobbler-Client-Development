@@ -96,6 +96,12 @@ public class ClassesView extends JPanel {
         refresh();
     }
 
+    /** Shows this class on the right as if its sprite was clicked; -1 closes it. */
+    public void open(int classId) {
+        selected = classId;
+        showClass();
+    }
+
     /**
      * The class picked by clicking its sprite, on the right: how many of your characters of it died, and the
      * dungeons where you did the most damage per second with it (from the DPS Logger's run history).

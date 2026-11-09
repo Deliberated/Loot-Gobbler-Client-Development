@@ -33,6 +33,7 @@ public final class DpsHistory implements Syncable {
         public int taken;
         public boolean died;
         public boolean me;
+        public String guild;   // their guild in this run ("" none); null in runs saved before it was kept
         // the look the character had in this run: skin (0 = the class's own) and dye textures (0 = none, see Dyes)
         public int skin, tex1, tex2;
 
@@ -322,6 +323,8 @@ public final class DpsHistory implements Syncable {
                     p.taken = d.owner.damageTaken(e)[0];
                     p.died = DeathParser.isDead(deathMap, p.name);
                     p.me = d.owner.isUser();
+                    String guild = d.owner.getStatGuild();
+                    p.guild = guild == null ? "" : guild;
                     b.players.add(p);
                 }
                 if (!b.players.isEmpty()) run.bosses.add(b);

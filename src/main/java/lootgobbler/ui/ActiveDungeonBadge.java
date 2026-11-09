@@ -108,6 +108,7 @@ public final class ActiveDungeonBadge extends JPanel {
 
     /** As above; bottom: standing on the square's lower edge instead of centred (e.g. to sit above a line). */
     static Icon fit(Icon src, int size, boolean bottom) {
+        if (src instanceof ProfileView.Enlarged e) return new ProfileView.Enlarged(fit(e.inner, size, bottom), e.scale, bottom);
         if (src == null || src.getIconWidth() <= 0) return src;
         java.awt.image.BufferedImage img = new java.awt.image.BufferedImage(src.getIconWidth(), src.getIconHeight(),
                 java.awt.image.BufferedImage.TYPE_INT_ARGB);

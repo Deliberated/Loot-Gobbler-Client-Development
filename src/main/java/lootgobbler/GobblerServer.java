@@ -608,6 +608,7 @@ public final class GobblerServer {
         public int[] hitDamage = new int[0];
         public long dealt;   // damage they dealt in the run (0 from older clients)
         public int[] quickUsed;   // items they used from a quick slot; null from older clients (not known)
+        public long[] quickAt;   // when each was used, ms after the asked "from"; null from older servers
         public long moveAt;   // when their moved[0] second starts, ms after the asked "from"
         public int[] moved = new int[0];   // how far they walked, tenths of a tile per second (none from older clients)
     }

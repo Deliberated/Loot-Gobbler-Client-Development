@@ -51,6 +51,7 @@ public class ProfileView extends SubTabs {
     private final IntConsumer openCharacter;   // shows a character in the Characters tab
     private final Consumer<String> openGuild;  // shows a page of the Guild tab
     private final Consumer<DpsHistory.Run> openRun;   // shows a run in the Battles tab
+    private final IntConsumer openClass;   // shows a class (-1: just the page) on the Classes page
 
     // the guild row, from the server
     private final GobblerServer server = GobblerServer.get();
@@ -62,8 +63,9 @@ public class ProfileView extends SubTabs {
     private boolean guildLoading, guildAgain, guildStale;
 
     public ProfileView(JComponent dungeonStats, IntConsumer openCharacter, Consumer<String> openGuild,
-                       Consumer<DpsHistory.Run> openRun) {
+                       Consumer<DpsHistory.Run> openRun, IntConsumer openClass) {
         this.openCharacter = openCharacter;
+        this.openClass = openClass;
         this.openGuild = openGuild;
         this.openRun = openRun;
         wagon = new CaravanView.Scene(m -> openGuild.accept(GuildPanel.CARAVAN)).small(0.5);
@@ -182,19 +184,18 @@ public class ProfileView extends SubTabs {
         int pets = PetStore.get().all().size();
 
         List<Object> parts = new ArrayList<>(List.of(name == null ? "" : name, pets, drops, dungeons, now / 60_000, guildVersion));
-        for (Char c : chars) parts.add(List.of(c.charId, c.alive, c.fame, c.level, c.skin, c.samples.size()));
+        for (Char c : chars) parts.add(List.of(c.charId, c.alive, c.fame, c.level, c.skin, c.samples.size(), c.lastPlayed));
         for (int i = 0; i < Math.min(RECENT, runs.size()); i++) parts.add(runs.get(i).start);
         for (CharacterClass cls : CharacterClass.CHAR_CLASS_LIST)
-            parts.add(ExaltStore.total(ExaltStore.get().progress(cls.getId())));
+            parts.add(java.util.Arrays.toString(ExaltStore.get().progress(cls.getId())));   // every point, for the exaltations
         parts.add(amuletSaves());
+        parts.add(lootgobbler.AmuletSaves.get().wornRecently());
         String state = parts.hashCode() + "";
         if (state.equals(shown)) return;
         shown = state;
 
         body.removeAll();
-        body.add(row(2, playerCard(name, chars, pets), mostPlayedCard(store, most, chars, since)));
-        body.add(Box.createVerticalStrut(20));
-        body.add(row(1, guildCard()));
+        body.add(row(2, playerCard(name, store, most, chars, since), guildCard()));
         body.add(Box.createVerticalStrut(20));
         body.add(left(heading("Last 24 hours")));
         body.add(Box.createVerticalStrut(8));
@@ -209,82 +210,62 @@ public class ProfileView extends SubTabs {
 
     // ---- cards -----------------------------------------------------------------------------------------------
 
-    private JComponent playerCard(String name, List<Char> chars, int pets) {
+    /**
+     * You: a greeting with your name, your most played character of the last 24 hours (click: it in the Characters
+     * tab), the maybe-showables that fit you, and the fame all your characters gained over the last 24 hours as one
+     * graph, with every dungeon on it and the guildmates who joined you above each; each character under the graph
+     * opens in the Characters tab.
+     */
+    private JComponent playerCard(String name, CharacterStore store, Char most, List<Char> chars, long since) {
         JPanel p = column();
-        p.add(left(caption("PLAYER")));
-        JLabel player = new JLabel(name != null ? name : "Unknown player");
+        // a greeting (in the soft ink) before the name (in gold)
+        JLabel player = new JLabel("<html><span style='color:" + hex(soft("").getForeground()) + "'>" + GREETING
+                + "</span> " + (name != null ? escape(name) : "stranger") + "</html>");
         player.setFont(new Font(Themes.HEAD_FONT, Font.PLAIN, 56));
         player.setForeground(gold());
         p.add(left(player));
         if (name == null) p.add(left(muted("Start the sniffer and enter the game once to show your name.")));
+        p.add(Box.createVerticalStrut(14));
 
-        List<Char> alive = chars.stream().filter(c -> c.alive).toList();
-        long fame = alive.stream().mapToLong(c -> c.fame).sum();
-        int classes = CharacterClass.CHAR_CLASS_LIST.length;
-        long exalted = Arrays.stream(CharacterClass.CHAR_CLASS_LIST)
-                .filter(c -> ExaltStore.total(ExaltStore.get().progress(c.getId())) == ExaltStore.MAX_PER_CLASS).count();
-        p.add(Box.createVerticalStrut(8));
-        p.add(left(soft(alive.size() + " characters   ·   " + NUM.format(fame) + " alive fame")));
-        p.add(left(soft(exalted + " / " + classes + " classes exalted   ·   " + pets + " pets")));
-        long last = chars.stream().mapToLong(c -> c.lastPlayed).max().orElse(0);
-        if (last > 0) p.add(left(muted("Last played " + CharactersView.ago(last))));
-        JPanel both = new JPanel(new BorderLayout(16, 0));
-        both.setOpaque(false);
-        both.add(p, BorderLayout.CENTER);
-        both.add(amuletBadge(), BorderLayout.EAST);
-        return card(both);
-    }
-
-    private static final int AMULET = 23624;   // Amulet of Restoration (5337 is its shiny version)
-    private static final long AMULET_DAYS = 3;
-
-    private static int amuletSaves() {
-        return lootgobbler.AmuletSaves.get().countSince(System.currentTimeMillis() - AMULET_DAYS * 24 * 3600_000L);
-    }
-
-    /** The Amulet of Restoration and how often it saved you lately, at the right of the player card. */
-    private JComponent amuletBadge() {
-        int n = amuletSaves();
-        JLabel icon = new JLabel(CharactersView.sprite(AMULET, 56));
-        icon.setAlignmentX(CENTER_ALIGNMENT);
-        JLabel text = new JLabel("<html><div style='text-align:center'>saved you <b>" + n + "</b> time" + (n == 1 ? "" : "s")
-                + "<br>in the last " + AMULET_DAYS + " days</div></html>", SwingConstants.CENTER);
-        text.setForeground(Section.color("LootGobbler.inkSoft", Palette.MUTED));
-        text.setAlignmentX(CENTER_ALIGNMENT);
-        JPanel col = new JPanel();
-        col.setLayout(new BoxLayout(col, BoxLayout.Y_AXIS));
-        col.setOpaque(false);
-        col.setToolTipText("Your Amulet of Restoration kept you alive " + n + " time" + (n == 1 ? "" : "s")
-                + " in the last " + AMULET_DAYS + " days");
-        col.add(icon);
-        col.add(Box.createVerticalStrut(4));
-        col.add(text);
-        JPanel holder = new JPanel(new GridBagLayout());   // vertically centered beside the name
-        holder.setOpaque(false);
-        holder.add(col);
-        return holder;
-    }
-
-    /**
-     * The character's skin, class and progress, why it was picked (fame gained today, or played most recently),
-     * and the fame all your characters gained over the last 24 hours as one graph, with every dungeon on it and
-     * the guildmates who joined you above each. Clicking it opens the character in the Characters tab.
-     */
-    private JComponent mostPlayedCard(CharacterStore store, Char c, List<Char> chars, long since) {
-        if (c == null) {
-            JPanel p = column();
-            p.add(left(caption("MOST PLAYED · 24H")));
-            p.add(left(muted("Log in once so your character list is loaded.")));
-            return card(p);
+        // the character, the exaltation progress of the classes that got some lately beside it, and at the very right
+        // the maybe-showables that fit you
+        JPanel extras = column();
+        for (MaybeShowable m : maybeShowables) {   // only those whose condition fits you
+            if (!m.when().getAsBoolean()) continue;
+            if (extras.getComponentCount() > 0) extras.add(Box.createVerticalStrut(14));
+            JComponent c = m.show().get();
+            c.setAlignmentX(RIGHT_ALIGNMENT);
+            extras.add(c);
         }
-        List<Char> gainers = chars.stream().filter(o -> store.gainedToday(o) > 0)
-                .sorted(Comparator.comparingLong((Char o) -> -store.gainedToday(o))).toList();
-        long gain = gainers.stream().mapToLong(store::gainedToday).sum();   // all characters, not just this one
+        JPanel top = new JPanel(new BorderLayout(32, 0));
+        top.setOpaque(false);
+        JPanel mostPlayed = column();
+        mostPlayed.add(left(caption("MOST PLAYED CHARACTER")));
+        mostPlayed.add(Box.createVerticalStrut(6));
+        if (most == null) {
+            mostPlayed.add(left(muted("Log in once so your character list is loaded.")));
+        } else {
+            mostPlayed.add(left(characterBlock(store, most)));
+            JComponent exalts = recentExalts(most);   // a maybe-showable: only with exaltation progress lately
+            if (exalts != null) top.add(exalts, BorderLayout.CENTER);
+        }
+        top.add(mostPlayed, BorderLayout.WEST);
+        if (extras.getComponentCount() > 0) top.add(extras, BorderLayout.EAST);
+        top.setMaximumSize(new Dimension(Integer.MAX_VALUE, top.getPreferredSize().height));
+        p.add(left(top));
+
+        if (most != null) {
+            p.add(Box.createVerticalStrut(16));
+            p.add(left(fameGain(store, most, chars, since)));
+        }
+        return card(p);
+    }
+
+    /** The character's skin, class, stats maxed and fame (level below 20); click: it in the Characters tab. */
+    private JComponent characterBlock(CharacterStore store, Char c) {
         JLabel sprite = new JLabel(CharactersView.skin(c, 96));
         sprite.setVerticalAlignment(SwingConstants.TOP);
-
         JPanel about = column();
-        about.add(left(caption("MOST PLAYED · 24H")));
         JLabel cls = new JLabel(c.className + "   " + c.statsMaxed + "/8");
         cls.setFont(cls.getFont().deriveFont(30f));
         about.add(left(cls));
@@ -293,61 +274,191 @@ public class ProfileView extends SubTabs {
         progress.setForeground(gold());
         about.add(left(progress));
         if (store.gainedToday(c) == 0) about.add(left(muted(c.lastPlayed == 0 ? "Not played yet" : "Last played " + CharactersView.ago(c.lastPlayed))));
+        JPanel block = new JPanel(new BorderLayout(18, 0));
+        block.setOpaque(false);
+        block.add(sprite, BorderLayout.WEST);
+        block.add(about, BorderLayout.CENTER);
+        block.setMaximumSize(new Dimension(Integer.MAX_VALUE, block.getPreferredSize().height));
+        block.setToolTipText("Open in Characters");
+        int id = c.charId;
+        clickable(block, () -> openCharacter.accept(id));
+        return block;
+    }
 
-        // beside it, a bit in from the right: the fame gained in the last 24h (always, also +0) and, below in
-        // gold, in the last hour (only when there is some)
-        JPanel gains = column();
+    private static final long EXALT_DAYS = 7;   // as far back as the exaltation changes are kept
+    private static final int EXALT_CLASSES = 8, EXALT_SKIN = 32, EXALT_POTION = 20;
+
+    /**
+     * A maybe-showable beside the most played character, only there when a class got exaltation progress lately: one
+     * row per such class, its sprite and, beside it, the progress points each stat got in the last days, like "2x"
+     * and the stat's potion (progress past the last exaltation at 75 does not count). The most played character's
+     * class comes first, then the most progress. Null when no class got any.
+     */
+    private JComponent recentExalts(Char most) {
+        long since = System.currentTimeMillis() - EXALT_DAYS * DAY_MS;
+        ExaltStore exalts = ExaltStore.get();
+        int cap = ExaltStore.THRESHOLDS[ExaltStore.THRESHOLDS.length - 1];
+        // per class with any: the progress points each stat got since then
+        java.util.Map<Integer, int[]> gained = new java.util.HashMap<>();
+        for (CharacterClass cls : CharacterClass.CHAR_CLASS_LIST) {
+            int id = cls.getId();
+            int[] now = exalts.progress(id);
+            int[] got = new int[8];
+            int sum = 0;
+            for (int stat = 0; now != null && stat < Math.min(8, now.length); stat++) {
+                got[stat] = Math.max(0, Math.min(now[stat], cap) - Math.min(exalts.progressAt(id, stat, since), cap));
+                sum += got[stat];
+            }
+            if (sum > 0) gained.put(id, got);
+        }
+        if (gained.isEmpty()) return null;
+        List<Integer> classes = gained.keySet().stream().sorted(Comparator
+                .comparing((Integer id) -> id != most.classType)
+                .thenComparingInt(id -> -java.util.Arrays.stream(gained.get(id)).sum())).limit(EXALT_CLASSES).toList();
+
+        JPanel p = column();
+        JLabel head = caption("EXALTATIONS (" + EXALT_DAYS + " DAYS)");
+        head.setToolTipText("Open the Classes page");
+        clickable(head, () -> openClass.accept(-1));
+        p.add(left(head));
+        p.add(Box.createVerticalStrut(4));
+        int[] order = {ExaltStore.LIFE, ExaltStore.MANA, ExaltStore.ATT, ExaltStore.DEF, ExaltStore.SPD,
+                ExaltStore.DEX, ExaltStore.VIT, ExaltStore.WIS};
+        for (int id : classes) {
+            int[] got = gained.get(id);
+            JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+            row.setOpaque(false);
+            JLabel sprite = new JLabel(CharactersView.sprite(id, EXALT_SKIN));
+            sprite.setBorder(new EmptyBorder(0, 0, 0, 10));
+            row.add(sprite);
+            StringBuilder tip = new StringBuilder("<html>" + CharacterClass.getName(id) + "  ·  exaltation progress in the last "
+                    + EXALT_DAYS + " days:");
+            int shown = 0;
+            for (int stat : order) {
+                if (got[stat] <= 0) continue;
+                JLabel potion = new JLabel(got[stat] + "x", ClassesView.potion(DpsLoggerView.EXALT_POTION[stat], EXALT_POTION),
+                        SwingConstants.LEFT);
+                potion.setHorizontalTextPosition(SwingConstants.LEFT);
+                potion.setIconTextGap(3);
+                if (shown > 0) potion.setBorder(new EmptyBorder(0, 12, 0, 0));
+                row.add(potion);
+                tip.append("<br>").append(DpsLoggerView.EXALT_STATS[stat]).append(" +").append(got[stat]);
+                shown++;
+            }
+            row.setToolTipText(tip + "<br><i>click to open it in Classes</i></html>");
+            clickable(row, () -> openClass.accept(id));
+            p.add(left(row));
+        }
+        return p;
+    }
+
+    /**
+     * The fame all your characters gained in the last 24 hours (always, also +0) and in the last hour (only when there
+     * is some), the graph of it, and which characters it is made of (each opens in the Characters tab).
+     */
+    private JComponent fameGain(CharacterStore store, Char most, List<Char> chars, long since) {
+        List<Char> gainers = chars.stream().filter(o -> store.gainedToday(o) > 0)
+                .sorted(Comparator.comparingLong((Char o) -> -store.gainedToday(o))).toList();
+        long gain = gainers.stream().mapToLong(store::gainedToday).sum();
+        JPanel p = column();
+        // at the right, a bit in from the edge: the fame gained in the last 24h and, below in gold, in the last hour
+        JPanel head = column();
+        head.setBorder(new EmptyBorder(0, 0, 0, 24));
         JLabel gained = new JLabel("+" + NUM.format(gain) + " fame");
         gained.setFont(gained.getFont().deriveFont(20f));
         gained.setForeground(gain > 0 ? Palette.GREEN : Palette.MUTED);
         gained.setToolTipText("Fame gained by all your characters in the last 24 hours");
-        gains.add(right(gained));
+        head.add(right(gained));
         long hour = gainers.stream().flatMap(o -> store.sessions(o, System.currentTimeMillis() - 3_600_000L).stream())
                 .mapToLong(CharacterStore.Session::gained).sum();
         if (hour > 0) {
             JLabel lastHour = new JLabel("+" + NUM.format(hour) + " last hour");
             lastHour.setForeground(gold());
             lastHour.setToolTipText("Fame gained in the last hour");
-            gains.add(right(lastHour));
+            head.add(right(lastHour));
         }
-        JPanel gainsAtBottom = new JPanel(new BorderLayout());
-        gainsAtBottom.setOpaque(false);
-        gainsAtBottom.setBorder(new EmptyBorder(0, 12, 0, 24));
-        gainsAtBottom.add(gains, BorderLayout.SOUTH);
+        JPanel atRight = new JPanel(new BorderLayout());
+        atRight.setOpaque(false);
+        atRight.add(head, BorderLayout.EAST);
+        atRight.setMaximumSize(new Dimension(Integer.MAX_VALUE, atRight.getPreferredSize().height));
+        p.add(left(atRight));
 
-        JPanel head = new JPanel(new BorderLayout());
-        head.setOpaque(false);
-        head.add(about, BorderLayout.CENTER);
-        head.add(gainsAtBottom, BorderLayout.EAST);
-        JPanel text = column();
-        text.add(left(head));
-
-        List<Sample> total = total(gainers.isEmpty() ? List.of(c) : gainers, since);
+        List<Sample> total = total(gainers.isEmpty() ? List.of(most) : gainers, since);
         if (total.size() > 1) {
-            text.add(Box.createVerticalStrut(6));
-            text.add(left(new FameGraph(List.of(new FameGraph.Series(total, gold(), 3f)))));
-            if (gainers.size() > 1) {   // which characters the total is made of
-                JPanel legend = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
-                legend.setOpaque(false);
-                for (int i = 0; i < gainers.size(); i++) {
-                    Char o = gainers.get(i);
-                    legend.add(legendLabel((i == 0 ? "" : "     ") + o.className + " +" + NUM.format(store.gainedToday(o)),
-                            i == 0 ? gold() : Palette.MUTED));
-                }
-                text.add(left(legend));
-            }
+            p.add(Box.createVerticalStrut(6));
+            p.add(left(new FameGraph(List.of(new FameGraph.Series(total, gold(), 3f)))));
         }
+        if (!gainers.isEmpty()) {   // which characters the total is made of
+            JPanel legend = new JPanel(new WrapLayout(0, 2));
+            legend.setOpaque(false);
+            for (int i = 0; i < gainers.size(); i++) {
+                Char o = gainers.get(i);
+                JLabel l = legendLabel((i == 0 ? "" : "     ") + o.className + " +" + NUM.format(store.gainedToday(o)),
+                        i == 0 ? gold() : Palette.MUTED);
+                l.setToolTipText("Open this " + o.className + " in Characters");
+                int id = o.charId;
+                clickable(l, () -> openCharacter.accept(id));
+                legend.add(l);
+            }
+            p.add(left(legend));
+        }
+        return p;
+    }
 
-        JPanel inner = new JPanel(new BorderLayout(18, 0));
-        inner.setOpaque(false);
-        inner.add(sprite, BorderLayout.WEST);
-        inner.add(text, BorderLayout.CENTER);
-        JComponent card = card(inner);
-        card.setToolTipText("Open in Characters");
-        card.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        int id = c.charId;
-        Clicks.onClick(card, () -> openCharacter.accept(id));
-        return card;
+    /** Maybe-showables: parts of the player card shown only to players they fit (when), in this order. */
+    private record MaybeShowable(java.util.function.BooleanSupplier when, java.util.function.Supplier<JComponent> show) {
+    }
+
+    private final List<MaybeShowable> maybeShowables = List.of(
+            // the Amulet of Restoration: worn by a character played lately, or it saved you in the last 3 days
+            new MaybeShowable(() -> lootgobbler.AmuletSaves.get().wornRecently() || amuletSaves() > 0, this::amuletBadge));
+
+    private static String escape(String s) {
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
+    // one of these greets you on the overview, picked once each time the app starts
+    private static final String[] GREETINGS = {"Hello", "Hi", "Hey", "Howdy", "Aye", "Ahoy", "Yo", "Greetings",
+            "Welcome back", "Good to see you", "Hail", "Salutations", "Well met", "Heyo", "Oi", "Ello",
+            "Look who's back", "Ready to gobble"};
+    private static final String GREETING = GREETINGS[new java.util.Random().nextInt(GREETINGS.length)] + ",";
+
+    // and one of these comes before your guild's name, also picked once each start
+    private static final String[] GUILD_PREFIXES = {"Your guild", "The insane players of", "The place of devastation:",
+            "The worst guild:", "Proud member of", "Home sweet", "The legends of", "Behold,", "The mighty",
+            "The loot goblins of", "Somehow still in", "The finest of", "Sworn to", "Carried by", "The unstoppable"};
+    private static final String GUILD_PREFIX = GUILD_PREFIXES[new java.util.Random().nextInt(GUILD_PREFIXES.length)];
+
+    private static String hex(Color c) {
+        return String.format("#%06x", c.getRGB() & 0xFFFFFF);
+    }
+
+    private static final int AMULET = 23624;  // Amulet of Restoration (5337 is its shiny version)
+    private static final long AMULET_DAYS = 3;
+
+    private static int amuletSaves() {
+        return lootgobbler.AmuletSaves.get().countSince(System.currentTimeMillis() - AMULET_DAYS * 24 * 3600_000L);
+    }
+
+    /** The Amulet of Restoration and how often it saved you lately, a maybe-showable of the player card. */
+    private JComponent amuletBadge() {
+        int n = amuletSaves();
+        JLabel icon = new JLabel(CharactersView.sprite(AMULET, 56));
+        icon.setAlignmentX(CENTER_ALIGNMENT);
+        JLabel text = new JLabel("<html><div style='text-align:center'>saved you <b>" + n + "</b> time" + (n == 1 ? "" : "s")
+                + "<br>in the last " + AMULET_DAYS + " days</div></html>", SwingConstants.CENTER);
+        text.setForeground(Section.color("LootGobbler.inkSoft", Palette.MUTED));
+        text.setAlignmentX(CENTER_ALIGNMENT);
+        JPanel col = new JPanel();   // the amulet above, the text centered below it
+        col.setLayout(new BoxLayout(col, BoxLayout.Y_AXIS));
+        col.setOpaque(false);
+        col.setToolTipText("Your Amulet of Restoration kept you alive " + n + " time" + (n == 1 ? "" : "s")
+                + " in the last " + AMULET_DAYS + " days");
+        col.add(icon);
+        col.add(Box.createVerticalStrut(4));
+        col.add(text);
+        col.setMaximumSize(col.getPreferredSize());
+        return col;
     }
 
     private static List<Sample> window(Char c, long since) {
@@ -392,8 +503,13 @@ public class ProfileView extends SubTabs {
      */
     private JComponent guildCard() {
         JPanel p = column();
-        p.add(left(heading(guildName == null ? "Guild" : "Guild - " + guildName)));
-        p.add(Box.createVerticalStrut(8));
+        // like the greeting: a prefix (in the soft ink) before the guild's name (in gold)
+        JLabel head = new JLabel(guildName == null ? "Guild" : "<html><span style='color:" + hex(soft("").getForeground())
+                + "'>" + GUILD_PREFIX + "</span> " + escape(guildName) + "</html>");
+        head.setFont(new Font(Themes.HEAD_FONT, Font.PLAIN, 56));
+        head.setForeground(gold());
+        p.add(left(head));
+        p.add(Box.createVerticalStrut(14));
         if (guildNote != null || myWagon == null) {
             p.add(left(muted(guildNote == null || guildNote.isEmpty() ? "Loading..." : guildNote)));
             return card(p);
@@ -428,10 +544,9 @@ public class ProfileView extends SubTabs {
         }
         clickable(quest, () -> openGuild.accept(GuildPanel.QUEST_MAP));
 
-        JPanel items = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        JPanel items = new JPanel(new WrapLayout(64, 20));   // side by side, one above the other when narrow
         items.setOpaque(false);
         items.add(caravan);
-        items.add(Box.createHorizontalStrut(64));
         items.add(quest);
         p.add(left(items));
         return card(p);
@@ -457,6 +572,11 @@ public class ProfileView extends SubTabs {
         return c;
     }
 
+    // portals that look small beside the others (low, or mostly smoke), drawn this much bigger everywhere
+    private static final java.util.Set<String> SMALL_PORTALS = java.util.Set.of("Plagued Nest", "Fungal Cavern",
+            "Kogbold Steamworks", "Advanced Kogbold Steamworks", "Hidden Interregnum", "Stromwell's Rift II");
+    private static final double SMALL_PORTAL_SCALE = 1.35;
+
     /** A dungeon's portal sprite, by its name as the Run History records it. */
     static Icon dungeonIcon(String name, int size) {
         int id = tomato.realmshark.ParseDungeon.getPortalId(name);
@@ -464,7 +584,46 @@ public class ProfileView extends SubTabs {
             tomato.realmshark.enums.CharacterStatistics cs = tomato.realmshark.enums.CharacterStatistics.statByName(name);
             if (cs != null) id = cs.getSpriteId();
         }
-        return CharactersView.sprite(id, size);
+        Icon icon = CharactersView.sprite(id, size);
+        return icon != null && SMALL_PORTALS.contains(name) ? new Enlarged(icon, SMALL_PORTAL_SCALE, false) : icon;
+    }
+
+    /**
+     * An icon drawn bigger than the room it takes (crisp), growing from its centre, or from its bottom edge so it
+     * still stands on the same line; layouts keep the size they had. ActiveDungeonBadge.fit keeps it enlarged.
+     */
+    static final class Enlarged implements Icon {
+        final Icon inner;
+        final double scale;
+        final boolean bottom;
+
+        Enlarged(Icon inner, double scale, boolean bottom) {
+            this.inner = inner;
+            this.scale = scale;
+            this.bottom = bottom;
+        }
+
+        @Override
+        public void paintIcon(Component c, Graphics g, int x, int y) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+            double ax = x + getIconWidth() / 2.0, ay = y + (bottom ? getIconHeight() : getIconHeight() / 2.0);
+            g2.translate(ax, ay);
+            g2.scale(scale, scale);
+            g2.translate(-ax, -ay);
+            inner.paintIcon(c, g2, x, y);
+            g2.dispose();
+        }
+
+        @Override
+        public int getIconWidth() {
+            return inner.getIconWidth();
+        }
+
+        @Override
+        public int getIconHeight() {
+            return inner.getIconHeight();
+        }
     }
 
     private JComponent todayTiles(CharacterStore store, List<Char> chars, List<DpsHistory.Run> runs,
@@ -929,6 +1088,9 @@ public class ProfileView extends SubTabs {
             g2.clip(drawn);
             g2.setColor(Section.color("LootGobbler.line", Color.GRAY));
             g2.fillRect(0, h + 2, w, 2);
+            // the main line's highest point (smallest y) in every pixel column, so the dungeons can sit evenly above it
+            int[] lineTop = new int[w];
+            java.util.Arrays.fill(lineTop, Integer.MAX_VALUE);
             for (int k = series.size() - 1; k >= 0; k--) {   // the main line last, on top
                 Series s = series.get(k);
                 List<Sample> ss = s.samples();
@@ -943,6 +1105,10 @@ public class ProfileView extends SubTabs {
                     if (i > 0) {
                         g2.drawLine(px, py, sx, py);   // stepped: fame stays until the next sample
                         g2.drawLine(sx, py, sx, sy);
+                        if (k == 0) {
+                            for (int c = Math.max(0, px); c <= Math.min(w - 1, sx); c++) lineTop[c] = Math.min(lineTop[c], py);
+                            if (sx >= 0 && sx < w) lineTop[sx] = Math.min(lineTop[sx], sy);
+                        }
                     }
                     px = sx;
                     py = sy;
@@ -994,7 +1160,11 @@ public class ProfileView extends SubTabs {
                 int x = (int) Math.round(timeline.x(end, left, right));
                 x = Math.max(x, lastRight + 6 + countW + ICON / 2);
                 x = Math.min(x, right - ICON / 2);
-                int y = h - (int) (Math.max(0, (at == null ? base : at) - base) * (h - 4 - TOP) / hi) - 2 - ICON - GAP;
+                // the same gap above the highest point of the line under the icon (and its count)
+                int under = Integer.MAX_VALUE;
+                for (int c = Math.max(0, x - ICON / 2 - countW); c <= Math.min(w - 1, x + ICON / 2); c++) under = Math.min(under, lineTop[c]);
+                if (under == Integer.MAX_VALUE) under = h - (int) (Math.max(0, (at == null ? base : at) - base) * (h - 4 - TOP) / hi) - 2;
+                int y = under - ICON - GAP;
                 Rectangle r = new Rectangle(x - ICON / 2, Math.max(MATE + 2, y), ICON, ICON);
                 icon.paintIcon(this, g2, r.x, r.y);
                 if (!count.isEmpty()) {
