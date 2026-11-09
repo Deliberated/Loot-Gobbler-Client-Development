@@ -637,6 +637,13 @@ public final class GobblerServer {
         public int stSets;          // ST sets completed
         public double peakDps;      // their best boss DPS per run, on average ...
         public int runs;            // ... over this many runs
+        public BestRun bestRun;     // the dungeon visit they gained the most fame in; null if none (or an older server)
+    }
+
+    /** A dungeon visit a guildmate's character gained the most fame in. */
+    public static final class BestRun {
+        public String dungeon = "";
+        public long fame;
     }
 
     public static final class Facts {

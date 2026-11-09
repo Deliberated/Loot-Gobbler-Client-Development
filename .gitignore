@@ -56,3 +56,6 @@ missions-player.xml
 missions-seasons.json
 tinkerer-quests.json
 season-art/
+
+# conversation exports
+[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]-*.txt

@@ -664,6 +664,7 @@ public class ProfileView extends SubTabs {
                     .append(':').append(f.taken).append(':').append(f.hits).append(':').append(f.inMs).append(':').append(f.exalts)
                     .append(':').append(f.loot).append(':').append(f.played).append(':').append(f.stSets);
             if (f.look != null) sb.append(':').append(f.look.classType).append(':').append(f.look.skin);
+            if (f.bestRun != null) sb.append(':').append(f.bestRun.dungeon).append(':').append(f.bestRun.fame);
             if (f.favorite != null) sb.append(':').append(f.favorite.dungeon).append(':').append(f.favorite.count)
                     .append(':').append(f.favorite.classType).append(':').append(f.favorite.skin);
             sb.append('|');
@@ -681,6 +682,7 @@ public class ProfileView extends SubTabs {
     /**
      * Who of the guild stands out over the last 3 days, each as a caption with an icon and a line below: Dungeon Lover
      * (the most completed runs of one dungeon), Death Lover (most characters died), Fame Producer (most fame gained),
+     * Dungeon Gain (the most fame gained in a single dungeon visit),
      * Punisher (the highest average of their best boss DPS per run, as the DPS logger shows it), Panzer (most damage
      * taken a minute), Exalter! (most exaltations earned), Just Dodge (the fewest hits for the time in dungeons, against
      * the guild's baseline), Looter (most items found), Diversifier (most characters that gained fame) and ST Collector
@@ -700,6 +702,12 @@ public class ProfileView extends SubTabs {
         if (fame != null) blocks.add(fact("FAME PRODUCER", CharactersView.sprite(FAME, FACT_ICON),
                 "<b>" + NUM.format(fame.fame) + " fame</b> gained by " + name(fame),
                 "Fame gained by all of " + fame.ign + "'s characters in the last " + FACT_DAYS + " days"));
+        GobblerServer.MemberFacts gain = most(all, f -> f.bestRun == null ? 0 : f.bestRun.fame);
+        if (gain != null) blocks.add(fact("DUNGEON GAIN",
+                new PortalWithIcon(dungeonIcon(gain.bestRun.dungeon, LOVER_PORTAL), CharactersView.sprite(FAME, LOVER_CHAR)),
+                name(gain) + " gained the most fame at a single dungeon: <b>" + escape(gain.bestRun.dungeon) + "</b>",
+                gain.ign + ": " + NUM.format(gain.bestRun.fame) + " fame in one " + gain.bestRun.dungeon + " in the last "
+                        + FACT_DAYS + " days"));
         // each run's best boss DPS (what the DPS logger shows), on average over their runs
         GobblerServer.MemberFacts dealt = null;
         for (GobblerServer.MemberFacts f : all) if (f.runs > 0 && (dealt == null || f.peakDps > dealt.peakDps)) dealt = f;
@@ -796,7 +804,7 @@ public class ProfileView extends SubTabs {
     private static final int FACTS_SHOWN = 5;
     private static final String FACTS_SHOWN_KEY = "guildFactsShown";   // the captions shown the last time, | between
     private static final List<String> FACT_NAMES = List.of("DUNGEON LOVER", "DEATH LOVER", "FAME PRODUCER", "PUNISHER",
-            "PANZER", "EXALTER!", "JUST DODGE", "LOOTER", "DIVERSIFIER", "ST COLLECTOR", "BEST FRIENDS");
+            "PANZER", "EXALTER!", "JUST DODGE", "LOOTER", "DIVERSIFIER", "ST COLLECTOR", "BEST FRIENDS", "DUNGEON GAIN");
     private static List<String> factOrder;      // this run's order of the facts (made once a start and a day)
     private static long factOrderDay = Long.MIN_VALUE;
     private static String factsSaved;           // what was saved last, so an unchanged pick is not written again
@@ -1134,6 +1142,32 @@ public class ProfileView extends SubTabs {
         else if (lower.matches(".*(s|x|z|ch|sh)")) head += "es";
         else head += "s";
         return head + tail;
+    }
+
+    /** A dungeon's portal with another icon (the fame) in front of it, at its lower right, as LoverIcon places the character. */
+    static final class PortalWithIcon implements Icon {
+        private final Icon portal, front;
+
+        PortalWithIcon(Icon portal, Icon front) {
+            this.portal = portal;
+            this.front = front;
+        }
+
+        @Override
+        public int getIconWidth() {
+            return LOVER_PORTAL + LOVER_CHAR / 2;
+        }
+
+        @Override
+        public int getIconHeight() {
+            return LOVER_PORTAL + LOVER_CHAR / 6;
+        }
+
+        @Override
+        public void paintIcon(Component c, Graphics g, int x, int y) {
+            if (portal != null) portal.paintIcon(c, g, x, y);
+            if (front != null) front.paintIcon(c, g, x + getIconWidth() - front.getIconWidth(), y + getIconHeight() - front.getIconHeight());
+        }
     }
 
     /** A dungeon's portal with a character standing in front of it, at its lower right, with hearts for eyes. */

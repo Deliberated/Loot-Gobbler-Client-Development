@@ -151,6 +151,7 @@ public class ImageBuffer {
         if (outlinedImages.containsKey(l)) return outlinedImages.get(l);
 
         BufferedImage img;
+        boolean failed = false;   // [Loot Gobbler patch] a sheet that could not be read is not remembered as empty
         if (id == -1) {
             img = ImageBuffer.getEmptyImg();
         } else {
@@ -158,6 +159,7 @@ public class ImageBuffer {
                 img = ImageBuffer.getImage(id);
             } catch (IOException e) {
                 img = ImageBuffer.getEmptyImg();
+                failed = true;
             }
         }
 
@@ -190,7 +192,7 @@ public class ImageBuffer {
             }
         }
         ImageIcon i = new ImageIcon(bimage2);
-        outlinedImages.put(l, i);
+        if (!failed) outlinedImages.put(l, i);   // after a failed read: tried again next time
 
         return i;
     }
