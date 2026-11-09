@@ -112,6 +112,12 @@ public final class ExaltStore implements Syncable {
      * A stat's progress at a time in the last week, as far as known: the lowest value it went up from since then
      * (progress only grows), from the changes seen here and those the dungeon visits recorded; else its value now.
      */
+    /** The changes seen in the last week (a copy). */
+    public synchronized List<Change> recentChanges() {
+        return GSON.fromJson(GSON.toJson(changes), new TypeToken<ArrayList<Change>>() {
+        }.getType());
+    }
+
     public int progressAt(int classId, int stat, long since) {
         int[] now = progress(classId);
         int at = now == null ? 0 : now[stat];

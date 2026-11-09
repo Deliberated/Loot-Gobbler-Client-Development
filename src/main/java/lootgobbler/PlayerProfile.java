@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -23,6 +24,9 @@ public final class PlayerProfile implements Syncable {
         public String guild = "";     // "" = not in a guild (or not seen yet)
         public int guildRank;         // the game's value: 0 initiate, 10 member, 20 officer, 30 leader, 40 founder
         public long updatedAt;        // epoch ms of the last change
+        // when each ST set was completed (its last piece first collected, epoch ms); null = not counted yet
+        public List<Long> stSetsDone;
+        public List<ExaltStore.Change> exaltChanges;   // the last week's exaltation progress, as ExaltStore saw it
     }
 
     private static final Path FILE = Path.of("profile.json");
@@ -79,6 +83,81 @@ public final class PlayerProfile implements Syncable {
             save();
         }
         fire();
+    }
+
+    private final java.util.concurrent.atomic.AtomicBoolean counting = new java.util.concurrent.atomic.AtomicBoolean();
+
+    /**
+     * Keeps stSetsDone up to date with the collection (a set is complete as Collection > ST Sets counts it: all four
+     * pieces collected; it was completed when the last of them was first found), so the guild sees how many were
+     * completed lately. Counted in the background: the sets come from the game's XML.
+     */
+    public void trackStSets() {
+        Runnable count = () -> {
+            if (!counting.compareAndSet(false, true)) return;
+            Thread t = new Thread(() -> {
+                try {
+                    Map<Integer, CollectionStore.Entry> owned = CollectionStore.get().snapshot();
+                    List<Long> done = new java.util.ArrayList<>();
+                    for (StSets.Set s : StSets.get()) {
+                        if (s.owned(owned.keySet()) != s.pieces().length) continue;
+                        long at = 0;
+                        for (int id : s.pieces()) at = Math.max(at, firstFound(owned.get(id)));
+                        done.add(at);
+                    }
+                    java.util.Collections.sort(done);
+                    setStSetsDone(done);
+                } catch (Exception e) {
+                    System.err.println("Could not count ST sets: " + e);
+                } finally {
+                    counting.set(false);
+                }
+            }, "st-set-count");
+            t.setDaemon(true);
+            t.start();
+        };
+        CollectionStore.get().onChange(count);
+        count.run();
+    }
+
+    /** When the item was first collected (epoch ms, from the collection's local time); 0 if unknown. */
+    private static long firstFound(CollectionStore.Entry e) {
+        if (e == null || e.first == null) return 0;
+        try {
+            return java.time.LocalDateTime.parse(e.first).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
+        } catch (Exception x) {
+            return 0;
+        }
+    }
+
+    private void setStSetsDone(List<Long> done) {
+        synchronized (this) {
+            if (done.equals(data.stSetsDone)) return;
+            data.stSetsDone = done;
+            data.updatedAt = System.currentTimeMillis();
+            save();
+        }
+        fire();
+    }
+
+    /** Keeps exaltChanges up to date with ExaltStore, so the guild sees every exaltation of the last days. */
+    public void trackExalts() {
+        Runnable copy = () -> {
+            List<ExaltStore.Change> changes = ExaltStore.get().recentChanges();
+            synchronized (this) {
+                if (sameChanges(changes, data.exaltChanges)) return;
+                data.exaltChanges = changes;
+                data.updatedAt = System.currentTimeMillis();
+                save();
+            }
+            fire();
+        };
+        ExaltStore.get().onChange(copy);
+        copy.run();
+    }
+
+    private static boolean sameChanges(List<ExaltStore.Change> a, List<ExaltStore.Change> b) {
+        return b != null && GSON.toJson(a).equals(GSON.toJson(b));
     }
 
     public void onChange(Runnable listener) {

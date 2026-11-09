@@ -132,7 +132,9 @@ public class TomatoGUI {
         DpsDisplayOptions.loadProfileFilter();
         lootgobbler.PacketDebug.install();
         lootgobbler.ItemUse.install();   // forged and fed items leave the collection
-        lootgobbler.CharacterStore.install();   // your death moves the character to the graveyard at once
+        lootgobbler.CharacterStore.install();
+        lootgobbler.PlayerProfile.get().trackStSets();   // the guild sees the ST sets you completed lately
+        lootgobbler.PlayerProfile.get().trackExalts();   // ... and every exaltation you earned   // your death moves the character to the graveyard at once
         lootgobbler.ItemCooldowns.install();   // a sound when the Coral Juice Refinery or Alien Generator is ready again
         lootgobbler.DungeonDifficulty.preload();
         lootgobbler.SpriteMemory.start();   // drops RealmShark's decoded sprite sheets (300+ MB) when idle   // the title bar's dungeon box shows how hard a dungeon is

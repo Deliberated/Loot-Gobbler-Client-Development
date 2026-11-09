@@ -586,7 +586,7 @@ public class ProfileView extends SubTabs {
         for (GobblerServer.MemberFacts f : facts) {
             sb.append(f.userId).append(':').append(f.deaths).append(':').append(f.fame).append(':').append(f.dealt)
                     .append(':').append(f.taken).append(':').append(f.hits).append(':').append(f.inMs).append(':').append(f.exalts)
-                    .append(':').append(f.loot).append(':').append(f.played);
+                    .append(':').append(f.loot).append(':').append(f.played).append(':').append(f.stSets);
             if (f.look != null) sb.append(':').append(f.look.classType).append(':').append(f.look.skin);
             if (f.favorite != null) sb.append(':').append(f.favorite.dungeon).append(':').append(f.favorite.count)
                     .append(':').append(f.favorite.classType).append(':').append(f.favorite.skin);
@@ -603,11 +603,13 @@ public class ProfileView extends SubTabs {
     }
 
     /**
-     * Who of the guild stands out, each as a caption with an icon and a line below: Dungeon Lover (the most completions
-     * of one dungeon, all time), and over the last 3 days Death Lover (most characters died), Fame Producer (most fame
-     * gained), Punisher (most damage dealt), Panzer (most damage taken), Exalter! (most exaltations earned) and Just
-     * Dodge (the fewest hits for the time in dungeons, against the guild's baseline; at least 10 minutes in them), Looter
-     * (most items found) and Diversifier (most different characters played). Only those someone has; null if none.
+     * Who of the guild stands out over the last 3 days, each as a caption with an icon and a line below: Dungeon Lover
+     * (the most completed runs of one dungeon), Death Lover (most characters died), Fame Producer (most fame gained),
+     * Punisher (the highest average of their best boss DPS per run, as the DPS logger shows it), Panzer (most damage
+     * taken a minute), Exalter! (most exaltations earned), Just Dodge (the fewest hits for the time in dungeons, against
+     * the guild's baseline), Looter (most items found), Diversifier (most characters that gained fame) and ST Collector
+     * (most ST sets completed). The averages only count guildmates with at least 10 minutes in dungeons. Only those
+     * someone has; null if none.
      */
     private JComponent guildFacts() {
         List<GobblerServer.MemberFacts> all = guildFacts;
@@ -622,13 +624,13 @@ public class ProfileView extends SubTabs {
         if (fame != null) blocks.add(fact("FAME PRODUCER", CharactersView.sprite(FAME, FACT_ICON),
                 "<b>" + NUM.format(fame.fame) + " fame</b> gained by " + name(fame),
                 "Fame gained by all of " + fame.ign + "'s characters in the last " + FACT_DAYS + " days"));
-        // damage as an average over the time in dungeons, so a long session does not win by itself
-        java.util.function.ToDoubleFunction<GobblerServer.MemberFacts> dps = f -> f.dealt / (f.inMs / 1000.0);
-        GobblerServer.MemberFacts dealt = highest(all, dps);
-        if (dealt != null && dealt.dealt > 0) blocks.add(fact("PUNISHER", CharactersView.sprite(SWORD, FACT_ICON),
-                name(dealt) + " has an average of <b>" + NUM.format(Math.round(dps.applyAsDouble(dealt))) + " DPS</b>",
-                String.format(java.util.Locale.ROOT, "%s: %,d damage dealt in %s in dungeons in the last %d days",
-                        dealt.ign, dealt.dealt, duration(dealt.inMs), FACT_DAYS)));
+        // each run's best boss DPS (what the DPS logger shows), on average over their runs
+        GobblerServer.MemberFacts dealt = null;
+        for (GobblerServer.MemberFacts f : all) if (f.runs > 0 && (dealt == null || f.peakDps > dealt.peakDps)) dealt = f;
+        if (dealt != null) blocks.add(fact("PUNISHER", CharactersView.sprite(SWORD, FACT_ICON),
+                name(dealt) + " has an average of <b>" + NUM.format(Math.round(dealt.peakDps)) + " DPS</b>",
+                String.format(java.util.Locale.ROOT, "%s: their best boss DPS, on average over %d run%s in the last %d days",
+                        dealt.ign, dealt.runs, dealt.runs == 1 ? "" : "s", FACT_DAYS)));
         java.util.function.ToDoubleFunction<GobblerServer.MemberFacts> perMinute = f -> f.taken / (f.inMs / 60_000.0);
         GobblerServer.MemberFacts taken = highest(all, perMinute);
         if (taken != null && taken.taken > 0) blocks.add(fact("PANZER", CharactersView.sprite(HEAVY_ARMOR, FACT_ICON),
@@ -638,7 +640,7 @@ public class ProfileView extends SubTabs {
         GobblerServer.MemberFacts exalter = most(all, f -> f.exalts);
         if (exalter != null) blocks.add(fact("EXALTER!", new ExaltIcon(FACT_ICON),
                 "<b>" + NUM.format(exalter.exalts) + "</b> exalt" + (exalter.exalts == 1 ? "" : "s") + " done by " + name(exalter),
-                "Exaltations " + exalter.ign + " earned in dungeons in the last " + FACT_DAYS + " days"));
+                "Exaltations " + exalter.ign + " earned in the last " + FACT_DAYS + " days"));
         double baseline = Guildmates.get().settings().baselineHpm;
         java.util.function.ToDoubleFunction<GobblerServer.MemberFacts> dodged = f -> {   // in %, as Battles counts hits
             double hpm = f.hits / (f.inMs / 60_000.0);
@@ -662,8 +664,12 @@ public class ProfileView extends SubTabs {
             Icon look = lookOf(diverse, FACT_ICON);
             blocks.add(fact("DIVERSIFIER", look != null ? look : CharactersView.sprite(CharacterClass.CHAR_CLASS_LIST[0].getId(), FACT_ICON),
                     "Most different characters actively played by " + name(diverse) + ": <b>" + NUM.format(diverse.played) + "</b>",
-                    "Characters " + diverse.ign + " played in the last " + FACT_DAYS + " days"));
+                    "Characters of " + diverse.ign + " that gained fame in the last " + FACT_DAYS + " days"));
         }
+        GobblerServer.MemberFacts collector = most(all, f -> f.stSets);
+        if (collector != null) blocks.add(fact("ST COLLECTOR", stSetIcon(collector, FACT_ICON),
+                name(collector) + " has <b>" + NUM.format(collector.stSets) + "</b> ST set" + (collector.stSets == 1 ? "" : "s") + " ready",
+                "ST sets " + collector.ign + " completed in the last " + FACT_DAYS + " days (the last piece found)"));
         if (blocks.isEmpty()) return null;
         JPanel grid = new JPanel(new WrapLayout(36, 18));   // side by side, wrapping when the card is narrow
         grid.setOpaque(false);
@@ -707,6 +713,38 @@ public class ProfileView extends SubTabs {
         p.tex2 = m.look.tex2;
         Icon look = Guildmates.get().look(p, size);
         return look != null ? look : CharactersView.sprite(m.look.classType, size);
+    }
+
+    /**
+     * The four pieces of an ST set in a square: a set of the class the guildmate played last if there is one (else the
+     * first set), as the ST Sets page knows them. Just the gold frame while the sets are not loaded yet.
+     */
+    private static Icon stSetIcon(GobblerServer.MemberFacts m, int size) {
+        List<lootgobbler.StSets.Set> sets = lootgobbler.StSets.ifLoaded();
+        lootgobbler.StSets.Set set = null;
+        if (sets != null && !sets.isEmpty()) {
+            String cls = m.look == null ? null : CharacterClass.getName(m.look.classType);
+            set = sets.stream().filter(s -> s.className() != null && s.className().equals(cls)).findFirst().orElse(sets.get(0));
+        }
+        int half = size / 2;
+        Icon[] pieces = new Icon[4];
+        for (int i = 0; set != null && i < Math.min(4, set.pieces().length); i++) pieces[i] = CharactersView.sprite(set.pieces()[i], half);
+        return new Icon() {
+            @Override
+            public void paintIcon(Component c, Graphics g, int x, int y) {
+                for (int i = 0; i < 4; i++) if (pieces[i] != null) pieces[i].paintIcon(c, g, x + (i % 2) * half, y + (i / 2) * half);
+            }
+
+            @Override
+            public int getIconWidth() {
+                return size;
+            }
+
+            @Override
+            public int getIconHeight() {
+                return size;
+            }
+        };
     }
 
     private static final int SHINY_SWORD = 1230;   // Sword of the Colossus (Shiny)
@@ -823,39 +861,53 @@ public class ProfileView extends SubTabs {
         return "<span style='color:" + hex(gold()) + "'>" + escape(f.ign) + "</span>";
     }
 
-    /** One fact: its caption, and below it the icon with the line (HTML) beside it. */
+    private static final int FACT_WIDTH = 180;   // every fact as wide, so they line up in columns
+
+    /** One fact: its caption, the icon below it and the line (HTML) below that, wrapped to the fact's width. */
     private static JComponent fact(String caption, Icon icon, String html, String tip) {
         JPanel p = column();
         p.add(left(caption(caption)));
         p.add(Box.createVerticalStrut(6));
-        JLabel text = new JLabel("<html>" + html + "</html>");
+        JLabel picture = new JLabel(icon);
+        picture.setToolTipText(tip);
+        // all as tall as the tallest (Dungeon Lover's portal), standing on one line, so the texts of a row line up
+        picture.setVerticalAlignment(SwingConstants.BOTTOM);
+        picture.setHorizontalAlignment(SwingConstants.LEFT);
+        int tallest = LOVER_PORTAL + LOVER_CHAR / 6;
+        picture.setPreferredSize(new Dimension(Math.max(icon == null ? 0 : icon.getIconWidth(), 1), tallest));
+        picture.setMaximumSize(picture.getPreferredSize());
+        p.add(left(picture));
+        p.add(Box.createVerticalStrut(6));
+        JLabel text = new JLabel("<html><div style='width:" + FACT_WIDTH + "px'>" + html + "</div></html>");
         text.setFont(text.getFont().deriveFont(20f));
-        JPanel row = new JPanel(new BorderLayout(12, 0));
-        row.setOpaque(false);
-        row.add(new JLabel(icon), BorderLayout.WEST);
-        row.add(text, BorderLayout.CENTER);
-        row.setToolTipText(tip);
-        p.add(left(row));
+        text.setToolTipText(tip);
+        p.add(left(text));
         return p;
     }
 
     /**
-     * The guildmate who completed one dungeon the most (over all their characters, the game's own counts): its portal
-     * with their character in front of it, heart-eyed, and how often.
+     * The guildmate who completed runs of one dungeon the most: its portal with their character (as in the latest of
+     * those runs) in front of it, heart-eyed, and how often.
      */
     private JComponent dungeonLover(GobblerServer.MemberFacts m) {
         GobblerServer.Favorite f = m.favorite;
-        DpsHistory.PlayerRow look = new DpsHistory.PlayerRow();
-        look.name = m.ign;
-        look.classType = f.classType;
-        look.skin = f.skin;
-        look.tex1 = f.tex1;
-        look.tex2 = f.tex2;
-        Icon character = Guildmates.get().look(look, LOVER_CHAR);
-        if (character == null) character = CharactersView.sprite(f.classType, LOVER_CHAR);
+        Icon character;
+        if (f.classType > 0) {
+            DpsHistory.PlayerRow look = new DpsHistory.PlayerRow();
+            look.name = m.ign;
+            look.classType = f.classType;
+            look.skin = f.skin;
+            look.tex1 = f.tex1;
+            look.tex2 = f.tex2;
+            character = Guildmates.get().look(look, LOVER_CHAR);
+            if (character == null) character = CharactersView.sprite(f.classType, LOVER_CHAR);
+        } else {
+            character = lookOf(m, LOVER_CHAR);   // visits from before looks were kept: as they played last
+        }
+        String dungeon = f.count == 1 ? (f.dungeon.startsWith("The ") ? f.dungeon.substring(4) : f.dungeon) : plural(f.dungeon);
         return fact("DUNGEON LOVER", new LoverIcon(dungeonIcon(f.dungeon, LOVER_PORTAL), character),
-                name(m) + " has " + LOVER_VERB + " <b>" + NUM.format(f.count) + "</b> " + escape(plural(f.dungeon)),
-                m.ign + ": " + NUM.format(f.count) + "x " + f.dungeon + " over all their characters");
+                name(m) + " has " + LOVER_VERB + " <b>" + NUM.format(f.count) + "</b> " + escape(dungeon),
+                m.ign + ": " + NUM.format(f.count) + "x " + f.dungeon + " completed in the last " + FACT_DAYS + " days");
     }
 
     /** A dungeon's name for many of them: "The Nest" -> "Nests", "Tomb of the Ancients" -> "Tombs of the Ancients". */

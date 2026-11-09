@@ -45,6 +45,7 @@ public final class DungeonVisits implements Syncable {
         public long start;
         public long durationMs;
         public long runStart;   // DpsHistory.Run.start of the run with your boss damage; 0 = no boss fought
+        public Boolean completed;   // only in what is synced: whether you completed it (see completed()), null if unknown
         public List<Exalt> exalts = new ArrayList<>();   // exaltation progress the game reported in this dungeon
         // every hit you took, oldest first: ms after entering, damage (after your defense), and the enemy's object
         // type (0 = no enemy, e.g. ground or an area effect); maxHp is your maximum life then
@@ -591,11 +592,16 @@ public final class DungeonVisits implements Syncable {
 
     /** The finished visits; if that gets very large, the hit details of the oldest ones are left out. */
     @Override
-    public synchronized JsonElement exportSync() {
-        JsonElement all = GSON.toJsonTree(visits);
-        if (all.toString().length() <= SYNC_LIMIT) return all;
+    public JsonElement exportSync() {
         List<Visit> trimmed = new ArrayList<>();
-        for (Visit v : visits) trimmed.add(GSON.fromJson(GSON.toJson(v), Visit.class));
+        synchronized (this) {
+            for (Visit v : visits) trimmed.add(GSON.fromJson(GSON.toJson(v), Visit.class));
+        }
+        // the guild counts completed runs: judged here, where the run's boss is known (outside the lock: it asks
+        // the DPS history)
+        for (Visit v : trimmed) v.completed = completed(v);
+        JsonElement all = GSON.toJsonTree(trimmed);
+        if (all.toString().length() <= SYNC_LIMIT) return all;
         for (int i = trimmed.size() - 1; i >= 0 && GSON.toJson(trimmed).length() > SYNC_LIMIT; i--) {
             Visit v = trimmed.get(i);   // oldest first
             v.hitTime = v.hitDamage = v.hitEnemy = new int[0];

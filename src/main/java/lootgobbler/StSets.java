@@ -38,6 +38,11 @@ public final class StSets {
     /**
      * All ST sets. The first call parses the XML (needs ItemDb, so call it off the EDT).
      */
+    /** The sets if they were loaded already (see get), else null: for the UI thread, which must not parse them. */
+    public static List<Set> ifLoaded() {
+        return sets;
+    }
+
     public static List<Set> get() {
         List<Set> s = sets;
         if (s == null) {

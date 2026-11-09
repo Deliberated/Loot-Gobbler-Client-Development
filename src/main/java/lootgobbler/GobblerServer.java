@@ -613,14 +613,14 @@ public final class GobblerServer {
         public int[] moved = new int[0];   // how far they walked, tenths of a tile per second (none from older clients)
     }
 
-    /** A guildmate's most completed dungeon over all their characters, and the look of the one that did it most. */
+    /** A guildmate's most completed dungeon in the days asked, and their look in the latest of those runs. */
     public static final class Favorite {
         public String dungeon = "";
         public int count;
         public int classType, skin, tex1, tex2;
     }
 
-    /** Numbers about one guildmate: their favourite dungeon (all time), and over the days asked their deaths and more. */
+    /** Numbers about one guildmate over the days asked: their favourite dungeon, deaths and more. */
     public static final class MemberFacts {
         public long userId;
         public String ign = "";
@@ -634,6 +634,9 @@ public final class GobblerServer {
         public Favorite look;       // the character they played last (only its look); null if unknown
         public int loot;            // items they found
         public int played;          // different characters they played
+        public int stSets;          // ST sets completed
+        public double peakDps;      // their best boss DPS per run, on average ...
+        public int runs;            // ... over this many runs
     }
 
     public static final class Facts {
