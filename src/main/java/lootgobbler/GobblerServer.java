@@ -642,6 +642,13 @@ public final class GobblerServer {
     public static final class Facts {
         public int days;
         public List<MemberFacts> members = List.of();
+        public Friends friends;   // null: no two guildmates ran a dungeon together (or an older server)
+    }
+
+    /** The two guildmates (user ids) who did the most dungeon runs together, and how many. */
+    public static final class Friends {
+        public long a, b;
+        public int count;
     }
 
     /** Every guildmate's facts (yours too) over the last days. */

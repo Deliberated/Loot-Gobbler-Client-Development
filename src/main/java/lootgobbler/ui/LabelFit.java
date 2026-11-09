@@ -23,6 +23,8 @@ final class LabelFit {
     }
 
     private static final String PENDING = "LabelFit.pending";
+    /** Client property: a label sized by its own view (e.g. a title that shrinks to fit), left alone here. */
+    static final String SKIP = "LabelFit.skip";
 
     /**
      * Fits the body's labels right after the layout in progress (changing them while Swing lays out would be marked
@@ -54,6 +56,7 @@ final class LabelFit {
     }
 
     private static void fitLabel(JLabel l, JComponent body) {
+        if (l.getClientProperty(SKIP) != null) return;
         String text = l.getText();
         String ours = (String) l.getClientProperty(HTML);
         if (ours != null && !ours.equals(text)) {   // the view set a new text since: start over with it

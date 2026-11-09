@@ -60,6 +60,7 @@ public class ProfileView extends SubTabs {
     private CaravanMember myWagon;
     private QuestMap questMap;
     private List<GobblerServer.MemberFacts> guildFacts = List.of();   // numbers about every guildmate, from the server
+    private GobblerServer.Friends guildFriends;                        // the two who ran the most dungeons together
     private String loverKey = "-";
     private int guildVersion;
     private boolean guildLoading, guildAgain, guildStale;
@@ -139,12 +140,13 @@ public class ProfileView extends SubTabs {
             });
             return new Object[]{c.guild, mine, q.current, null};
         }).thenCombine(facts, (r, f) -> {
-            r[3] = f == null ? null : f.members;
+            r[3] = f;
             return r;
         }).whenComplete((r, e) -> SwingUtilities.invokeLater(() -> {
             guildLoading = false;
-            @SuppressWarnings("unchecked") List<GobblerServer.MemberFacts> got = e == null ? (List<GobblerServer.MemberFacts>) r[3] : null;
-            guildFacts = got == null ? List.of() : got;
+            GobblerServer.Facts got = e == null ? (GobblerServer.Facts) r[3] : null;
+            guildFacts = got == null || got.members == null ? List.of() : got.members;
+            guildFriends = got == null ? null : got.friends;
             if (e != null) setGuild(null, null, null, GuildPanel.loadError(e));
             else setGuild((String) r[0], (CaravanMember) r[1], (QuestMap) r[2], null);
             if (guildAgain) {
@@ -156,7 +158,7 @@ public class ProfileView extends SubTabs {
 
     private void setGuild(String name, CaravanMember mine, QuestMap map, String note) {
         String before = guildName + "|" + guildNote + "|" + key(myWagon) + "|" + key(questMap) + "|" + loverKey;
-        loverKey = factsKey(guildFacts);
+        loverKey = factsKey(guildFacts) + (guildFriends == null ? "" : guildFriends.a + "+" + guildFriends.b + "=" + guildFriends.count);
         guildName = name;
         myWagon = mine;
         questMap = map;
@@ -231,9 +233,8 @@ public class ProfileView extends SubTabs {
         // a greeting (in the soft ink) before the name (in gold)
         JLabel player = new JLabel("<html><span style='color:" + hex(soft("").getForeground()) + "'>" + GREETING
                 + "</span> " + (name != null ? escape(name) : "stranger") + "</html>");
-        player.setFont(new Font(Themes.HEAD_FONT, Font.PLAIN, 56));
         player.setForeground(gold());
-        p.add(left(player));
+        p.add(left(title(player, p)));
         if (name == null) p.add(left(muted("Start the sniffer and enter the game once to show your name.")));
         p.add(Box.createVerticalStrut(14));
 
@@ -427,6 +428,106 @@ public class ProfileView extends SubTabs {
         return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
+    private static final int TITLE_SIZE = 56, TITLE_MIN = 28;
+
+    /**
+     * A card's big title (the greeting, the guild): one line, in the head font at 56, smaller (down to 28) when the
+     * card is too narrow for it, so it is never cut or wrapped. Follows the width of its column.
+     */
+    private static JLabel title(JLabel l, JComponent column) {
+        l.putClientProperty(LabelFit.SKIP, Boolean.TRUE);   // sized here
+        l.setFont(new Font(Themes.HEAD_FONT, Font.PLAIN, TITLE_SIZE));
+        Runnable fit = () -> {
+            int room = column.getWidth() - column.getInsets().left - column.getInsets().right;
+            if (room <= 0) return;
+            JLabel probe = new JLabel(l.getText());   // its width at the full size
+            probe.setFont(new Font(Themes.HEAD_FONT, Font.PLAIN, TITLE_SIZE));
+            int natural = probe.getPreferredSize().width;
+            int size = natural <= room ? TITLE_SIZE : Math.max(TITLE_MIN, (int) Math.floor(TITLE_SIZE * (double) room / natural));
+            if (l.getFont().getSize() != size) {
+                l.setFont(new Font(Themes.HEAD_FONT, Font.PLAIN, size));
+                l.revalidate();
+            }
+        };
+        column.addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent e) {
+                fit.run();
+            }
+        });
+        return l;
+    }
+
+    // above the guild facts, one picked each time the app starts
+    private static final String STATS_CAPTION = pick("GUILD STATS OF THE PAST 3 DAYS", "THE GUILD'S LAST 3 DAYS",
+            "LAST 3 DAYS IN THE GUILD");
+
+    /**
+     * Your wagon of this week's caravan (cut down to the caravan, without the empty sky above it) and the quest map's
+     * next dungeon, side by side: their titles on one line, their links ("To the ...") on another. Each opens its page
+     * in the Guild tab.
+     */
+    private JComponent wagonAndQuests() {
+        wagon.setMembers(List.of(myWagon));
+        JPanel scene = new JPanel(null) {   // shows the wagon from just above its pile down
+            @Override
+            public Dimension getPreferredSize() {
+                Dimension d = wagon.getPreferredSize();
+                return new Dimension(d.width, d.height - Math.max(0, wagon.contentTop() - WAGON_SKY));
+            }
+
+            @Override
+            public void doLayout() {
+                Dimension d = wagon.getPreferredSize();
+                wagon.setBounds(0, getHeight() - d.height, d.width, d.height);
+            }
+        };
+        scene.setOpaque(false);
+        scene.add(wagon);
+
+        JComponent questBody;
+        if (questMap == null || questMap.dungeons.isEmpty()) {
+            questBody = muted("No quest map yet");
+        } else {
+            int n = questMap.dungeons.size(), done = Math.min(questMap.clears.size(), n);
+            boolean complete = questMap.completedAt != null || done == n;
+            String next = questMap.dungeons.get(complete ? n - 1 : done);
+            JPanel q = column();
+            q.add(center(new JLabel(dungeonIcon(next, 80))));
+            q.add(Box.createVerticalStrut(6));
+            q.add(center(new JLabel(complete ? "All done!" : "Next: " + next)));
+            JLabel progress = new JLabel(done + "/" + n + " dungeons completed");
+            progress.setFont(progress.getFont().deriveFont(20f));
+            progress.setForeground(complete ? Palette.GREEN : gold());
+            q.add(center(progress));
+            questBody = q;
+        }
+
+        JPanel grid = new JPanel(new GridBagLayout());
+        grid.setOpaque(false);
+        JComponent[][] cells = {
+                {caption("YOUR WAGON"), scene, link("To the caravan")},
+                {caption("QUEST MAP"), questBody, link("To the quest map")}};
+        Runnable[] open = {() -> openGuild.accept(GuildPanel.CARAVAN), () -> openGuild.accept(GuildPanel.QUEST_MAP)};
+        for (int col = 0; col < cells.length; col++) {
+            for (int row = 0; row < 3; row++) {
+                GridBagConstraints c = new GridBagConstraints();
+                c.gridx = col;
+                c.gridy = row;
+                c.anchor = row == 1 ? GridBagConstraints.CENTER : GridBagConstraints.PAGE_START;   // titles and links in line
+                c.insets = new Insets(row == 0 ? 0 : 6, col == 0 ? 0 : 48, 0, 0);
+                grid.add(cells[col][row], c);
+                clickable(cells[col][row], open[col]);
+            }
+        }
+        JPanel holder = new JPanel(new BorderLayout());   // at the left, as wide as it needs
+        holder.setOpaque(false);
+        holder.add(grid, BorderLayout.WEST);
+        return holder;
+    }
+
+    private static final int WAGON_SKY = 10;   // sky kept above the wagon's pile
+
     // one of these greets you on the overview, picked once each time the app starts
     private static final String[] GREETINGS = {"Hello", "Hi", "Hey", "Howdy", "Aye", "Ahoy", "Yo", "Greetings",
             "Welcome back", "Good to see you", "Hail", "Salutations", "Well met", "Heyo", "Oi", "Ello",
@@ -516,69 +617,42 @@ public class ProfileView extends SubTabs {
         // like the greeting: a prefix (in the soft ink) before the guild's name (in gold)
         JLabel head = new JLabel(guildName == null ? "Guild" : "<html><span style='color:" + hex(soft("").getForeground())
                 + "'>" + GUILD_PREFIX + "</span> " + escape(guildName) + "</html>");
-        head.setFont(new Font(Themes.HEAD_FONT, Font.PLAIN, 56));
         head.setForeground(gold());
-        p.add(left(head));
+        p.add(left(title(head, p)));
         p.add(Box.createVerticalStrut(14));
         if (guildNote != null || myWagon == null) {
             p.add(left(muted(guildNote == null || guildNote.isEmpty() ? "Loading..." : guildNote)));
             return card(p);
         }
-        wagon.setMembers(List.of(myWagon));
-        JPanel caravan = column();
-        caravan.add(center(caption("YOUR WAGON · THIS WEEK")));
-        caravan.add(Box.createVerticalStrut(4));
-        caravan.add(center(wagon));
-        caravan.add(Box.createVerticalStrut(6));
-        caravan.add(center(link("To the caravan")));
-        clickable(caravan, () -> openGuild.accept(GuildPanel.CARAVAN));
-
-        JPanel quest = column();
-        quest.add(center(caption("QUEST MAP")));
-        quest.add(Box.createVerticalStrut(10));
-        if (questMap == null || questMap.dungeons.isEmpty()) {
-            quest.add(center(muted("No quest map yet")));
-        } else {
-            int n = questMap.dungeons.size(), done = Math.min(questMap.clears.size(), n);
-            boolean complete = questMap.completedAt != null || done == n;
-            String next = questMap.dungeons.get(complete ? n - 1 : done);
-            quest.add(center(new JLabel(dungeonIcon(next, 80))));
-            quest.add(Box.createVerticalStrut(6));
-            quest.add(center(new JLabel(complete ? "All done!" : "Next: " + next)));
-            JLabel progress = new JLabel(done + "/" + n + " dungeons completed");
-            progress.setFont(progress.getFont().deriveFont(20f));
-            progress.setForeground(complete ? Palette.GREEN : gold());
-            quest.add(center(progress));
-            quest.add(Box.createVerticalStrut(6));
-            quest.add(center(link("To the quest map")));
-        }
-        clickable(quest, () -> openGuild.accept(GuildPanel.QUEST_MAP));
-
-        JPanel items = new JPanel(new WrapLayout(64, 20));   // side by side, one above the other when narrow
-        items.setOpaque(false);
-        items.add(caravan);
-        items.add(quest);
-        p.add(left(items));
+        // the facts of the last days first, then your wagon and the quest map side by side
         JComponent facts = guildFacts();
         if (facts != null) {
-            p.add(Box.createVerticalStrut(22));
+            p.add(left(caption(STATS_CAPTION)));
+            p.add(Box.createVerticalStrut(4));
+            p.add(left(goldLine()));
+            p.add(Box.createVerticalStrut(8));
             p.add(left(facts));
+            p.add(Box.createVerticalStrut(14));
         }
+        p.add(left(caption("GUILD PROGRESS")));
+        p.add(Box.createVerticalStrut(4));
+        p.add(left(goldLine()));
+        p.add(Box.createVerticalStrut(8));
+        p.add(left(wagonAndQuests()));
         return card(p);
     }
 
     private static final int FACT_DAYS = 3;   // the facts besides the favourite dungeon cover these last days
     private static final int GRAVESTONE = 1282, FAME = 24102, SWORD = 2827, HEAVY_ARMOR = 2812;   // their icons
-    private static final int FACT_ICON = 56, LOVER_PORTAL = 72, LOVER_CHAR = 44;
+    private static final int FACT_ICON = 72, LOVER_PORTAL = 80, LOVER_CHAR = 52;
 
     // how some facts are told, one picked each time the app starts
-    private static final java.util.Random PICK = new java.util.Random();
     private static final String LOVER_VERB = pick("completed", "done", "cleared", "conquered", "beaten", "run",
             "gobbled through", "survived");
     private static final String TANK_VERB = pick("ate", "tanked", "took", "absorbed", "soaked up", "shrugged off");
 
     private static String pick(String... words) {
-        return words[PICK.nextInt(words.length)];
+        return words[java.util.concurrent.ThreadLocalRandom.current().nextInt(words.length)];   // safe in any static field
     }
 
     private static String factsKey(List<GobblerServer.MemberFacts> facts) {
@@ -670,10 +744,33 @@ public class ProfileView extends SubTabs {
         if (collector != null) blocks.add(fact("ST COLLECTOR", stSetIcon(collector, FACT_ICON),
                 name(collector) + " has <b>" + NUM.format(collector.stSets) + "</b> ST set" + (collector.stSets == 1 ? "" : "s") + " ready",
                 "ST sets " + collector.ign + " completed in the last " + FACT_DAYS + " days (the last piece found)"));
+        GobblerServer.MemberFacts friendA = byId(all, guildFriends == null ? 0 : guildFriends.a);
+        GobblerServer.MemberFacts friendB = byId(all, guildFriends == null ? 0 : guildFriends.b);
+        if (friendA != null && friendB != null) blocks.add(fact("BEST FRIENDS",
+                new FacingIcon(lookOf(friendA, FACT_ICON * 3 / 4), lookOf(friendB, FACT_ICON * 3 / 4)),
+                name(friendA) + " and " + name(friendB) + " played the most dungeons together: <b>" + NUM.format(guildFriends.count) + "</b>",
+                friendA.ign + " and " + friendB.ign + " were in " + guildFriends.count + " dungeon"
+                        + (guildFriends.count == 1 ? "" : "s") + " together in the last " + FACT_DAYS + " days"));
         if (blocks.isEmpty()) return null;
+        // five of them, picked anew each day and each time the app starts (the same in between, so the card does
+        // not change with every refresh)
+        java.util.Collections.shuffle(blocks, new java.util.Random(FACT_SEED * 31 + java.time.LocalDate.now().toEpochDay()));
+        if (blocks.size() > FACTS_SHOWN) blocks = new ArrayList<>(blocks.subList(0, FACTS_SHOWN));
         JPanel grid = new JPanel(new WrapLayout(36, 18));   // side by side, wrapping when the card is narrow
         grid.setOpaque(false);
-        for (JComponent b : blocks) grid.add(b);
+        // the icons all as tall as the tallest of those shown, standing on one line, so the texts of a row line up
+        int tallest = 0;
+        for (JComponent b : blocks) {
+            Object pic = b.getClientProperty(FACT_PICTURE);
+            if (pic instanceof JLabel l && l.getIcon() != null) tallest = Math.max(tallest, l.getIcon().getIconHeight());
+        }
+        for (JComponent b : blocks) {
+            if (b.getClientProperty(FACT_PICTURE) instanceof JLabel l) {
+                l.setPreferredSize(new Dimension(l.getPreferredSize().width, tallest));
+                l.setMaximumSize(l.getPreferredSize());
+            }
+            grid.add(b);
+        }
         grid.addComponentListener(new java.awt.event.ComponentAdapter() {
             private int height = -1;
 
@@ -688,6 +785,9 @@ public class ProfileView extends SubTabs {
         });
         return grid;
     }
+
+    private static final int FACTS_SHOWN = 5;
+    private static final long FACT_SEED = new java.util.Random().nextLong();   // which ones: new each start (and day)
 
     private static final long DODGE_MIN_MS = 10 * 60_000L;   // less time in dungeons says too little about an average
 
@@ -748,6 +848,49 @@ public class ProfileView extends SubTabs {
     }
 
     private static final int SHINY_SWORD = 1230;   // Sword of the Colossus (Shiny)
+
+    private static GobblerServer.MemberFacts byId(List<GobblerServer.MemberFacts> all, long id) {
+        for (GobblerServer.MemberFacts f : all) if (f.userId == id && id != 0) return f;
+        return null;
+    }
+
+    /** Two characters facing each other: the first as it is (facing right), the second mirrored (facing left). */
+    static final class FacingIcon implements Icon {
+        private final Icon left, right;
+
+        FacingIcon(Icon left, Icon right) {
+            this.left = left;
+            this.right = right;
+        }
+
+        private int part(Icon i) {
+            return i == null ? FACT_ICON * 3 / 4 : i.getIconWidth();
+        }
+
+        @Override
+        public int getIconWidth() {
+            return part(left) + part(right) - FACT_ICON / 8;   // close together
+        }
+
+        @Override
+        public int getIconHeight() {
+            return Math.max(left == null ? 0 : left.getIconHeight(), right == null ? 0 : right.getIconHeight());
+        }
+
+        @Override
+        public void paintIcon(Component c, Graphics g, int x, int y) {
+            int h = getIconHeight();
+            if (left != null) left.paintIcon(c, g, x, y + h - left.getIconHeight());
+            if (right != null) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                int rx = x + getIconWidth() - right.getIconWidth();
+                g2.translate(rx + right.getIconWidth(), y + h - right.getIconHeight());
+                g2.scale(-1, 1);   // mirrored: facing the first
+                right.paintIcon(c, g2, 0, 0);
+                g2.dispose();
+            }
+        }
+    }
 
     /** A shiny item with the divine rarity marker, as the collection shows a divine copy. */
     private static Icon divineShiny(int size) {
@@ -861,26 +1004,51 @@ public class ProfileView extends SubTabs {
         return "<span style='color:" + hex(gold()) + "'>" + escape(f.ign) + "</span>";
     }
 
-    private static final int FACT_WIDTH = 180;   // every fact as wide, so they line up in columns
+    private static final String FACT_PICTURE = "fact.picture";   // a fact's icon label, on the fact
 
-    /** One fact: its caption, the icon below it and the line (HTML) below that, wrapped to the fact's width. */
+    /** A thin gold line across the column, stopping short of both edges, as under the day headers in Battles. */
+    private static JComponent goldLine() {
+        JComponent line = new JComponent() {
+            @Override
+            protected void paintComponent(Graphics g) {
+                g.setColor(gold());
+                g.fillRect(0, 1, getWidth() - 4, 2);
+            }
+        };
+        line.setPreferredSize(new Dimension(10, 4));
+        line.setMaximumSize(new Dimension(Integer.MAX_VALUE, 4));
+        return line;
+    }
+
+    private static final int FACT_WIDTH = 130;   // every fact as wide, so they line up in columns
+
+    /** One fact: its caption, the icon below it and the line (HTML) below that, wrapped to the fact's width, all centered. */
     private static JComponent fact(String caption, Icon icon, String html, String tip) {
-        JPanel p = column();
-        p.add(left(caption(caption)));
-        p.add(Box.createVerticalStrut(6));
-        JLabel picture = new JLabel(icon);
-        picture.setToolTipText(tip);
-        // all as tall as the tallest (Dungeon Lover's portal), standing on one line, so the texts of a row line up
-        picture.setVerticalAlignment(SwingConstants.BOTTOM);
-        picture.setHorizontalAlignment(SwingConstants.LEFT);
-        int tallest = LOVER_PORTAL + LOVER_CHAR / 6;
-        picture.setPreferredSize(new Dimension(Math.max(icon == null ? 0 : icon.getIconWidth(), 1), tallest));
-        picture.setMaximumSize(picture.getPreferredSize());
-        p.add(left(picture));
-        p.add(Box.createVerticalStrut(6));
-        JLabel text = new JLabel("<html><div style='width:" + FACT_WIDTH + "px'>" + html + "</div></html>");
+        JLabel text = new JLabel("<html><div style='width:" + FACT_WIDTH + "px; text-align:center'>" + html + "</div></html>");
         text.setFont(text.getFont().deriveFont(20f));
         text.setToolTipText(tip);
+        int width = text.getPreferredSize().width;   // the caption and the icon centered over the text's width
+        JPanel p = column();
+        JLabel title = caption(caption);
+        JPanel titleBox = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 0));   // the caption centered over the text
+        titleBox.setOpaque(false);
+        titleBox.add(title);
+        Dimension t = title.getPreferredSize();
+        titleBox.setPreferredSize(new Dimension(Math.max(width, t.width), t.height));
+        titleBox.setMaximumSize(titleBox.getPreferredSize());
+        p.add(left(titleBox));
+        p.add(Box.createVerticalStrut(2));
+        JLabel picture = new JLabel(icon);
+        picture.setToolTipText(tip);
+        // standing on its bottom: guildFacts makes the icons shown together equally tall
+        picture.setVerticalAlignment(SwingConstants.BOTTOM);
+        picture.setHorizontalAlignment(SwingConstants.CENTER);
+        picture.setPreferredSize(new Dimension(Math.max(width, icon == null ? 1 : icon.getIconWidth()),
+                icon == null ? 1 : icon.getIconHeight()));
+        picture.setMaximumSize(new Dimension(Integer.MAX_VALUE, Integer.MAX_VALUE));
+        p.putClientProperty(FACT_PICTURE, picture);
+        p.add(left(picture));
+        p.add(Box.createVerticalStrut(6));
         p.add(left(text));
         return p;
     }

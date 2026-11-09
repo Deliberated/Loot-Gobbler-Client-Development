@@ -479,6 +479,11 @@ public class CaravanView extends JPanel {
             });
         }
 
+        /** Where the caravan's tallest part begins, from the top of the component (on screen pixels): the sky above is empty. */
+        int contentTop() {
+            return (int) Math.floor((sceneHeight() - 34 - contentHeight()) * zoom);
+        }
+
         /** Drawn at this scale; a click anywhere calls onPick (with null beside the members). */
         Scene small(double zoom) {
             this.zoom = zoom;
@@ -538,9 +543,25 @@ public class CaravanView extends JPanel {
         }
 
         /** How high the caravan reaches above the road: the tallest pile, or the drivers and the ox. */
+        /**
+         * What a wagon carries, rarest first: every copy while they fit (MAX_PILE), else every item once with its
+         * copies as a number (filled into copies). Nothing that was looted is ever left out: the pile grows taller.
+         */
+        private static List<CaravanItem> pile(CaravanMember m, Map<Integer, Integer> copies) {
+            List<CaravanItem> loot = new ArrayList<>(m.items);
+            loot.sort(Comparator.comparingInt(CaravanView::rarity));
+            if (loot.size() <= MAX_PILE) return loot;
+            Map<Integer, CaravanItem> once = new LinkedHashMap<>();
+            for (CaravanItem it : loot) {
+                once.putIfAbsent(it.itemId, it);
+                copies.merge(it.itemId, 1, Integer::sum);
+            }
+            return new ArrayList<>(once.values());
+        }
+
         private int contentHeight() {
             int rows = 0;
-            for (CaravanMember m : riders) rows = Math.max(rows, (Math.min(m.items.size(), MAX_PILE) + PILE_COLS - 1) / PILE_COLS);
+            for (CaravanMember m : riders) rows = Math.max(rows, (pile(m, new HashMap<>()).size() + PILE_COLS - 1) / PILE_COLS);
             return Math.max(150, 32 + BED_H + rows * (ITEM + ITEM_GAP) + 12);
         }
 
@@ -554,14 +575,15 @@ public class CaravanView extends JPanel {
             double width = getParent() instanceof JViewport v ? v.getWidth() : getWidth();
             double byWidth = (width - 2 * FIT_MARGIN) / contentWidth();
             double byHeight = (HEIGHT - 34 - 16) / (double) contentHeight();
-            return Math.max(1, Math.min(MAX_FIT, Math.min(byWidth, byHeight)));
+            // the width may scroll, but the height must fit: a very tall pile (nothing is ever left off) is drawn smaller
+            return Math.min(byHeight, Math.max(1, Math.min(MAX_FIT, Math.min(byWidth, byHeight))));
         }
 
         @Override
         public Dimension getPreferredSize() {
             // each wagon on a bar behind the one before (or the ox), with its step at the back
             int w = PAD + contentWidth() + PAD;
-            if (zoom != 1) return new Dimension((int) Math.ceil(w * zoom), (int) Math.ceil(HEIGHT * zoom));
+            if (zoom != 1) return new Dimension((int) Math.ceil(w * zoom), (int) Math.ceil(sceneHeight() * zoom));
             return new Dimension(Math.max(400, w), HEIGHT);
         }
 
@@ -576,12 +598,26 @@ public class CaravanView extends JPanel {
             return Math.max(WALKER_W, getFontMetrics(FLAG_FONT).stringWidth(walkerTag(m)) + 24);
         }
 
+        /**
+         * How tall the scene is (unzoomed): HEIGHT, or more for the Profile's small wagon when its pile reaches above
+         * that (it is never shrunk to fit, so the extra sky goes on top).
+         */
+        private int sceneHeight() {
+            return anyClick ? Math.max(HEIGHT, contentHeight() + 34 + 20) : HEIGHT;
+        }
+
         @Override
         protected void paintComponent(Graphics g) {
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
             g2.scale(zoom, zoom);
             int w = (int) Math.ceil(getWidth() / zoom), ground = HEIGHT - 34;
+            int extra = sceneHeight() - HEIGHT;   // more sky above a tall pile: the rest is drawn that far down
+            if (extra > 0) {
+                g2.setColor(SKY);
+                g2.fillRect(0, 0, w, extra);
+                g2.translate(0, extra);
+            }
             paintBackdrop(g2, w);
             hits.clear();
             itemHits.clear();
@@ -593,7 +629,7 @@ public class CaravanView extends JPanel {
             double f = fit();
             double drawn = contentWidth() * f, start = anyClick || drawn + 2 * PAD > w ? PAD : (w - drawn) / 2;
             view = AffineTransform.getScaleInstance(zoom, zoom);
-            view.translate(start, ground);
+            view.translate(start, ground + Math.max(0, extra));
             view.scale(f, f);
             view.translate(-PAD, -ground);
             g2.translate(start, ground);
@@ -602,8 +638,6 @@ public class CaravanView extends JPanel {
             int x = PAD;
             paintOx(g2, x, ground);
             x += OX_W;
-            int biggest = Math.max(1, riders.stream().mapToInt(r -> r.items.size()).max().orElse(1));
-            double scale = Math.max(1, biggest / (double) MAX_PILE);   // the biggest pile fills a wagon
             g2.setFont(PLATE_FONT);
             plateW = 0;   // every score plate as wide as the widest, so they line up
             for (CaravanMember r : riders) plateW = Math.max(plateW, g2.getFontMetrics().stringWidth(plate(r)) + 10);
@@ -612,7 +646,7 @@ public class CaravanView extends JPanel {
                 int bar = i == 0 ? BAR : STEP_W + BAR;   // the bar runs under the step of the wagon in front
                 g2.fillRect(x, ground - 40, bar, 4);
                 x += bar;
-                paintWagon(g2, riders.get(i), i, x, ground, scale);
+                paintWagon(g2, riders.get(i), i, x, ground);
                 x += WAGON_W;
             }
             if (!walkers.isEmpty()) x += 46;
@@ -680,7 +714,7 @@ public class CaravanView extends JPanel {
             g2.fillRect(x + 98, y + 40, 22, 4);                      // harness
         }
 
-        private void paintWagon(Graphics2D g2, CaravanMember m, int index, int x, int ground, double scale) {
+        private void paintWagon(Graphics2D g2, CaravanMember m, int index, int x, int ground) {
             int bedY = ground - 32 - BED_H;
             int bob = (int) Math.round(2 * Math.sin(phase * 0.25 + index));        // the driver
             int lootBob = (int) Math.round(2 * Math.sin(phase * 0.06 + index));    // the pile: much slower
@@ -688,25 +722,9 @@ public class CaravanView extends JPanel {
             GobblerServer.User me = GobblerServer.get().user();
             paintingMine = me != null && m.id == me.id;
 
-            // the pile: rarest on top
-            List<CaravanItem> loot = new ArrayList<>(m.items);
-            loot.sort(Comparator.comparingInt(CaravanView::rarity));
-            int n = Math.min(loot.size(), Math.max(1, (int) Math.round(loot.size() / scale)));
-            // a pile too big for the wagon: every item once (rarest first) with its copies as a number, instead of
-            // leaving copies out (three kimonos showed as one)
+            // the pile: rarest on top, and never anything left out (see pile)
             Map<Integer, Integer> copies = new HashMap<>();
-            List<CaravanItem> pile;
-            if (n < loot.size()) {
-                Map<Integer, CaravanItem> once = new LinkedHashMap<>();
-                for (CaravanItem it : loot) {
-                    once.putIfAbsent(it.itemId, it);
-                    copies.merge(it.itemId, 1, Integer::sum);
-                }
-                pile = new ArrayList<>(once.values());
-                if (pile.size() > n) pile = new ArrayList<>(pile.subList(0, n));
-            } else {
-                pile = new ArrayList<>(loot);
-            }
+            List<CaravanItem> pile = pile(m, copies);
             Collections.reverse(pile);   // drawn from the bottom up
             int pileX = x + 52, pileW = PILE_COLS * (ITEM + ITEM_GAP);
             int top = bedY;
