@@ -20,7 +20,8 @@ import java.util.List;
  */
 final class LoadoutCard {
     private static final int SCALE = 2;   // drawn at twice the size, so it stays sharp when shared
-    private static final int PAD = 14, CUT = 18, SKIN = 88, TILE = 56, TILE_GAP = 8, BAG = 50, BAG_GAP = 10, QUICK = 28, QUICK_GAP = 4;
+    private static final int EDGE = 2;   // the box's gold edge, inside which the spacing is counted
+    private static final int PAD = 14, CUT = 18, SKIN = 88, TILE = 56, TILE_GAP = 8, BAG = 50, BAG_GAP = 8, QUICK = 28, QUICK_GAP = 4;
     // the card is as wide as its content needs; its height is fixed (room for all quick slots)
     private static final int TEXT_W = 220, QUICK_W = 240;   // the most room the texts get (longer: a smaller font)
     // room for every quick slot, so a card has the same height however many are filled
@@ -92,9 +93,26 @@ final class LoadoutCard {
             quickW = Math.max(quickW, QUICK + 6 + m.getFontMetrics(fit(smallFont, label, QUICK_W - QUICK - 6)).stringWidth(label));
         }
         m.dispose();
-        int headerW = SKIN + 12 + Math.max(nameFm.stringWidth(name), fameFm.stringWidth(fame)) + (quickW > 0 ? 32 + quickW : 0);
-        int rowW = 4 * TILE + 3 * TILE_GAP + (bag > 0 ? BAG_GAP + BAG : 0);
-        int w = PAD * 2 + Math.max(headerW, rowW) + CUT / 2, h = PAD * 2 + headerH + 14 + TILE;
+        // a skin drawn at 16x16 (more detailed than the classes' 8x8) gets the card's full height on the left, so its
+        // pixels are about as big as those of an 8x8 character; the rest moves right of it
+        int nativeSize = nativeSize(c);
+        boolean big = nativeSize > 8;
+        int skinSize = big ? headerH + 14 + TILE : SKIN;
+        Icon skin = CharactersView.skin(c, skinSize);
+        // the spacing counted in the character's own pixels, from what its sprite shows: between the box's edge and
+        // the character one pixel if only a point of it reaches out that far (one or two pixels in its leftmost
+        // column), else two; about two and a half between the character and what is right of it
+        float charPx = skinSize / (float) nativeSize;
+        int[] shownBox = skin == null ? null : shown(skin);
+        int shownLeft = shownBox == null ? 0 : shownBox[0], shownRight = shownBox == null ? skinSize : shownBox[2] + 1;
+        int leftPx = leftmostPixels(c) <= 2 ? 1 : 2;
+        int sx = EDGE + Math.round(charPx * leftPx) - shownLeft;      // where the icon is drawn
+        int charRight = sx + shownRight + Math.round(charPx * 2.5f);  // where the texts (and a 16x16 skin's gear row) start
+        int rowX = big ? charRight : sx + shownLeft;                  // the gear row: under the 8x8 character, aligned with it
+        int textW = Math.max(nameFm.stringWidth(name), fameFm.stringWidth(fame));
+        int headerRight = charRight + textW + (quickW > 0 ? 32 + quickW : 0);
+        int rowRight = rowX + 4 * TILE + 3 * TILE_GAP + (bag > 0 ? BAG_GAP + BAG : 0);
+        int w = Math.max(headerRight, rowRight) + PAD + CUT / 2, h = PAD * 2 + headerH + 14 + TILE;
         BufferedImage img = new BufferedImage(w * SCALE, h * SCALE, BufferedImage.TYPE_INT_ARGB);
         Graphics2D g = img.createGraphics();
         g.scale(SCALE, SCALE);
@@ -114,16 +132,15 @@ final class LoadoutCard {
         g.draw(outline(3f, w - 3f, h - 3f, CUT - 1.2f));
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
 
-        // top left: the character in its skin and dyes, class name and fame
-        int x = PAD, y = PAD;
-        Icon skin = CharactersView.skin(c, SKIN);
-        int skinY = y + (headerH - SKIN) / 2;
+        // top left (a 16x16 skin: the whole left side): the character in its skin and dyes, then class name and fame
+        int y = PAD;
+        int skinY = big ? y : y + (headerH - SKIN) / 2;
         if (skin != null) {
-            int sx = x + (SKIN - skin.getIconWidth()) / 2, sy0 = skinY + (SKIN - skin.getIconHeight()) / 2;
-            shadow(g, col, skin, sx, sy0, 4);
+            int sy0 = skinY + (skinSize - skin.getIconHeight()) / 2;
+            shadow(g, col, skin, sx, sy0, big ? 5 : 4);
             skin.paintIcon(null, g, sx, sy0);
         }
-        int tx = x + SKIN + 12, textH = nameFm.getHeight() + fameFm.getHeight();
+        int tx = charRight, textH = nameFm.getHeight() + fameFm.getHeight();
         int ty = y + Math.max(0, (headerH - textH) / 2);
         text(g, col, name, nameFont, col.ink, tx, ty + nameFm.getAscent());
         text(g, col, fame, fameFont, col.gold, tx, ty + nameFm.getHeight() + fameFm.getAscent());
@@ -150,11 +167,11 @@ final class LoadoutCard {
         for (int slot = 0; slot < 4; slot++) {
             int id = c.equipment != null && slot < c.equipment.length ? c.equipment[slot] : -1;
             int[] enchants = CharactersView.enchantIds(c, slot);
-            tile(g, col, PAD + slot * (TILE + TILE_GAP), sy, id, enchants == null ? 0 : enchants.length);
+            tile(g, col, rowX + slot * (TILE + TILE_GAP), sy, id, enchants == null ? 0 : enchants.length);
         }
         if (bag > 0) {   // the backpack beside the gear, set a little apart; without one, its place stays empty
             Icon b = CharactersView.sprite(bag, BAG);
-            int bx = PAD + 4 * (TILE + TILE_GAP) + BAG_GAP;
+            int bx = rowX + 4 * (TILE + TILE_GAP) - TILE_GAP + BAG_GAP;
             if (b != null) paintCentered(g, col, b, bx + BAG / 2, sy + TILE / 2);   // on the slots' middle
         }
         g.dispose();
@@ -228,6 +245,31 @@ final class LoadoutCard {
         int x = cx - (box[0] + box[2] + 1) / 2, y = cy - (box[1] + box[3] + 1) / 2;
         shadow(g, col, icon, x, y, 3);
         icon.paintIcon(null, g, x, y);
+    }
+
+    /** The width of the character's sprite in the game files (8 for the classes, 16 for detailed skins), 8 if unknown. */
+    private static int nativeSize(Char c) {
+        try {
+            BufferedImage im = assets.ImageBuffer.getImage(c.spriteId());
+            return im == null ? 8 : im.getWidth();
+        } catch (Exception e) {
+            return 8;
+        }
+    }
+
+    /** How many pixels of the character's sprite (in the game files) are in its leftmost column that shows any. */
+    private static int leftmostPixels(Char c) {
+        try {
+            BufferedImage im = assets.ImageBuffer.getImage(c.spriteId());
+            if (im == null) return 0;
+            for (int x = 0; x < im.getWidth(); x++) {
+                int n = 0;
+                for (int y = 0; y < im.getHeight(); y++) if ((im.getRGB(x, y) >>> 24) != 0) n++;
+                if (n > 0) return n;
+            }
+        } catch (Exception ignored) {
+        }
+        return 0;
     }
 
     /** The font, made smaller until the text fits the width. */
