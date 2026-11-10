@@ -893,7 +893,7 @@ public class CollectionPanel extends JPanel {
         }
     }
 
-    private record ImageSelection(Image image) implements Transferable {
+    record ImageSelection(Image image) implements Transferable {   // also used by LoadoutCard
         @Override
         public DataFlavor[] getTransferDataFlavors() {
             return new DataFlavor[]{DataFlavor.imageFlavor};

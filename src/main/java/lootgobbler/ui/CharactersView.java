@@ -593,7 +593,9 @@ public class CharactersView extends JPanel {
         long played = sessions.stream().mapToLong(Session::durationMs).sum();
 
         // one box per part, like the boxes on the right of the Classes page (the card on the left says who it is)
-        panel.add(box("Loadout", Palette.GOLD, CharacterDetail.loadout(c)));
+        JComponent loadoutBox = box("Loadout", Palette.GOLD, CharacterDetail.loadout(c));
+        ((Section) loadoutBox.getComponent(0)).actions(LoadoutCard.copyButton(c));   // the loadout as a picture to share
+        panel.add(loadoutBox);
         JComponent suggested = box("Suggested Loadout", Palette.BLUE, CharacterDetail.ideal(c, () -> renderPanel(c)));
         // until a stat is picked, the header says what to do
         if (!CharacterDetail.anyStatChosen()) ((Section) suggested.getComponent(0)).note("(click the preferred stats)");

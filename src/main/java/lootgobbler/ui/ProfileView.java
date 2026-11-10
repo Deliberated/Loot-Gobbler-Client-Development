@@ -705,7 +705,8 @@ public class ProfileView extends SubTabs {
         GobblerServer.MemberFacts gain = most(all, f -> f.bestRun == null ? 0 : f.bestRun.fame);
         if (gain != null) blocks.add(fact("DUNGEON GAIN",
                 new PortalWithIcon(dungeonIcon(gain.bestRun.dungeon, LOVER_PORTAL), CharactersView.sprite(FAME, LOVER_CHAR)),
-                name(gain) + " gained the most fame at a single dungeon: <b>" + escape(gain.bestRun.dungeon) + "</b>",
+                name(gain) + " gained <b>" + NUM.format(gain.bestRun.fame) + " fame</b> in a single dungeon: <b>"
+                        + escape(gain.bestRun.dungeon) + "</b>",
                 gain.ign + ": " + NUM.format(gain.bestRun.fame) + " fame in one " + gain.bestRun.dungeon + " in the last "
                         + FACT_DAYS + " days"));
         // each run's best boss DPS (what the DPS logger shows), on average over their runs

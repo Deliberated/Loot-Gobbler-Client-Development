@@ -241,10 +241,12 @@ final class DamageGraph extends JComponent {
             hits[s]++;
             byEnemy.merge(((long) s << 32) | (v.hitEnemy[i] & 0xFFFFFFFFL), v.hitDamage[i], Integer::sum);
         }
-        for (Map.Entry<Long, Integer> e : byEnemy.entrySet()) {   // an enemy before the ground or an area effect
+        // an enemy before damaging ground, and that before an unknown source; among equals, the most damage
+        for (Map.Entry<Long, Integer> e : byEnemy.entrySet()) {
             int s = (int) (e.getKey() >>> 32), type = (int) (long) e.getKey();
             boolean first = enemy[s] == 0 && enemyDamage[s] == 0;
-            boolean better = type > 0 && (enemy[s] == 0 || e.getValue() > enemyDamage[s]);
+            int rank = sourceRank(type), was = sourceRank(enemy[s]);
+            boolean better = rank > was || (rank == was && rank > 0 && e.getValue() > enemyDamage[s]);
             if (first || better) {
                 enemy[s] = type;
                 enemyDamage[s] = e.getValue();
@@ -465,7 +467,8 @@ final class DamageGraph extends JComponent {
         g2.setColor(new Color(0xC9C2B4));
         g2.draw(drop);
         g2.setStroke(new BasicStroke(1f));
-        Icon icon = enemy <= 0 ? null : smallIcons.computeIfAbsent(enemy, t -> bigIcon(t, BUBBLE_ICON));
+        Icon icon = enemy <= 0 ? smallIcons.computeIfAbsent(GROUND, t -> groundIcon(BUBBLE_ICON))
+                : smallIcons.computeIfAbsent(enemy, t -> bigIcon(t, BUBBLE_ICON));
         if (icon == null) icon = smallIcons.computeIfAbsent(0, t -> warning(BUBBLE_ICON));
         if (icon != null) {
             Shape clip = g2.getClip();
@@ -568,7 +571,9 @@ final class DamageGraph extends JComponent {
      * without a known source, and the rest, a warning badge.
      */
     private Icon enemyIcon(int type, Fight during) {
-        Icon icon = type <= 0 ? null : icons.computeIfAbsent(type, DamageGraph::bigIcon);
+        // ground damage, and hits without a source (area effects; ground damage saved before its tile was kept)
+        if (type <= 0) return icons.computeIfAbsent(GROUND, t -> groundIcon(ICON));
+        Icon icon = icons.computeIfAbsent(type, DamageGraph::bigIcon);
         if (icon == null && type > 0 && during != null) icon = icons.computeIfAbsent(during.type(), DamageGraph::bigIcon);
         return icon != null ? icon : icons.computeIfAbsent(0, t -> warning(ICON));
     }
@@ -577,6 +582,46 @@ final class DamageGraph extends JComponent {
     private static Fight fightAt(java.util.List<Fight> fights, long t) {
         for (Fight f : fights) if (t >= f.from() && t <= f.to()) return f;
         return null;
+    }
+
+    private static final int GROUND = Integer.MIN_VALUE;   // the ground icon's key among the enemy icons
+
+    /** Enemies (2) before damaging ground (1) before an unknown source (0). */
+    private static int sourceRank(int type) {
+        return type > 0 ? 2 : type < 0 ? 1 : 0;
+    }
+
+    /**
+     * Damaging ground: a dark floor tile, its stones lit from below, with heat rising off it.
+     */
+    static Icon groundIcon(int size) {
+        java.awt.image.BufferedImage img = new java.awt.image.BufferedImage(size, size, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = img.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        int pad = Math.max(2, size / 8), tile = size - 2 * pad, top = size - pad - tile / 2;
+        // the tile: two rows of stones, the cracks glowing
+        g.setColor(BIG);
+        g.fillRoundRect(pad, top, tile, tile / 2, 3, 3);
+        g.setColor(new Color(0x3A2418));
+        int half = tile / 2, gap = Math.max(1, size / 16), row = tile / 4;
+        g.fillRect(pad + gap, top + gap, half - 2 * gap, row - gap);
+        g.fillRect(pad + half + gap, top + gap, half - 2 * gap, row - gap);
+        g.fillRect(pad + gap, top + row + gap, tile / 3 - gap, row - 2 * gap);
+        g.fillRect(pad + tile / 3 + gap, top + row + gap, tile * 2 / 3 - 2 * gap, row - 2 * gap);
+        // heat: three wavy lines above it
+        g.setColor(BIG);
+        g.setStroke(new BasicStroke(Math.max(1.5f, size / 14f), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        int waveTop = pad, waveBottom = top - gap * 2;
+        for (int k = 0; k < 3; k++) {
+            float x = pad + tile * (k + 1) / 4f;
+            java.awt.geom.Path2D w = new java.awt.geom.Path2D.Float();
+            w.moveTo(x, waveBottom);
+            float h = waveBottom - waveTop, amp = size / 12f;
+            w.curveTo(x - amp, waveBottom - h / 3, x + amp, waveBottom - h * 2 / 3, x, waveTop);
+            g.draw(w);
+        }
+        g.dispose();
+        return new ImageIcon(img);
     }
 
     /** A small round warning badge ("!"), for a dangerous slice without a recognisable enemy. */
@@ -600,7 +645,7 @@ final class DamageGraph extends JComponent {
     private String bubbleTip(int target, int count, String side) {
         Slices sl = slices(visit, windowMs);
         int type = target >= 0 && target < sl.count() ? sl.enemy()[target] : 0;
-        String who = type > 0 ? assets.IdToAsset.objectName(type) : "the ground or area effects";
+        String who = type == 0 ? "the ground or area effects" : lootgobbler.DungeonVisits.hitSource(type);
         return "<html>" + (count == 1 ? "A dangerous moment" : count + " dangerous moments") + " to the " + side
                 + "<br>nearest: " + DpsPanel.duration((long) target * windowMs) + ", " + who + "<br><i>click to scroll there</i></html>";
     }

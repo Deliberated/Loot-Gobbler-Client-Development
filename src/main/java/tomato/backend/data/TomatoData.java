@@ -43,7 +43,7 @@ public class TomatoData {
     protected int charId;
     public long time;
     public long timePc;
-    private long timePcFirst;
+    private long timePcFirst = -1;   // -1 until the first tick of a map (also when the sniffer starts inside one)
     public Entity player;
     public Entity pet;
     protected final int[][] mapTiles = new int[2048][2048];
@@ -966,7 +966,8 @@ public class TomatoData {
             WorldPosData pos = p.position;
             int id = mapTiles[(int) pos.x][(int) pos.y];
             int dmg = IdToAsset.getTileDamage(id);
-            player.userDamageTaken(null, timePc, new Projectile(dmg, true));
+            // the tile as the source, negative so it is not taken for an object (0 = unknown tile)
+            player.userDamageTaken(null, timePc, new Projectile(dmg, true), id > 0 ? -id : 0);
         }
     }
 
@@ -1054,6 +1055,8 @@ public class TomatoData {
 
     public void exaltUpdate(ExaltationUpdatePacket p) {
         int[] exalts = RealmCharacter.exalts.get((int) p.objType);
+        // not fetched yet (the sniffer started inside a map, no login seen): the values kept from earlier
+        if (exalts == null) exalts = lootgobbler.ExaltStore.get().progress((int) p.objType);
         if (exalts == null) return;
         int[] update = new int[] {
             p.dexterityProgress,
@@ -1209,6 +1212,15 @@ public class TomatoData {
             if (RealmCharacter.checkExaltNew(s)) {
                 LootGUI.updateExaltStats();
                 CharacterExaltGUI.updateExalts();
+                // progress beyond the values kept from earlier was earned since: when the sniffer started inside a
+                // dungeon, the first login is the reconnect on leaving it, and this fetch already holds that
+                // dungeon's progress (the exaltation packet that follows then shows no change), so it is told here
+                for (Map.Entry<Integer, int[]> e : new HashMap<>(RealmCharacter.exalts).entrySet()) {
+                    int[] kept = lootgobbler.ExaltStore.get().progress(e.getKey());
+                    if (kept != null && e.getValue() != null && !Arrays.equals(kept, e.getValue())) {
+                        lootgobbler.DungeonVisits.get().exaltProgress(e.getKey(), kept, e.getValue());
+                    }
+                }
                 lootgobbler.ExaltStore.get().update(RealmCharacter.exalts);
             }
         } catch (IOException e) {
@@ -1263,6 +1275,7 @@ public class TomatoData {
     }
 
     public long dungeonTime() {
+        if (timePcFirst <= 0 || timePc < timePcFirst) return 0;   // no tick in this map yet
         return timePc - timePcFirst;
     }
 

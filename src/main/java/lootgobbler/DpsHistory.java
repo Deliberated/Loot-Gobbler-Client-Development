@@ -140,6 +140,28 @@ public final class DpsHistory implements Syncable {
         } catch (Exception e) {
             System.err.println("Could not read " + FILE + ": " + e.getMessage());
         }
+        boolean repaired = false;
+        for (Run r : runs) repaired |= repair(r);
+        if (repaired) {
+            runs.sort(Comparator.comparingLong((Run r) -> r.start).reversed());
+            save();
+        }
+    }
+
+    private static final long SANE_START = 1_500_000_000_000L;   // 2017: a run starting before this has a broken start
+
+    /**
+     * Runs saved when the sniffer started inside a dungeon (up to v0.7.16) counted their time from 1970: their start
+     * becomes the first boss hit, their end stays. True if the run was changed.
+     */
+    static boolean repair(Run r) {
+        if (r == null || r.start >= SANE_START) return false;
+        long end = r.start + r.durationMs, first = Long.MAX_VALUE;
+        for (Boss b : r.bosses) if (b.fightStart >= SANE_START) first = Math.min(first, b.fightStart);
+        if (first == Long.MAX_VALUE || end < first) return false;
+        r.start = first;
+        r.durationMs = end - first;
+        return true;
     }
 
     public static boolean isGuildHall(MapInfoPacket map) {
@@ -283,6 +305,7 @@ public final class DpsHistory implements Syncable {
             java.util.Map<String, Run> known = new java.util.HashMap<>();
             for (Run r : runs) known.put(r.start + "|" + r.dungeon, r);
             for (Run r : theirs) {
+                repair(r);   // another client's (or the server's) copy of a broken run matches the repaired one here
                 Run mine = known.putIfAbsent(r.start + "|" + r.dungeon, r);
                 if (mine == null) {
                     runs.add(r);

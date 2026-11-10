@@ -799,7 +799,7 @@ public class DpsLoggerView extends JPanel {
             total += v.hitDamage[i];
             if (v.hitDamage[i] > v.hitDamage[biggest]) biggest = i;
         }
-        String who = v.hitEnemy[biggest] > 0 ? " (" + assets.IdToAsset.objectName(v.hitEnemy[biggest]) + ")" : "";
+        String who = v.hitEnemy[biggest] != 0 ? " (" + lootgobbler.DungeonVisits.hitSource(v.hitEnemy[biggest]) + ")" : "";
         int saves = v.amuletSaves == null ? 0 : v.amuletSaves.length;
         if (saves > 0) dealtText = (saves == 1 ? "Amulet saved you once" : "Amulet saved you " + saves + " times") + "  \u00B7  " + dealtText;
         return dealtText + String.format(Locale.ROOT, "taken %,d in %,d hits", total, n)
@@ -835,8 +835,8 @@ public class DpsLoggerView extends JPanel {
         for (int k = 0; k < hits.size(); k++) {
             int[] h = hits.get(k);
             boolean last = k == hits.size() - 1;
-            String name = h[2] > 0 ? assets.IdToAsset.objectName(h[2]) : "Ground or area effect";
-            Icon icon = h[2] > 0 ? CharactersView.sprite(h[2], 24) : null;
+            String name = lootgobbler.DungeonVisits.hitSource(h[2]);
+            Icon icon = h[2] > 0 ? CharactersView.sprite(h[2], 24) : h[2] < 0 ? DamageGraph.groundIcon(24) : null;
             JLabel when = muted(String.format(Locale.ROOT, "-%.1f s", h[0] / 1000.0));
             JLabel who = new JLabel(name, icon, SwingConstants.LEFT);
             JLabel dmg = new JLabel(String.format(Locale.ROOT, "%,d", h[1])

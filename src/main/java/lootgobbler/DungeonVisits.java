@@ -129,6 +129,8 @@ public final class DungeonVisits implements Syncable {
             } catch (Exception e) {
                 System.err.println("Could not read " + FILE + ": " + e.getMessage());
             }
+            boolean linked = linkLateRuns(), exalts = lateExalts();
+            if (linked || exalts) save();
         } else {
             // first start: the runs logged so far, so the list does not begin empty
             for (DpsHistory.Run run : DpsHistory.get().runs()) {
@@ -143,6 +145,65 @@ public final class DungeonVisits implements Syncable {
             save();
         }
     }
+
+    /**
+     * Visits joined late without a boss fight linked: the run of that dungeon that started during the visit, if one
+     * is not linked to another visit (runs repaired by DpsHistory.repair start at their first boss hit). True if any
+     * was linked.
+     */
+    private boolean linkLateRuns() {
+        Set<Long> linked = new java.util.HashSet<>();
+        for (Visit v : visits) if (v.runStart != 0) linked.add(v.runStart);
+        boolean changed = false;
+        for (Visit v : visits) {
+            if (!v.late || v.runStart != 0) continue;
+            for (DpsHistory.Run r : DpsHistory.get().allRuns()) {
+                if (r.guildHall || !r.dungeon.equals(v.dungeon) || linked.contains(r.start)) continue;
+                if (r.start < v.start - LINK_SLACK_MS || r.start > v.start + v.durationMs) continue;
+                v.runStart = r.start;
+                linked.add(r.start);
+                changed = true;
+                break;
+            }
+        }
+        return changed;
+    }
+
+    /**
+     * Visits joined late without exaltations (up to v0.7.16 their progress was missed): the progress ExaltStore saw
+     * go up as the visit ended (the reconnect on leaving brings it), unless a visit already has it. True if any was
+     * added.
+     */
+    private boolean lateExalts() {
+        List<ExaltStore.Change> changes = ExaltStore.get().recentChanges();
+        if (changes.isEmpty()) return false;
+        Set<String> credited = new java.util.HashSet<>();
+        for (Visit v : visits) {
+            if (v.exalts != null) for (Exalt e : v.exalts) credited.add(e.classType + ":" + e.stat + ":" + e.before + ":" + e.after);
+        }
+        boolean changed = false;
+        for (Visit v : visits) {
+            if (!v.late || (v.exalts != null && !v.exalts.isEmpty())) continue;
+            long end = v.start + v.durationMs;
+            for (ExaltStore.Change c : changes) {
+                if (c.t < end - EXALT_EARLY_MS || c.t > end + EXALT_ENTRY_MS) continue;
+                if (!credited.add(c.classType + ":" + c.stat + ":" + c.before + ":" + c.after)) continue;
+                Exalt e = new Exalt();
+                e.classType = c.classType;
+                e.stat = c.stat;
+                e.before = c.before;
+                e.after = c.after;
+                if (v.exalts == null) v.exalts = new ArrayList<>();
+                v.exalts.add(e);
+                changed = true;
+                AppLog.log("game", "Exaltation progress recovered for " + v.dungeon + ": class " + c.classType + " stat "
+                        + c.stat + " " + c.before + " -> " + c.after);
+            }
+        }
+        return changed;
+    }
+
+    private static final long EXALT_EARLY_MS = 5_000;   // the reconnect's data may come just before the visit ends
 
     /** Whether a map is a dungeon: one with a portal (or a dungeon statistic) that is not the realm or a hub. */
     public static boolean isDungeon(MapInfoPacket map) {
@@ -390,6 +451,19 @@ public final class DungeonVisits implements Syncable {
                     + "; " + recap(v, RECAP_MS).size() + " hits in the last " + RECAP_MS / 1000 + "s");
         }
         for (Runnable r : hitListeners) r.run();
+    }
+
+    /**
+     * What a hit's enemy entry stands for: an object type (above 0), a damaging ground tile (its tile type,
+     * negated) or unknown (0: an area effect without source, or ground damage saved before v0.7.17).
+     */
+    public static String hitSource(int enemy) {
+        if (enemy > 0) return assets.IdToAsset.objectName(enemy);
+        if (enemy < 0) {
+            String tile = assets.IdToAsset.tileName(-enemy);
+            return tile == null || tile.isBlank() ? "Damaging ground" : "Ground: " + tile;
+        }
+        return "Ground or area effect";
     }
 
     /** How far back the hits that led to a death go. */

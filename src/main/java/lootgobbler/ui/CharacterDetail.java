@@ -35,15 +35,93 @@ final class CharacterDetail {
 
     // ---- loadout ----------------------------------------------------------------------------------------------
 
-    /** Weapon and armor on top, ability and ring below: each item with its enchantments by name. */
+    /**
+     * Weapon and armor on top, ability and ring below: each item with its enchantments by name. Beside them, past a
+     * gold line, the reusables in the quick slots, one below the other over the full height.
+     */
     static JComponent loadout(Char c) {
-        JPanel grid = new JPanel(new GridLayout(2, 2, 12, 8));
+        JPanel grid = new JPanel(new GridBagLayout());
         grid.setOpaque(false);
-        for (int slot : new int[]{0, 2, 1, 3}) {
+        GridBagConstraints g = new GridBagConstraints();
+        g.anchor = GridBagConstraints.NORTHWEST;
+        int[][] at = {{0, 0}, {0, 1}, {1, 0}, {1, 1}};   // weapon, ability, armor, ring: column, row
+        for (int slot = 0; slot < 4; slot++) {
             int id = c.equipment != null && slot < c.equipment.length ? c.equipment[slot] : -1;
-            grid.add(equipped(id, CharactersView.enchantIds(c, slot), SLOT_NAMES[slot], slot == 3 ? amuletNote(c) : null));
+            g.gridx = at[slot][0];
+            g.gridy = at[slot][1];
+            g.insets = new Insets(g.gridy == 0 ? 0 : 8, g.gridx == 0 ? 0 : 20, 0, 0);
+            grid.add(equipped(id, CharactersView.enchantIds(c, slot), SLOT_NAMES[slot], slot == 3 ? amuletNote(c) : null), g);
         }
+        g.gridx = 2;
+        g.gridy = 0;
+        g.gridheight = 2;
+        g.fill = GridBagConstraints.VERTICAL;
+        g.insets = new Insets(0, 18, 0, 16);
+        grid.add(new SectionLine(), g);
+        g.gridx = 3;
+        g.fill = GridBagConstraints.BOTH;
+        g.insets = new Insets(0, 0, 0, 0);
+        grid.add(reusables(c), g);
+        g.gridx = 4;   // the space left over stays on the right
+        g.weightx = 1;
+        g.fill = GridBagConstraints.NONE;
+        grid.add(Box.createHorizontalStrut(0), g);
         return left(grid);
+    }
+
+    private static final int REUSABLE_ICON = 32;
+
+    /** The quick slots holding reusables (items used from there again and again), spread over the height. */
+    private static JComponent reusables(Char c) {
+        List<Integer> ids = new ArrayList<>();
+        if (c.quickslots != null) {
+            for (int id : c.quickslots) {
+                ItemDb.Item it = id > 0 ? ItemDb.get().item(id) : null;
+                if (it != null && it.quickslotOnly) ids.add(id);
+            }
+        }
+        if (ids.isEmpty()) {
+            JLabel none = muted(c.quickslots == null ? "Quick slots not seen yet" : "No reusables in quick slots");
+            none.putClientProperty("FlatLaf.styleClass", "small");
+            none.setVerticalAlignment(SwingConstants.CENTER);
+            return none;
+        }
+        // always three rows of a third of the height: the first at the top, the others below only if there
+        JPanel p = new JPanel(new GridLayout(lootgobbler.LootEvents.QUICKSLOTS.length, 1, 0, 4));
+        p.setOpaque(false);
+        for (int id : ids) {
+            JLabel l = new JLabel(CharactersView.itemName(id), CharactersView.sprite(id, REUSABLE_ICON), SwingConstants.LEFT);
+            l.setIconTextGap(8);
+            l.setForeground(Section.color("LootGobbler.ink", Color.DARK_GRAY));
+            l.setToolTipText(CharactersView.itemTooltip(id, null, "Quick slot"));
+            ItemLinks.link(l, id);
+            p.add(l);
+        }
+        for (int k = ids.size(); k < lootgobbler.LootEvents.QUICKSLOTS.length; k++) p.add(Box.createGlue());   // empty rows
+        return p;
+    }
+
+    /** A vertical gold line with short caps at both ends, setting off a new part of a box. */
+    private static final class SectionLine extends JComponent {
+        private static final int W = 7, CAP = 2;
+
+        SectionLine() {
+            setPreferredSize(new Dimension(W, 40));
+            setMinimumSize(new Dimension(W, 0));
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            int h = getHeight(), mid = W / 2;
+            g.setColor(Palette.GOLD_DARK);
+            g.fillRect(mid - 1, 0, 3, h);   // the line with a dark edge
+            g.fillRect(0, 0, W, CAP + 1);   // the caps
+            g.fillRect(0, h - CAP - 1, W, CAP + 1);
+            g.setColor(Palette.GOLD);
+            g.fillRect(mid, 0, 1, h);
+            g.fillRect(1, 0, W - 2, CAP);
+            g.fillRect(1, h - CAP, W - 2, CAP);
+        }
     }
 
     /**
