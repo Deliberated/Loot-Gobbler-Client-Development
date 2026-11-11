@@ -21,6 +21,9 @@ public class CrucibleBonusManager {
 
     private static final Map<String, Double> crucibleDamageMultipliers =
         new HashMap<>();
+    // crucible / blood ritual id -> loot multiplier (bonus type 1, e.g. 1.15 = +15% loot)
+    private static final Map<String, Double> lootMultipliers =
+        new java.util.concurrent.ConcurrentHashMap<>();
     private static final Gson gson = new Gson();
     private static String currentPlayerCrucibleId128 = null;
     private static String currentPlayerCrucibleId155 = null;
@@ -100,6 +103,8 @@ public class CrucibleBonusManager {
                     if (crucibleObj.has("id")) {
                         String crucibleId = crucibleObj.get("id").getAsString();
                         findAndStoreType5Bonuses(crucibleObj, crucibleId);
+                        Double loot = findBonus(crucibleObj, LOOT_BONUS);
+                        if (loot != null) lootMultipliers.put(crucibleId, loot);
                     }
                 }
             }
@@ -208,6 +213,47 @@ public class CrucibleBonusManager {
     public static Double getCurrentCombinedMultiplier() {
         double multiplier = getPlayerDamageMultiplier();
         return (multiplier != 1.0) ? multiplier : null;
+    }
+
+    private static final int LOOT_BONUS = 1;
+
+    /** The first bonus of this type below the element (its amount, e.g. 1.15), or null if there is none. */
+    private static Double findBonus(JsonElement element, int type) {
+        if (element == null) return null;
+        if (element.isJsonArray()) {
+            for (JsonElement e : element.getAsJsonArray()) {
+                Double d = findBonus(e, type);
+                if (d != null) return d;
+            }
+        } else if (element.isJsonObject()) {
+            JsonObject obj = element.getAsJsonObject();
+            if (obj.has("bonuses") && obj.get("bonuses").isJsonArray()) {
+                for (JsonElement b : obj.get("bonuses").getAsJsonArray()) {
+                    if (!b.isJsonObject()) continue;
+                    JsonObject bonus = b.getAsJsonObject();
+                    try {
+                        if (bonus.has("type") && bonus.get("type").getAsInt() == type && bonus.has("amount"))
+                            return bonus.get("amount").getAsDouble();
+                    } catch (RuntimeException ignored) {
+                        // not a number: not a bonus we know
+                    }
+                }
+            }
+            for (Map.Entry<String, JsonElement> entry : obj.entrySet()) {
+                if (entry.getKey().equals("bonuses")) continue;
+                Double d = findBonus(entry.getValue(), type);
+                if (d != null) return d;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The loot multiplier of a crucible or blood ritual (the id in stat 128 or 155), e.g. 1.15 for +15% loot;
+     * null if its settings have not come in (or it has no loot bonus).
+     */
+    public static Double lootMultiplier(String id) {
+        return id == null ? null : lootMultipliers.get(id);
     }
 
     public static boolean isApiDataLoaded() {

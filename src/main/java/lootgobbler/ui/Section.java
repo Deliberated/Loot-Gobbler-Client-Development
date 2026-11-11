@@ -15,6 +15,7 @@ public class Section extends JPanel {
     private final JPanel actions;
     private final JLabel title;
     private final JLabel note = new JLabel();
+    private final JPanel titleRow;
     private final JComponent body;
 
     public Section(String name, Color accent, JComponent body) {
@@ -26,7 +27,7 @@ public class Section extends JPanel {
         title.setBorder(BorderFactory.createEmptyBorder(6, 10, 6, 10));
         actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
         actions.setOpaque(false);
-        JPanel titleRow = new JPanel(new BorderLayout());   // the title, and a note after it if there is one
+        titleRow = new JPanel(new BorderLayout());   // the title, and a note after it if there is one
         titleRow.setOpaque(false);
         titleRow.add(title, BorderLayout.WEST);
         titleRow.add(note, BorderLayout.CENTER);
@@ -35,6 +36,16 @@ public class Section extends JPanel {
         add(header, BorderLayout.NORTH);
         add(body, BorderLayout.CENTER);
         applyTheme();
+    }
+
+    /** Something small right after the title (and its note), vertically centered: e.g. a reset button. */
+    public Section afterTitle(JComponent c) {
+        JPanel wrap = new JPanel(new GridBagLayout());
+        wrap.setOpaque(false);
+        wrap.setBorder(BorderFactory.createEmptyBorder(0, 2, 0, 6));
+        wrap.add(c);
+        titleRow.add(wrap, BorderLayout.EAST);
+        return this;
     }
 
     public void setTitle(String name) {

@@ -741,8 +741,13 @@ public final class Holdings {
 
     // ---- what you have ------------------------------------------------------------------------------------------
 
-    /** Every copy of the item you have, characters first, then the vaults. */
+    /** Every copy of the item you have, characters first, then the vaults (collectible items only). */
     public List<Held> copies(int item) {
+        return items.collectible(item) ? everyCopy(item) : List.of();
+    }
+
+    /** Every copy of any item you have (tiered ones too), characters first, then the vaults. */
+    public List<Held> everyCopy(int item) {
         List<Held> out = new ArrayList<>();
         Map<Integer, Boolean> chars = living.get();
         synchronized (this) {
@@ -766,7 +771,25 @@ public final class Holdings {
         }
         out.sort(Comparator.comparing((Held h) -> h.charId() == 0).thenComparingInt(Held::charId)
                 .thenComparing(h -> h.vault() == null ? "" : h.vault()));
-        return items.collectible(item) ? out : List.of();
+        return out;
+    }
+
+    /** Every item you have somewhere (living characters and vaults; seasonal or not: null both). */
+    public Set<Integer> itemsHeld(Boolean seasonal) {
+        Set<Integer> out = new HashSet<>();
+        Map<Integer, Boolean> chars = living.get();
+        synchronized (this) {
+            for (Map.Entry<String, Place> e : state.places.entrySet()) {
+                String key = e.getKey();
+                boolean character = key.startsWith("char:");
+                int charId = character ? Integer.parseInt(key.substring(5)) : 0;
+                if (character && !chars.containsKey(charId)) continue;
+                Boolean side = character ? chars.get(charId) : (Boolean) SEASONAL_VAULT.equals(key);
+                if (seasonal != null && side != null && !side.equals(seasonal)) continue;
+                for (List<Slot> slots : e.getValue().sections.values()) for (Slot slot : slots) if (slot.item > 0) out.add(slot.item);
+            }
+        }
+        return out;
     }
 
     /** How many copies of the item you have (kept until the next change, as the grid asks for every item). */

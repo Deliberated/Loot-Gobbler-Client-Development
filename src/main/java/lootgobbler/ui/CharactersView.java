@@ -387,7 +387,49 @@ public class CharactersView extends JPanel {
         middle.setOpaque(false);
         middle.add(loadout(c), BorderLayout.WEST);
         middle.add(textHolder, BorderLayout.CENTER);
+        middle.add(lootBonus(c), BorderLayout.EAST);
         return selectableCard(c.charId, sprite, middle, right);
+    }
+
+    private static final Color LOOT_ON = new Color(0x8CE07A);
+    private static final java.text.DecimalFormat PERCENT = new java.text.DecimalFormat("0.#");
+
+    /** The loot bonus the character has now (enchantments, crucible, blood ritual, loot drop boost), its sources on hover. */
+    private static JComponent lootBonus(Char c) {
+        List<lootgobbler.LootBonus.Part> parts = lootgobbler.LootBonus.parts(c, System.currentTimeMillis());
+        double total = lootgobbler.LootBonus.total(parts);
+        boolean unknown = parts.stream().anyMatch(p -> !p.known());
+        OutlinedText value = new OutlinedText("+" + PERCENT.format(total) + "%" + (unknown ? "?" : ""),
+                total > 0 ? LOOT_ON : STATS_OPEN, 34f);
+        JLabel caption = muted("LOOT BONUS");
+        caption.setFont(caption.getFont().deriveFont(Font.BOLD, 13f));
+        caption.setHorizontalAlignment(SwingConstants.CENTER);
+        JPanel box = new JPanel(new BorderLayout(0, 0));
+        box.setOpaque(false);
+        JPanel valueRow = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 0));
+        valueRow.setOpaque(false);
+        valueRow.add(value);
+        box.add(valueRow, BorderLayout.CENTER);
+        box.add(caption, BorderLayout.SOUTH);
+
+        StringBuilder tip = new StringBuilder("<html><b>Loot bonus: +" + PERCENT.format(total) + "%</b>");
+        if (parts.isEmpty()) tip.append("<br>No enchantment, crucible, blood ritual or loot drop boost adds to loot.");
+        for (lootgobbler.LootBonus.Part p : parts) {
+            tip.append("<br>").append(p.source()).append(": ")
+                    .append(p.known() ? "+" + PERCENT.format(p.percent()) + "%" : "active, amount not known yet");
+        }
+        if (c.lootTierUntil > System.currentTimeMillis()) tip.append("<br>Loot tier boost running (better drops, not more)");
+        if (unknown) tip.append("<br><i>Log in with this character to read its crucible / ritual settings.</i>");
+        tip.append("</html>");
+        value.setToolTipText(tip.toString());
+        caption.setToolTipText(tip.toString());
+        box.setToolTipText(tip.toString());
+
+        JPanel holder = new JPanel(new GridBagLayout());   // vertically centered
+        holder.setOpaque(false);
+        holder.setBorder(new EmptyBorder(0, 16, 0, 0));
+        holder.add(box);
+        return holder;
     }
 
     private static final Color STATS_MAXED = new Color(0xFFD21F), STATS_OPEN = new Color(0xE6E2D8);
@@ -599,6 +641,7 @@ public class CharactersView extends JPanel {
         JComponent suggested = box("Suggested Loadout", Palette.BLUE, CharacterDetail.ideal(c, () -> renderPanel(c)));
         // until a stat is picked, the header says what to do
         if (!CharacterDetail.anyStatChosen()) ((Section) suggested.getComponent(0)).note("(click the preferred stats)");
+        ((Section) suggested.getComponent(0)).afterTitle(CharacterDetail.resetButton(() -> renderPanel(c)));
         panel.add(suggested);
         panel.add(box("Inventory", Palette.PURPLE, CharacterDetail.inventory(c)));
         JPanel fame = column();
@@ -800,15 +843,15 @@ public class CharactersView extends JPanel {
             for (DungeonVisits.Visit v : visits) {
                 long end = DungeonVisits.end(v);
                 if (end < from || v.start > to) continue;
-                Long a = DungeonVisits.fameAt(points, v.start), b = DungeonVisits.fameAt(points, end);
-                if (a == null || b == null || b <= a) continue;
+                Long gained = DungeonVisits.fameIn(points, v.start, end), b = DungeonVisits.fameAt(points, end);
+                if (gained == null || gained <= 0 || b == null) continue;
                 int x = (int) Math.round(x((v.start + end) / 2));
                 if (x - lastIcon < ICON) continue;
                 Icon icon = icons.computeIfAbsent(v.dungeon, d -> ProfileView.dungeonIcon(d, ICON));
                 if (icon == null) continue;
                 int y = (int) Math.round(bottom - (b - min) / span * (bottom - top)) - ICON - 4;
                 icon.paintIcon(this, g2, x - ICON / 2, Math.max(2, y));
-                dungeons.add(new Object[]{v, b - a, new Rectangle(x - ICON / 2, Math.max(2, y), ICON, ICON)});
+                dungeons.add(new Object[]{v, gained,new Rectangle(x - ICON / 2, Math.max(2, y), ICON, ICON)});
                 lastIcon = x;
             }
             g2.setColor(Palette.MUTED);

@@ -38,7 +38,8 @@ import java.util.List;
 public class CaravanView extends JPanel {
     private static final com.google.gson.Gson GSON = new com.google.gson.Gson();
     private static final NumberFormat NUM = NumberFormat.getIntegerInstance();
-    private static final String[] RANGES = {"week", "month", "all"}, RANGE_LABELS = {"This week", "This month", "All time"};
+    // one view for now: everything found (a season cycle will set the range later)
+    private static final String RANGE = "all", RANGE_LABEL = "All time";
     private static final int WALK_BELOW = 5;   // fewer items than this: on foot
     /** Bag colors, rarest first: the order of the bag counts, and the pile order from the top down. */
     private static final List<String> BAG_ORDER = List.of("White", "Orange", "Red", "Gold", "Teal", "Blue", "Purple",
@@ -54,7 +55,7 @@ public class CaravanView extends JPanel {
     private final Scene scene = new Scene(this::pick);
     private final JPanel detail = new JPanel(new GridLayout(1, 2, 16, 0));
     private final JLabel status = new JLabel();
-    private String range = RANGES[0];
+    private final String range = RANGE;
     private Caravan caravan;
     private long picked = -1;   // user id of the member shown below
     private boolean loading, again, stale;   // again: reload once the current one is done; stale: reload when shown
@@ -88,13 +89,9 @@ public class CaravanView extends JPanel {
         JPanel holder = new JPanel(new BorderLayout());
         holder.setOpaque(false);
         holder.add(body, BorderLayout.NORTH);
-        Segmented ranges = new Segmented(true, 0, i -> {
-            range = RANGES[i];
-            load();
-        }, RANGE_LABELS);
         JButton refresh = new JButton("Refresh");
         refresh.addActionListener(e -> load());
-        section = new Section("Loot Caravan", Palette.GOLD, FitWidthPanel.scroll(holder, 24)).actions(ranges, refresh);
+        section = new Section("Loot Caravan", Palette.GOLD, FitWidthPanel.scroll(holder, 24)).actions(refresh);
         add(section);
         message("Open this tab while logged in to a server to see your guild.");
 
@@ -264,7 +261,7 @@ public class CaravanView extends JPanel {
     private JComponent memberCard(CaravanMember m) {
         JPanel p = column();
         int place = caravan.members.indexOf(m) + 1;
-        String rangeText = RANGE_LABELS[Arrays.asList(RANGES).indexOf(range)].toUpperCase(Locale.ROOT);
+        String rangeText = RANGE_LABEL.toUpperCase(Locale.ROOT);
         JLabel where = new JLabel((m.total >= WALK_BELOW ? "WAGON #" + place : "ON FOOT") + "  ·  " + NUM.format(m.total)
                 + (m.total == 1 ? " ITEM" : " ITEMS") + "  ·  " + rangeText);
         where.putClientProperty("FlatLaf.styleClass", "small");
@@ -276,12 +273,12 @@ public class CaravanView extends JPanel {
         p.add(left(name));
         JLabel points = new JLabel(ItemScore.whole(score(m)) + " points");
         points.setFont(new Font(Themes.HEAD_FONT, Font.PLAIN, 30));
-        points.setToolTipText("The points of all items found in this range");
+        points.setToolTipText("The points of all items found");
         p.add(left(points));
         String played = m.character == null ? "Most played: unknown"
                 : "Most played: " + m.character.className + "  ·  " + NUM.format(m.character.fame) + " fame";
         p.add(left(new JLabel(played)));
-        p.add(left(muted(m.lastDrop == null ? "No drops in this range" : "Last drop " + ago(m.lastDrop))));
+        p.add(left(muted(m.lastDrop == null ? "No drops yet" : "Last drop " + ago(m.lastDrop))));
         p.add(Box.createVerticalStrut(10));
         JPanel counts = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
         counts.setOpaque(false);
@@ -311,7 +308,7 @@ public class CaravanView extends JPanel {
         p.add(Box.createVerticalStrut(4));
         List<CaravanItem> best = new ArrayList<>(m.items);
         best.sort(Comparator.comparingDouble((CaravanItem it) -> -points(it)));   // stable: keeps newest first
-        if (best.isEmpty()) p.add(left(muted("Nothing found in this range.")));
+        if (best.isEmpty()) p.add(left(muted("Nothing found yet.")));
         for (CaravanItem it : best.subList(0, Math.min(4, best.size()))) {
             JLabel name = new JLabel(itemName(it.itemId), CharactersView.sprite(it.itemId, 36), SwingConstants.LEFT);
             name.setIconTextGap(12);

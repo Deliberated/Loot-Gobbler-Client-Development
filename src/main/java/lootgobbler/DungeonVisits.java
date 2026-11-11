@@ -643,6 +643,31 @@ public final class DungeonVisits implements Syncable {
         return at;
     }
 
+    /** How old a sample from before a visit may be to still count as the fame you entered with. */
+    private static final long ENTRY_SAMPLE_MS = 15_000;
+
+    /**
+     * The fame gained between start and end in a series of {time, fame} points, or null if they do not show it. It
+     * starts from the last point before start only if that was taken just before (samples come every few seconds
+     * while fame changes); otherwise from the first point inside. Fame that went up while nothing was sampled (e.g.
+     * a dungeon without samples just before) shows up in the next sample and must not count for this one.
+     */
+    public static Long fameIn(List<long[]> points, long start, long end) {
+        Long a = null, b = null;
+        for (long[] p : points) {   // in time order
+            if (p[0] <= start) {
+                a = start - p[0] <= ENTRY_SAMPLE_MS ? p[1] : null;
+            } else if (p[0] <= end) {
+                if (a == null) a = p[1];
+                b = p[1];
+            } else {
+                break;
+            }
+        }
+        if (a == null) return null;
+        return b == null ? 0L : Math.max(0, b - a);
+    }
+
     /** The end of a visit: when you left it, or now for the one in progress. */
     public static long end(Visit v) {
         return v.start + v.duration();
@@ -650,7 +675,7 @@ public final class DungeonVisits implements Syncable {
 
     /**
      * The fame you gained in a dungeon: the character whose fame went up between entering and leaving it (from
-     * CharacterStore's fame samples), 0 if none did.
+     * CharacterStore's fame samples, see fameIn), 0 if none did.
      */
     public static long fameGained(Visit v) {
         long best = 0, end = end(v);
@@ -660,8 +685,8 @@ public final class DungeonVisits implements Syncable {
             if (last.t < v.start || first.t > end) continue;
             List<long[]> points = new ArrayList<>();
             for (CharacterStore.Sample s : c.samples) points.add(new long[]{s.t, s.fame});
-            Long a = fameAt(points, v.start), b = fameAt(points, end);
-            if (a != null && b != null) best = Math.max(best, b - a);
+            Long gained = fameIn(points, v.start, end);
+            if (gained != null) best = Math.max(best, gained);
         }
         return best;
     }

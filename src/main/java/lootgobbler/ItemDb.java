@@ -29,6 +29,12 @@ public final class ItemDb {
         public boolean quickslotOnly;   // used only from a quick slot, again and again (Coral Juice Refinery...)
         public final List<Stat> onEquip = new ArrayList<>();
         public Set<String> labels = Set.of();
+        /** How it takes enchantments (pool, slot chances, dust), or null if it cannot be enchanted. */
+        public EnchantSlots enchantSlots;
+        /** The game's name for it (the Object id attribute; the shown name can differ). */
+        public String key = "";
+        /** What it shoots (weapons, and the subattack containers awakened enchantments use); null if nothing. */
+        public Weapon weapon;
         public int collectionIcon = Integer.MAX_VALUE;
         boolean named;   // has a display name (unnamed items are unused test or event leftovers)
 
@@ -136,6 +142,7 @@ public final class ItemDb {
     private static volatile ItemDb instance;
 
     private final Map<Integer, Item> items = new HashMap<>();
+    private final Map<String, Item> byKey = new HashMap<>();
     private final List<Item> collectible;
     private final Set<Integer> transformSkins = new HashSet<>();   // skins an ability turns you into for a while
 
@@ -157,6 +164,47 @@ public final class ItemDb {
 
     public Item item(int id) {
         return items.get(id);
+    }
+
+    /** The item with this game name (the Object id attribute, e.g. "Thornswarm Enchantment Proc"), or null. */
+    public Item byKey(String key) {
+        return key == null ? null : byKey.get(key);
+    }
+
+    /** One projectile a weapon can fire: damage range, and whether it ignores defense. */
+    public record Shot(double min, double max, boolean armorPiercing) {
+        public double average() {
+            return (min + max) / 2;
+        }
+    }
+
+    /**
+     * One subattack: which projectile, how many per attack, its own rate of fire (NaN: the weapon's), and bursts
+     * (shots per burst, the delay between bursts at no dexterity and at the most; burst 0 = no bursts).
+     */
+    public record Volley(int projectile, int count, double rateOfFire, int burst, double burstDelay, double burstMinDelay) {
+    }
+
+    /**
+     * What an item shoots: its projectiles by id, and its subattacks (none: one attack of numProjectiles of
+     * projectile 0 at rateOfFire).
+     */
+    public static final class Weapon {
+        public double rateOfFire = 1;
+        public int numProjectiles = 1;
+        public final Map<Integer, Shot> shots = new TreeMap<>();
+        public final List<Volley> volleys = new ArrayList<>();
+
+        /** Its subattacks, or the one plain attack if it has none (rates resolved). */
+        public List<Volley> attacks() {
+            if (volleys.isEmpty()) return List.of(new Volley(0, numProjectiles, rateOfFire, 0, 0, 0));
+            List<Volley> out = new ArrayList<>();
+            for (Volley v : volleys) {
+                out.add(Double.isNaN(v.rateOfFire()) ? new Volley(v.projectile(), v.count(), rateOfFire, v.burst(),
+                        v.burstDelay(), v.burstMinDelay()) : v);
+            }
+            return out;
+        }
     }
 
     /**
@@ -193,6 +241,9 @@ public final class ItemDb {
             Item cur = null;
             String clazz = null;
             boolean inProjectile = false;
+            // being read: a projectile [id, min, max, armor piercing], a subattack [projectile, count, rate, burst,
+            // delay, min delay]
+            double[] shot = null, volley = null;
             while (r.hasNext()) {
                 int ev = r.next();
                 if (ev == XMLStreamConstants.START_ELEMENT) {
@@ -201,6 +252,7 @@ public final class ItemDb {
                         cur = null;
                         clazz = null;
                         inProjectile = false;
+                        shot = volley = null;
                         String type = r.getAttributeValue(null, "type");
                         if (type == null) continue;
                         try {
@@ -210,15 +262,51 @@ public final class ItemDb {
                         }
                         String id = r.getAttributeValue(null, "id");
                         cur.name = id == null ? "" : id;
+                        cur.key = cur.name;
                         cur.collectionIcon = parseInt(r.getAttributeValue(null, "collectionIcon"), Integer.MAX_VALUE);
                         continue;
                     }
                     if (cur == null) continue;
                     switch (n) {
-                        case "Projectile" -> inProjectile = true;
+                        case "Projectile" -> {
+                            inProjectile = true;
+                            shot = new double[]{parseInt(r.getAttributeValue(null, "id"), 0), -1, -1, 0};
+                        }
+                        case "Subattack" -> volley = new double[]{parseInt(r.getAttributeValue(null, "projectileId"), 0),
+                                1, Double.NaN, 0, 0, 0};
+                        case "ArmorPiercing" -> {
+                            if (shot != null) shot[3] = 1;
+                        }
+                        case "Damage" -> {
+                            double v = parseDouble(r.getElementText(), -1);
+                            if (shot != null) shot[1] = shot[2] = v;
+                        }
+                        case "RateOfFire" -> {
+                            double v = parseDouble(r.getElementText(), 1);
+                            if (volley != null) volley[2] = v;
+                            else if (!inProjectile) weapon(cur).rateOfFire = v;
+                        }
+                        case "NumProjectiles" -> {
+                            int v = parseInt(r.getElementText(), 1);
+                            if (volley != null) volley[1] = v;
+                            else if (!inProjectile) weapon(cur).numProjectiles = v;
+                        }
+                        case "BurstCount" -> {
+                            int v = parseInt(r.getElementText(), 0);
+                            if (volley != null) volley[3] = v;
+                        }
+                        case "BurstDelay" -> {
+                            double v = parseDouble(r.getElementText(), 0);
+                            if (volley != null) volley[4] = v;
+                        }
+                        case "BurstMinDelay" -> {
+                            double v = parseDouble(r.getElementText(), 0);
+                            if (volley != null) volley[5] = v;
+                        }
                         case "Soulbound" -> cur.soulbound = true;
                         case "OnlyUsableFromQuickslot" -> cur.quickslotOnly = true;
                         case "Chest" -> cur.chest = true;
+                        case "EnchantmentSlots" -> cur.enchantSlots = EnchantSlots.read(r);
                         case "ActivateOnEquip" -> {
                             String stat = r.getAttributeValue(null, "stat");
                             int amount = parseInt(r.getAttributeValue(null, "amount"), 0);
@@ -241,10 +329,12 @@ public final class ItemDb {
                         case "MinDamage" -> {
                             int v = parseInt(r.getElementText(), -1);
                             if (inProjectile && cur.minDamage < 0) cur.minDamage = v;
+                            if (shot != null) shot[1] = v;
                         }
                         case "MaxDamage" -> {
                             int v = parseInt(r.getElementText(), -1);
                             if (inProjectile && cur.maxDamage < 0) cur.maxDamage = v;
+                            if (shot != null) shot[2] = v;
                         }
                         default -> {
                             // <OnSwitchAbilityActivate ... skin="0x7b11">SelfTransform</...> and the like
@@ -260,10 +350,23 @@ public final class ItemDb {
                 } else if (ev == XMLStreamConstants.END_ELEMENT) {
                     String n = r.getLocalName();
                     if (n.equals("Object")) {
-                        if (cur != null && "Equipment".equals(clazz)) items.put(cur.id, cur);
+                        if (cur != null && "Equipment".equals(clazz)) {
+                            items.put(cur.id, cur);
+                            byKey.putIfAbsent(cur.key, cur);
+                        }
                         cur = null;
                     } else if (n.equals("Projectile")) {
                         inProjectile = false;
+                        if (cur != null && shot != null && shot[1] >= 0 && shot[2] >= 0) {
+                            weapon(cur).shots.putIfAbsent((int) shot[0], new Shot(shot[1], shot[2], shot[3] > 0));
+                        }
+                        shot = null;
+                    } else if (n.equals("Subattack")) {
+                        if (cur != null && volley != null) {
+                            weapon(cur).volleys.add(new Volley((int) volley[0], (int) volley[1], volley[2], (int) volley[3],
+                                    volley[4], volley[5]));
+                        }
+                        volley = null;
                     }
                 }
             }
@@ -272,6 +375,50 @@ public final class ItemDb {
             // a few files in assets/xml are not game data (e.g. test-run settings); ignore those quietly
             if (!String.valueOf(e.getMessage()).contains("prolog")) {
                 System.err.println("ItemDb: skipped " + file.getFileName() + ": " + e.getMessage());
+            }
+        }
+    }
+
+    private static Weapon weapon(Item it) {
+        if (it.weapon == null) it.weapon = new Weapon();
+        return it.weapon;
+    }
+
+    private static double parseDouble(String s, double fallback) {
+        try {
+            return Double.parseDouble(s.trim());
+        } catch (Exception e) {
+            return fallback;
+        }
+    }
+
+    /**
+     * An item's &lt;EnchantmentSlots&gt;: the enchantment pool it rolls from (enchantmentLists.xml), the chance of
+     * each further slot (uncommon, rare, legendary, divine; each roll after the one before succeeded), how those
+     * chances change for seasonal characters and forging, and the dust a reroll costs.
+     */
+    public record EnchantSlots(String pool, double[] slotChance, double seasonalMod, double forgeMod, String dust,
+                               int[] dustAmounts) {
+        static EnchantSlots read(javax.xml.stream.XMLStreamReader r) {
+            String pool = r.getAttributeValue(null, "enchantmentList");
+            return new EnchantSlots(pool == null ? "Default Enchantment Pool" : pool.trim(),
+                    doubles(r.getAttributeValue(null, "slotChance")),
+                    parseDouble(r.getAttributeValue(null, "seasonalSlotMod"), 1),
+                    parseDouble(r.getAttributeValue(null, "forgeSlotMod"), 1),
+                    r.getAttributeValue(null, "dustType"),
+                    Arrays.stream(doubles(r.getAttributeValue(null, "dustAmounts"))).mapToInt(d -> (int) d).toArray());
+        }
+
+        private static double[] doubles(String s) {
+            if (s == null || s.isBlank()) return new double[0];
+            return Arrays.stream(s.split(",")).mapToDouble(x -> parseDouble(x, 0)).toArray();
+        }
+
+        private static double parseDouble(String s, double fallback) {
+            try {
+                return s == null ? fallback : Double.parseDouble(s.trim());
+            } catch (NumberFormatException e) {
+                return fallback;
             }
         }
     }

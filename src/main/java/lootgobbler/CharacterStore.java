@@ -5,6 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.reflect.TypeToken;
 import packets.data.StatData;
 import packets.data.enums.StatType;
+import tomato.backend.data.CrucibleBonusManager;
 import tomato.backend.data.Entity;
 import tomato.backend.data.TomatoData;
 import tomato.realmshark.RealmCharacter;
@@ -46,6 +47,10 @@ public final class CharacterStore implements Syncable {
         public long fame;
         public int statsMaxed;
         public boolean seasonal, crucible, ritual, favorite;
+        public Double crucibleLoot;    // loot multiplier of its crucible / blood ritual (1.15 = +15%); null = unknown
+        public Double ritualLoot;
+        public long lootDropUntil;     // until when a loot drop boost (potion, clover) runs, epoch ms; 0 = none
+        public long lootTierUntil;     // the same for a loot tier boost (clovers)
         public long favoriteAt;        // when favorite last changed (epoch ms), so syncing keeps the latest choice
         public boolean backpack, extender;
         public boolean alive = true;
@@ -292,6 +297,15 @@ public final class CharacterStore implements Syncable {
                 StatData ritual = p.stat.get(StatType.BloodRitualStat);
                 c.ritual = ritual != null && ritual.stringStatValue != null && !ritual.stringStatValue.isBlank()
                         && !ritual.stringStatValue.equals("0");
+                // the settings come in once per login: keep what was known until then
+                Double crucibleLoot = CrucibleBonusManager.lootMultiplier(stringStat(p, StatType.CRUCIBLE_STAT));
+                if (!c.crucible) c.crucibleLoot = null;
+                else if (crucibleLoot != null) c.crucibleLoot = crucibleLoot;
+                Double ritualLoot = c.ritual ? CrucibleBonusManager.lootMultiplier(ritual.stringStatValue) : null;
+                if (!c.ritual) c.ritualLoot = null;
+                else if (ritualLoot != null) c.ritualLoot = ritualLoot;
+                c.lootDropUntil = until(p, StatType.LD_TIMER_STAT, now, c.lootDropUntil);
+                c.lootTierUntil = until(p, StatType.LT_TIMER_STAT, now, c.lootTierUntil);
                 if (p.baseStats != null) c.statsMaxed = maxed(p.objectType, p.baseStats);
                 StatData pack = p.stat.get(StatType.BACKPACK_SLOTS_STAT);
                 if (pack != null) {   // 8 slots = backpack, more = backpack extender
@@ -362,10 +376,23 @@ public final class CharacterStore implements Syncable {
         return changed;
     }
 
+    private static String stringStat(Entity p, StatType type) {
+        StatData sd = p.stat.get(type);
+        return sd == null ? null : sd.stringStatValue;
+    }
+
+    /** When a boost timer stat (seconds left) runs out; as before if the game has not sent it. */
+    private static long until(Entity p, StatType type, long now, long before) {
+        StatData sd = p.stat.get(type);
+        if (sd == null) return before;
+        return sd.statValue > 0 ? now + sd.statValue * 1000L : 0;
+    }
+
     /** What the pages show of a character, to tell whether a live update changed anything. */
     private static String shown(Char c) {
         return c.classType + "|" + c.level + "|" + c.fame + "|" + c.skin + "|" + c.tex1 + "|" + c.tex2 + "|" + c.seasonal
-                + "|" + c.crucible + "|" + c.ritual + "|" + c.statsMaxed + "|" + c.backpack + "|" + c.extender + "|" + c.alive
+                + "|" + c.crucible + "|" + c.ritual + "|" + c.crucibleLoot + "|" + c.ritualLoot
+                + "|" + (c.lootDropUntil > 0) + "|" + (c.lootTierUntil > 0) + "|" + c.statsMaxed + "|" + c.backpack + "|" + c.extender + "|" + c.alive
                 + "|" + Arrays.toString(c.equipment) + "|" + Arrays.deepToString(c.enchantIds) + "|" + Arrays.toString(c.slots)
                 + "|" + Arrays.toString(c.quickslots)
                 + "|" + Arrays.deepToString(c.slotEnchantIds);

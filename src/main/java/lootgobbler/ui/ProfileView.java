@@ -117,7 +117,7 @@ public class ProfileView extends SubTabs {
     }
 
     /**
-     * Your wagon of this week's caravan and the guild's current quest map.
+     * Your wagon of the caravan (all time) and the guild's current quest map.
      */
     private void loadGuild() {
         if (guildLoading) {
@@ -133,9 +133,9 @@ public class ProfileView extends SubTabs {
         guildLoading = true;
         // facts about the guildmates: optional (older servers do not know them)
         java.util.concurrent.CompletableFuture<GobblerServer.Facts> facts = server.guildFacts(FACT_DAYS).exceptionally(x -> null);
-        server.caravan("week").thenCombine(server.questMaps(1), (c, q) -> {
+        server.caravan("all").thenCombine(server.questMaps(1), (c, q) -> {
             CaravanMember mine = c.members.stream().filter(m -> m.id == me.id).findFirst().orElseGet(() -> {
-                CaravanMember m = new CaravanMember();   // nothing found this week yet
+                CaravanMember m = new CaravanMember();   // nothing found yet
                 m.id = me.id;
                 m.ign = me.ign;
                 return m;
@@ -465,7 +465,7 @@ public class ProfileView extends SubTabs {
             "LAST 3 DAYS IN THE GUILD");
 
     /**
-     * Your wagon of this week's caravan (cut down to the caravan, without the empty sky above it) and the quest map's
+     * Your wagon of the caravan, all time (cut down to the caravan, without the empty sky above it) and the quest map's
      * next dungeon, side by side: their titles on one line, their links ("To the ...") on another. Each opens its page
      * in the Guild tab.
      */
@@ -611,7 +611,7 @@ public class ProfileView extends SubTabs {
     }
 
     /**
-     * Your guild at a glance: your wagon of this week's loot caravan, and the next dungeon of the quest map with how
+     * Your guild at a glance: your wagon of the loot caravan (all time), and the next dungeon of the quest map with how
      * far the guild got. Each opens its page in the Guild tab.
      */
     private JComponent guildCard() {
@@ -1817,8 +1817,8 @@ public class ProfileView extends SubTabs {
                 long end = Math.min(DungeonVisits.end(lastVisit), timeline.to);
                 long gained = 0;
                 for (DungeonVisits.Visit v : group) {
-                    Long a = DungeonVisits.fameAt(main, v.start), b = DungeonVisits.fameAt(main, DungeonVisits.end(v));
-                    if (a != null && b != null) gained += Math.max(0, b - a);
+                    Long inVisit = DungeonVisits.fameIn(main, v.start, DungeonVisits.end(v));
+                    if (inVisit != null) gained += inVisit;
                 }
                 Long at = DungeonVisits.fameAt(main, end);
                 String count = group.size() > 1 ? group.size() + "x" : "";
