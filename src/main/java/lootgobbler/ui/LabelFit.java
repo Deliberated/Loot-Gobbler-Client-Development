@@ -17,12 +17,27 @@ import java.awt.*;
  */
 final class LabelFit {
     private static final String PLAIN = "LabelFit.plain", HTML = "LabelFit.html";
+    /** Client property: a wrapped label's one-line width, as measured when it was wrapped. */
+    private static final String NATURAL = "LabelFit.natural";
+    /**
+     * Client property: {body width, times widened at it}. Labels side by side depend on each other (one's room is
+     * what the other leaves), which need not settle: at one body width a label may widen (unwrap, or wrap wider) only
+     * WIDEN_MAX times, after that only narrow, so the fitting always comes to an end. A new body width starts over.
+     */
+    private static final String WIDENED = "LabelFit.widened";
+    private static final int WIDEN_MAX = 2;
     private static final int GAP = 6, MIN_ROOM = 40;
 
     private LabelFit() {
     }
 
     private static final String PENDING = "LabelFit.pending";
+    /**
+     * Client property: a body that fits its own labels (a Section's, inside a scrolled FitWidthPanel). An outer body
+     * leaves it alone: the two measure to different right edges (the inner one less its padding), so fitting its
+     * labels from both would wrap them to one width, then the other, back and forth without end.
+     */
+    private static final String BODY = "LabelFit.body";
     /** Client property: a label sized by its own view (e.g. a title that shrinks to fit), left alone here. */
     static final String SKIP = "LabelFit.skip";
 
@@ -31,6 +46,7 @@ final class LabelFit {
      * valid with it and never laid out again). Several layouts in a row ask once.
      */
     static void fitLater(JComponent body) {
+        body.putClientProperty(BODY, Boolean.TRUE);
         if (body.getClientProperty(PENDING) != null) return;
         body.putClientProperty(PENDING, Boolean.TRUE);
         SwingUtilities.invokeLater(() -> {
@@ -50,6 +66,7 @@ final class LabelFit {
             if (child instanceof JLabel l) fitLabel(l, body);
             else if (child instanceof Container k && !(child instanceof JScrollBar)) {
                 if (child instanceof JComponent j && j.isPreferredSizeSet() && j.getClientProperty(HTML) == null) continue;
+                if (child != body && child instanceof JComponent j && j.getClientProperty(BODY) != null) continue;   // fits its own
                 visit(k, body);
             }
         }
@@ -62,6 +79,7 @@ final class LabelFit {
         if (ours != null && !ours.equals(text)) {   // the view set a new text since: start over with it
             l.putClientProperty(HTML, null);
             l.putClientProperty(PLAIN, null);
+            l.putClientProperty(NATURAL, null);
             l.setPreferredSize(null);
             return;   // its own revalidation brings it back here
         }
@@ -85,11 +103,16 @@ final class LabelFit {
         if (room < MIN_ROOM) return;
         View view = BasicHTML.createHTMLView(l, html);
         if (isHtml && ours != null) natural = (int) Math.ceil(view.getPreferredSpan(View.X_AXIS)) + iconW + in.left + in.right;
+        // once wrapped, compare with the width it was wrapped at: measured again another way it can come out a few
+        // pixels less, and with room just between the two it would unwrap and wrap again on every layout
+        if (ours != null && l.getClientProperty(NATURAL) instanceof Integer n) natural = n;
 
         if (natural <= room) {   // fits on one line
             if (ours != null) {
+                if (!widen(l, body)) return;
                 l.putClientProperty(HTML, null);
                 l.putClientProperty(PLAIN, null);
+                l.putClientProperty(NATURAL, null);
                 l.setPreferredSize(null);
                 l.setText(plain);
             }
@@ -101,11 +124,23 @@ final class LabelFit {
         if (icon != null) h = Math.max(h, icon.getIconHeight());
         Dimension want = new Dimension(room, h + in.top + in.bottom);
         if (html.equals(ours) && want.equals(l.getPreferredSize())) return;   // already so
+        if (ours != null && want.width > l.getPreferredSize().width && !widen(l, body)) return;
         l.putClientProperty(PLAIN, plain);
         l.putClientProperty(HTML, html);
+        if (ours == null) l.putClientProperty(NATURAL, natural);
         if (!html.equals(text)) l.setText(html);
         l.setPreferredSize(want);
         l.revalidate();
+    }
+
+    /** Whether the label may widen once more at the body's current width (and counts it if so). */
+    private static boolean widen(JLabel l, JComponent body) {
+        int w = body.getWidth();
+        int[] seen = l.getClientProperty(WIDENED) instanceof int[] a && a[0] == w ? a : new int[]{w, 0};
+        if (seen[1] >= WIDEN_MAX) return false;
+        seen[1]++;
+        l.putClientProperty(WIDENED, seen);
+        return true;
     }
 
     /**

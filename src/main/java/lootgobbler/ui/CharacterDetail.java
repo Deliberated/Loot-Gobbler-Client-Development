@@ -837,7 +837,7 @@ final class CharacterDetail {
             SwingUtilities.invokeLater(rerender);
         });
         String tip = "<html>In scope current: also list the enchantments the suggestion would replace (struck through),"
-                + "<br>so you can lock them to keep them</html>";
+                + "<br>so you can lock them to keep them. Off: they show while you hover the item</html>";
         label.setToolTipText(tip);
         toggle.setToolTipText(tip);
         label.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
@@ -1215,7 +1215,64 @@ final class CharacterDetail {
         c.weightx = 1;
         middle.add(text, c);
         p.add(middle, BorderLayout.CENTER);
+        revealOnHover(p);
         return p;
+    }
+
+    private static final String ON_HOVER = "lootgobbler.onHover";   // a replaced enchantment shown only on hover
+    private static final int HOVER_LINGER_MS = 1000;
+
+    /**
+     * Shows the item's hidden replaced enchantments (ON_HOVER) while the pointer is over it, and for a second after
+     * it leaves, so they can still be reached and clicked to lock them.
+     */
+    private static void revealOnHover(JComponent item) {
+        List<Component> hidden = new ArrayList<>();
+        collect(item, hidden);
+        if (hidden.isEmpty()) return;
+        javax.swing.Timer hide = new javax.swing.Timer(HOVER_LINGER_MS, null);
+        hide.setRepeats(false);
+        Runnable show = () -> {
+            hide.stop();
+            if (hidden.get(0).isVisible()) return;
+            hidden.forEach(k -> k.setVisible(true));
+            item.revalidate();
+            item.repaint();
+        };
+        hide.addActionListener(e -> {
+            Point at = item.isShowing() ? MouseInfo.getPointerInfo().getLocation() : null;
+            if (at != null) {
+                SwingUtilities.convertPointFromScreen(at, item);
+                if (item.contains(at)) return;   // back over it (or still): it stays
+            }
+            hidden.forEach(k -> k.setVisible(false));
+            item.revalidate();
+            item.repaint();
+        });
+        java.awt.event.MouseAdapter hover = new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseEntered(java.awt.event.MouseEvent e) {
+                show.run();
+            }
+
+            @Override
+            public void mouseExited(java.awt.event.MouseEvent e) {
+                hide.restart();
+            }
+        };
+        listen(item, hover);   // children with their own listeners (tooltips, clicks) take the events from the panel
+    }
+
+    private static void collect(Container c, List<Component> out) {
+        for (Component k : c.getComponents()) {
+            if (k instanceof JComponent j && j.getClientProperty(ON_HOVER) != null) out.add(k);
+            if (k instanceof Container sub) collect(sub, out);
+        }
+    }
+
+    private static void listen(Component c, java.awt.event.MouseListener l) {
+        c.addMouseListener(l);
+        if (c instanceof Container k) for (Component sub : k.getComponents()) listen(sub, l);
     }
 
     /** The item's icon with its rarity marker in the bottom-right corner (none for common). */
@@ -1287,12 +1344,18 @@ final class CharacterDetail {
                 row.add(chip(e, Palette.MUTED, enchantTip(e, it, null).replace("</html>",
                         "<br><i>Already on this copy: it stays in a slot the suggestion leaves free</i></html>"), false, locks, lockedNow));
             }
-            if (locks != null && showReplaced()) {   // what the copy has and the suggestion replaces: struck through, can be locked
+            if (locks != null) {   // what the copy has and the suggestion replaces: struck through, can be locked
+                // with "show deleted enchants" off they are hidden, and shown while the item is hovered (see idealItem)
                 List<Enchantment> ends = finalEnchants(pick);
                 for (Enchantment e : EnchantPlanner.of(pick.enchants())) {
                     if (ends.contains(e)) continue;
-                    row.add(chip(e, Palette.MUTED, enchantTip(e, it, null).replace("</html>",
-                            "<br><i>On this copy now: the suggestion replaces it</i></html>"), true, locks, lockedNow));
+                    JLabel replaced = chip(e, Palette.MUTED, enchantTip(e, it, null).replace("</html>",
+                            "<br><i>On this copy now: the suggestion replaces it</i></html>"), true, locks, lockedNow);
+                    if (!showReplaced()) {
+                        replaced.putClientProperty(ON_HOVER, Boolean.TRUE);
+                        replaced.setVisible(false);
+                    }
+                    row.add(replaced);
                 }
             }
         }
@@ -1317,7 +1380,7 @@ final class CharacterDetail {
      */
     private static JLabel chip(Enchantment e, Color color, String tip, boolean struck, Locks locks, Set<Integer> lockedNow) {
         boolean locked = locks != null && lockedNow.contains(e.type());
-        String text = esc(effectText(e));
+        String text = esc(e.name());
         JLabel chip = new JLabel(struck ? "<html><s>" + text + "</s></html>" : text);
         Image img = EnchantIcons.icon(e.type(), CHIP_ICON);
         Icon icon = img == null ? null : new ImageIcon(img);
@@ -1403,25 +1466,6 @@ final class CharacterDetail {
     private static <T extends JComponent> T small(T c) {
         c.putClientProperty("FlatLaf.styleClass", "small");
         return c;
-    }
-
-    /** What an enchantment does to stats, short ("+5 ATT -3.8 DEF", "+7% of bonus ATT"); its name if nothing. */
-    private static String effectText(Enchantment e) {
-        StringBuilder sb = new StringBuilder();
-        for (Effect f : e.effects()) {
-            if (f instanceof Effect.StatBonus b && Arrays.asList(STATS).contains(b.stat())) {
-                sb.append(sb.isEmpty() ? "" : " ").append(b.amount() > 0 ? "+" : "").append(number(b.amount()))
-                        .append(' ').append(shortName(b.stat()));
-            } else if (f instanceof Effect.RelativeStat r && Arrays.asList(STATS).contains(r.stat())) {
-                sb.append(sb.isEmpty() ? "" : " ").append('+').append(number(r.percent())).append("% of bonus ")
-                        .append(shortName(r.of())).append(" as ").append(shortName(r.stat()));
-            }
-        }
-        return sb.isEmpty() ? e.name() : sb.toString();
-    }
-
-    private static String number(double d) {
-        return d == Math.rint(d) ? String.valueOf((long) d) : String.format(Locale.ROOT, "%.2f", d).replaceAll("0+$", "");
     }
 
     /** Name, kind, the game's description, and whether the copy has it or how rarely a reroll gives it. */
