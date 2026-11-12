@@ -13,6 +13,7 @@ public class SubTabs extends JPanel {
     private final CardLayout cards = new CardLayout();
     private final JPanel pages = new JPanel(cards);
     private final List<String> names = new ArrayList<>();
+    private final List<Component> components = new ArrayList<>();
     private Segmented buttons;
 
     public SubTabs() {
@@ -24,6 +25,7 @@ public class SubTabs extends JPanel {
 
     public SubTabs page(String name, Component page) {
         names.add(name);
+        components.add(page);
         pages.add(page, name);
         return this;
     }
@@ -35,6 +37,7 @@ public class SubTabs extends JPanel {
         buttons = new Segmented(false, 0, i -> {
             lootgobbler.AppLog.log("ui", "Page " + names.get(i));
             cards.show(pages, names.get(i));
+            visited(names.get(i));
         }, names.toArray(new String[0]));
         add(buttons, BorderLayout.NORTH);
         return this;
@@ -53,5 +56,25 @@ public class SubTabs extends JPanel {
         if (i < 0) return;
         cards.show(pages, name);
         if (buttons != null) buttons.select(i);
+        visited(name);
+    }
+
+    private void visited(String name) {
+        Navigation.visit("page:" + System.identityHashCode(this) + ":" + name, () -> {
+            Navigation.reveal(this);
+            show(name);
+        });
+    }
+
+    /** Shows the page that holds c (for going back to a view inside it). */
+    void reveal(Component c) {
+        for (int i = 0; i < components.size(); i++) {
+            Component page = components.get(i);
+            if (page == c || SwingUtilities.isDescendingFrom(c, page)) {
+                cards.show(pages, names.get(i));
+                if (buttons != null) buttons.select(i);
+                return;
+            }
+        }
     }
 }

@@ -38,13 +38,17 @@ public class Section extends JPanel {
         applyTheme();
     }
 
-    /** Something small right after the title (and its note), vertically centered: e.g. a reset button. */
+    /** Something small right after the title, before its note, vertically centered: e.g. a reset button. */
     public Section afterTitle(JComponent c) {
         JPanel wrap = new JPanel(new GridBagLayout());
         wrap.setOpaque(false);
-        wrap.setBorder(BorderFactory.createEmptyBorder(0, 2, 0, 6));
         wrap.add(c);
-        titleRow.add(wrap, BorderLayout.EAST);
+        JPanel rest = new JPanel(new BorderLayout(8, 0));   // the button, then the note
+        rest.setOpaque(false);
+        titleRow.remove(note);
+        rest.add(wrap, BorderLayout.WEST);
+        rest.add(note, BorderLayout.CENTER);
+        titleRow.add(rest, BorderLayout.CENTER);
         return this;
     }
 

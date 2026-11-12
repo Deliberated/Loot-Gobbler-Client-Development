@@ -166,6 +166,7 @@ public class TomatoGUI {
             util.PropertiesManager.setProperties("tabOrder", savedOrder.replace("DPS Logger", "Battles"));
         }
         tabbedPane.restoreOrder("Profile", "Inventory", "Characters", "Battles", "Social", "Guild", "Server", "Settings");
+        lootgobbler.ui.NavigationButtons.install();   // the mouse's back and forward buttons go through the views
         makeFrame();
 
         frame.setVisible(true);

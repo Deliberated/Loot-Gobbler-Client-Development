@@ -54,7 +54,10 @@ public class CharactersView extends JPanel {
         pages = new CardLayout();
         views = new JPanel(pages);
         views.setOpaque(false);
-        viewPicker = new Segmented(false, 0, i -> pages.show(views, PAGES[i]), "Characters", "Classes", "Pets");
+        viewPicker = new Segmented(false, 0, i -> {
+            pages.show(views, PAGES[i]);
+            visitedPage(i);
+        }, "Characters", "Classes", "Pets");
 
         JLabel status = new JLabel(" ");
         status.putClientProperty("FlatLaf.styleClass", "small");
@@ -104,11 +107,36 @@ public class CharactersView extends JPanel {
         refresh();
     }
 
+    /** Records the page opened, for the mouse's back and forward buttons. */
+    private void visitedPage(int i) {
+        Navigation.visit("characters-page:" + i, () -> {
+            Navigation.reveal(this);
+            pages.show(views, PAGES[i]);
+            viewPicker.select(i);
+        });
+    }
+
+    /** Records the character selected (TOTAL: all of them), for the mouse's back and forward buttons. */
+    private void visitedCharacter(int id) {
+        Navigation.visit("character:" + id, () -> {
+            Navigation.reveal(this);
+            if (id == TOTAL) {
+                pages.show(views, PAGES[0]);
+                viewPicker.select(0);
+                selected = TOTAL;
+                refresh();
+            } else {
+                showCharacter(id);
+            }
+        });
+    }
+
     /** Opens the Classes page, with this class shown on the right (-1: just the page). */
     public void showClass(int classId) {
         pages.show(views, PAGES[1]);
         viewPicker.select(1);
         if (classId >= 0) classes.open(classId);
+        visitedPage(1);
     }
 
     /**
@@ -123,6 +151,7 @@ public class CharactersView extends JPanel {
         alivePicker.select(graveyard ? 1 : 0);
         selected = charId;
         refresh();
+        visitedCharacter(charId);
     }
 
     private void refresh() {
@@ -293,6 +322,7 @@ public class CharactersView extends JPanel {
         Clicks.onClick(row, () -> {
             selected = c.charId;
             refresh();
+            visitedCharacter(c.charId);
         });
         return row;
     }
@@ -615,6 +645,7 @@ public class CharactersView extends JPanel {
         Clicks.onClick(card, () -> {
             selected = id;
             refresh();
+            visitedCharacter(id);
         });
         return card;
     }

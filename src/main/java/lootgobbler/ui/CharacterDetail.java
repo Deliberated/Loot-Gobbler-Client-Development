@@ -38,7 +38,10 @@ final class CharacterDetail {
     private static final String DEF_KEY = "idealEnemyDef";
     private static final String SCOPE_KEY = "idealScope";
     private static final String REPLACED_KEY = "idealShowReplaced";   // show the enchantments a suggestion replaces
-    private static final String LOCK_KEY = "idealLocks";   // "charId:slot:enchantment;..." kept when planning
+    private static final String LOCK_KEY = "idealLocks";
+    private static final String ITEM_LOCK_KEY = "idealItemLocks";   // "charId:slot:item;...": items kept in a slot
+    private static final String SECOND_KEY = "idealSecondChance";   // 0 nothing, 1 an Amulet of Restoration, 2 also a proc armor
+    private static final String[] SECOND_CHANCE = {"off", "ami", "ami + armor"};   // "charId:slot:enchantment;..." kept when planning
     /**
      * Where the suggestion takes its items from: what the character wears (only its enchantments are planned), also
      * its inventory and backpack, or everything you have on its side (vaults, gift chest, other characters).
@@ -271,7 +274,8 @@ final class CharacterDetail {
         Pick[] picks = new Pick[4];
         for (int slot : new int[]{0, 1, 2, 3}) {
             EnchantPlanner.Aim aim = aim(max, wornItems, wornEnch, wornLists, slot, worn[0], wornWeaponEnch, def);
-            picks[slot] = bestPick(c, slot, types[slot], pool, chosen, toDouble(now), aim, scope);
+            picks[slot] = bestPick(c, slot, types[slot], pool, chosen, toDouble(now), aim, scope,
+                    lockedItem(c.charId, slot), preferred(slot, secondChance()));
             addBonuses(suggested, picks[slot].item());
         }
         // the aims again from the suggestion: its items, and the enchantments planned for them so far
@@ -306,7 +310,8 @@ final class CharacterDetail {
             }
             if (grid.getComponentCount() > 0) grid.add(Box.createVerticalStrut(6));
             Locks locks = scope == 0 && pk.equipped() ? new Locks(c.charId, slot, rerender) : null;
-            JComponent item = idealItem(pk, chosen, SLOT_NAMES[slot], locks);
+            JComponent item = idealItem(pk, chosen, SLOT_NAMES[slot], locks,
+                    new ItemLock(c.charId, slot, lockedItem(c.charId, slot) == pk.id() && pk.id() > 0, rerender));
             item.setAlignmentX(Component.LEFT_ALIGNMENT);
             grid.add(item);
         }
@@ -337,6 +342,8 @@ final class CharacterDetail {
         stats.add(scopeToggle(scope, rerender));
         stats.add(Box.createVerticalStrut(4));
         stats.add(showReplacedToggle(rerender));
+        stats.add(Box.createVerticalStrut(4));
+        stats.add(secondChanceToggle(rerender));
         if (hasWeapon) {
             stats.add(Box.createVerticalStrut(4));
             stats.add(enemyDefSlider((int) def, rerender));
@@ -464,12 +471,28 @@ final class CharacterDetail {
      * then what it wears. Nothing chosen (or nothing helping): what it wears.
      */
     private static Pick bestPick(Char c, int slot, int slotType, List<Integer> pool, Set<String> chosen, double[] gear,
-                                 EnchantPlanner.Aim aim, int scope) {
+                                 EnchantPlanner.Aim aim, int scope, int lockedItem,
+                                 java.util.function.Predicate<ItemDb.Item> prefer) {
         int current = c.equipment != null && slot < c.equipment.length ? c.equipment[slot] : -1;
         List<Integer> worn = wornEnchants(c, slot);
         boolean dps = chosen.contains(EnchantPlanner.DPS), weaponSlot = slot == 0;
         Pick keep = new Pick(current, current > 0 ? ItemDb.get().item(current) : null, worn, "equipped", EnchantPlanner.Plan.NONE);
-        if (chosen.isEmpty() || scope == 0) return keep;   // current: only its enchantments are planned (later)
+        // a locked item, else (second chance) the items preferred, if there are any: only those are looked at
+        if (lockedItem > 0 && scope != 0) {
+            if (lockedItem == current) return keep;
+            pool = List.of(lockedItem);
+        } else if (prefer != null && scope != 0) {
+            List<Integer> preferred = new ArrayList<>();
+            for (int id : pool) {
+                ItemDb.Item it = ItemDb.get().item(id);
+                if (it != null && it.slotType == slotType && prefer.test(it)) preferred.add(id);
+            }
+            if (!preferred.isEmpty()) pool = preferred;
+            else prefer = null;   // none on its side: as without
+        }
+        boolean restricted = (lockedItem > 0 || prefer != null) && scope != 0;
+        if (!restricted && (chosen.isEmpty() || scope == 0)) return keep;   // current: only its enchantments are planned (later)
+        if (restricted && prefer != null && keep.item() != null && prefer.test(keep.item()) && chosen.isEmpty()) return keep;
         Pick best = null;
         double bestScore = 0, bestAll = 0;
         Map<String, EnchantPlanner.Plan> planned = new HashMap<>();   // item/slots -> its best enchantments
@@ -532,6 +555,7 @@ final class CharacterDetail {
                 }
             }
         }
+        if (restricted) return best != null ? best : keep;   // the locked / preferred one, however it scores
         return best == null || bestScore <= 0 ? keep : best;
     }
 
@@ -649,9 +673,12 @@ final class CharacterDetail {
             PropertiesManager.setProperties(IDEAL_KEY, "");
             PropertiesManager.setProperties(SCOPE_KEY, SCOPES[0]);
             PropertiesManager.setProperties(DEF_KEY, "0");
+            PropertiesManager.setProperties(SECOND_KEY, "0");
+            PropertiesManager.setProperties(REPLACED_KEY, "false");
             rerender.run();
         });
-        reset.setToolTipText("Reset: turn off every stat and aim, set the scope to current and the enemy DEF to 0");
+        reset.setToolTipText("<html>Reset: turn off every stat and aim, set the scope to current, second chance and"
+                + " deleted enchants off, and the enemy DEF to 0<br>(locked items and enchantments stay locked)</html>");
         return reset;
     }
 
@@ -716,6 +743,88 @@ final class CharacterDetail {
 
     private static boolean showReplaced() {
         return "true".equals(PropertiesManager.getProperty(REPLACED_KEY));
+    }
+
+    private static int secondChance() {
+        String v = PropertiesManager.getProperty(SECOND_KEY);
+        try {
+            return v == null ? 0 : Math.max(0, Math.min(2, Integer.parseInt(v.trim())));
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    /**
+     * What second chance prefers in a slot: at 1 and 2 an Amulet of Restoration as the ring, at 2 also an armor that
+     * saves you when your life runs low (the Protective Matrix armors...); null for nothing.
+     */
+    private static java.util.function.Predicate<ItemDb.Item> preferred(int slot, int level) {
+        if (level >= 1 && slot == 3) return it -> it.key.startsWith("Amulet of Restoration");
+        if (level >= 2 && slot == 2) return it -> it.secondChance;
+        return null;
+    }
+
+    /** "Second chance" with a three-stop switch at the right end. */
+    private static JComponent secondChanceToggle(Runnable rerender) {
+        JPanel row = new JPanel(new BorderLayout(8, 0));
+        row.setOpaque(false);
+        int level = secondChance();
+        JLabel label = new JLabel("Second chance: " + SECOND_CHANCE[level]);
+        ThreeWaySwitch toggle = new ThreeWaySwitch(level, to -> {
+            label.setText("Second chance: " + SECOND_CHANCE[to]);
+            PropertiesManager.setProperties(SECOND_KEY, String.valueOf(to));
+            SwingUtilities.invokeLater(rerender);
+        }, SECOND_CHANCE);
+        String tip = "<html>Items that save you when your life runs low (local and global scope)<br>"
+                + "Off: nothing preferred<br>"
+                + "Ami: an Amulet of Restoration as the ring<br>"
+                + "Ami + armor: also an armor with a low-life proc, like the Protective Matrix<br>"
+                + "<i>Only if you have one on the character's side</i></html>";
+        label.setToolTipText(tip);
+        toggle.setToolTipText(tip);
+        label.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Clicks.onClick(label, toggle::advance);
+        row.add(label, BorderLayout.CENTER);
+        JPanel right = new JPanel(new GridBagLayout());
+        right.setOpaque(false);
+        right.add(toggle);
+        row.add(right, BorderLayout.EAST);
+        return row;
+    }
+
+    /** The item locked in a character's slot (it stays whatever is aimed for), or -1. */
+    private static int lockedItem(int charId, int slot) {
+        String v = PropertiesManager.getProperty(ITEM_LOCK_KEY);
+        if (v == null) return -1;
+        for (String part : v.split(";")) {
+            String[] f = part.split(":");
+            if (f.length != 3) continue;
+            try {
+                if (Integer.parseInt(f[0]) == charId && Integer.parseInt(f[1]) == slot) return Integer.parseInt(f[2]);
+            } catch (NumberFormatException ignored) {
+                // a broken entry: skip it
+            }
+        }
+        return -1;
+    }
+
+    /** Locks this item in the character's slot, or unlocks it if it is the one locked there. */
+    private static void toggleItemLock(int charId, int slot, int item) {
+        String v = PropertiesManager.getProperty(ITEM_LOCK_KEY);
+        List<String> parts = new ArrayList<>();
+        boolean was = false;
+        if (v != null) {
+            for (String part : v.split(";")) {
+                if (part.isBlank()) continue;
+                if (part.startsWith(charId + ":" + slot + ":")) {
+                    was |= part.equals(charId + ":" + slot + ":" + item);
+                    continue;   // one item per slot
+                }
+                parts.add(part);
+            }
+        }
+        if (!was) parts.add(charId + ":" + slot + ":" + item);
+        PropertiesManager.setProperties(ITEM_LOCK_KEY, String.join(";", parts));
     }
 
     /** "Show deleted enchants" with an on / off switch at the right end. */
@@ -1038,7 +1147,11 @@ final class CharacterDetail {
         return String.format("#%06x", c.getRGB() & 0xFFFFFF);
     }
 
-    private static JComponent idealItem(Pick pick, Set<String> chosen, String slotName, Locks locks) {
+    /** Locking an item in a slot: whose slot, whether this item is the one locked, what redraws after a click. */
+    record ItemLock(int charId, int slot, boolean locked, Runnable rerender) {
+    }
+
+    private static JComponent idealItem(Pick pick, Set<String> chosen, String slotName, Locks locks, ItemLock itemLock) {
         int id = pick.id();
         ItemDb.Item it = pick.item();
         JPanel p = new JPanel(new BorderLayout(10, 0));
@@ -1055,8 +1168,23 @@ final class CharacterDetail {
         JPanel text = column();
         String name = id > 0 ? esc(CharactersView.itemName(id)) : "No " + slotName.toLowerCase(Locale.ROOT);
         // where the copy is (equipped, Vault chest, on Priest...), after the name
-        text.add(new JLabel(!pick.where().isEmpty() && id > 0 ? "<html>" + name + " <span style='color:" + hex(Palette.MUTED)
-                + "'>(" + esc(pick.where()).replace(" ", "&nbsp;") + ")</span></html>" : "<html>" + name + "</html>"));
+        JLabel nameLabel = new JLabel(!pick.where().isEmpty() && id > 0 ? "<html>" + name + " <span style='color:" + hex(Palette.MUTED)
+                + "'>(" + esc(pick.where()).replace(" ", "&nbsp;") + ")</span></html>" : "<html>" + name + "</html>");
+        if (id > 0 && itemLock != null) {   // click the name: this item stays in the slot (local and global scope)
+            if (itemLock.locked()) {
+                nameLabel.setIcon(withLock(null));
+                nameLabel.setIconTextGap(4);
+            }
+            nameLabel.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            nameLabel.setToolTipText(itemLock.locked()
+                    ? "<html><b>Locked:</b> this item stays in the slot whatever you aim for. <i>Click to unlock</i></html>"
+                    : "<html><i>Click to lock this item in the slot</i> (local and global scope)</html>");
+            Clicks.onClick(nameLabel, () -> {
+                toggleItemLock(itemLock.charId(), itemLock.slot(), id);
+                itemLock.rerender().run();
+            });
+        }
+        text.add(nameLabel);
         // every stat the item gives: the chosen ones first in green, the others after them in blue
         StringBuilder picked = new StringBuilder(), other = new StringBuilder();
         if (it != null) {

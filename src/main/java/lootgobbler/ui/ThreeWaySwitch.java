@@ -91,8 +91,9 @@ final class ThreeWaySwitch extends JComponent {
         RoundRectangle2D track = new RoundRectangle2D.Double(0.5, 0.5, w, h, h, h);
         g2.setPaint(new GradientPaint(0, 0, new Color(0x2A2620), 0, h, new Color(0x5A544A)));
         g2.fill(track);
-        if (stops == 2 && knob > 0) {   // on: the track glows gold as the knob gets there
-            g2.setColor(new Color(gold.getRed(), gold.getGreen(), gold.getBlue(), (int) (150 * Math.min(1, knob))));
+        if (knob > 0) {   // the track turns gold step by step: full gold at the last stop (as an on / off switch at on)
+            double level = Math.min(1, knob / (stops - 1));
+            g2.setColor(new Color(gold.getRed(), gold.getGreen(), gold.getBlue(), (int) (150 * level)));
             g2.fill(track);
         }
         g2.setPaint(new GradientPaint(0, 0, new Color(0, 0, 0, 120), 0, h / 2f, new Color(0, 0, 0, 0)));

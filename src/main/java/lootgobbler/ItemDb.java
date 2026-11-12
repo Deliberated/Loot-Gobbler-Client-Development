@@ -35,6 +35,11 @@ public final class ItemDb {
         public String key = "";
         /** What it shoots (weapons, and the subattack containers awakened enchantments use); null if nothing. */
         public Weapon weapon;
+        /**
+         * Saves you when your life runs low: hit below some share of your life, it heals you or makes you invulnerable
+         * (Amulet of Restoration, the Protective Matrix armors...).
+         */
+        public boolean secondChance;
         public int collectionIcon = Integer.MAX_VALUE;
         boolean named;   // has a display name (unnamed items are unused test or event leftovers)
 
@@ -307,6 +312,15 @@ public final class ItemDb {
                         case "OnlyUsableFromQuickslot" -> cur.quickslotOnly = true;
                         case "Chest" -> cur.chest = true;
                         case "EnchantmentSlots" -> cur.enchantSlots = EnchantSlots.read(r);
+                        case "OnPlayerHitActivate" -> {
+                            boolean lowLife = r.getAttributeValue(null, "hpMinThresholdRelative") != null;
+                            String effect = r.getAttributeValue(null, "effect");
+                            String what = r.getElementText().trim();
+                            if (lowLife && (what.equals("Heal") || (what.equals("ConditionEffectSelf")
+                                    && ("Invulnerable".equals(effect) || "Healing".equals(effect))))) {
+                                cur.secondChance = true;
+                            }
+                        }
                         case "ActivateOnEquip" -> {
                             String stat = r.getAttributeValue(null, "stat");
                             int amount = parseInt(r.getAttributeValue(null, "amount"), 0);

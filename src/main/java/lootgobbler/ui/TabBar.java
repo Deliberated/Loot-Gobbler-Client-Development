@@ -37,6 +37,7 @@ public class TabBar extends JPanel {
     private final CardLayout cards = new CardLayout();
     private final JPanel content = new JPanel(cards);
     private final List<Tab> order = new ArrayList<>();   // visual order
+    private final java.util.Map<String, Component> tabContent = new java.util.HashMap<>();
     private final Timer animation = new Timer(15, e -> step());
     private Tab selected;
     private Tab dragged;
@@ -84,6 +85,7 @@ public class TabBar extends JPanel {
         order.add(tab);
         strip.add(tab);
         content.add(component, title);
+        tabContent.put(title, component);
         if (selected == null) select(tab);
         snapAll();
     }
@@ -147,8 +149,20 @@ public class TabBar extends JPanel {
         PropertiesManager.setProperties(KEY_ORDER, String.join("|", titles));
     }
 
+    /** Shows the tab that holds c (for going back to a view inside it). */
+    void reveal(Component c) {
+        for (Tab t : order) {
+            Component page = tabContent.get(t.title);
+            if (page != null && (page == c || SwingUtilities.isDescendingFrom(c, page))) {
+                if (t != selected) select(t);
+                return;
+            }
+        }
+    }
+
     private void select(Tab tab) {
         if (tab != selected) lootgobbler.AppLog.log("ui", "Tab " + tab.title);
+        Navigation.visit("tab:" + tab.title, () -> select(tab));
         selected = tab;
         cards.show(content, tab.title);
         strip.repaint();
