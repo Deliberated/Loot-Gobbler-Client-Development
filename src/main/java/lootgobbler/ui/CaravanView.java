@@ -69,12 +69,20 @@ public class CaravanView extends JPanel {
         body.setBorder(new EmptyBorder(12, 12, 12, 12));
 
         JScrollPane road = new JScrollPane(scene, ScrollPaneConstants.VERTICAL_SCROLLBAR_NEVER,
-                ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED);
+                ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED) {
+            /** As tall as the scene: zoomed in, the caravan gets more room upwards. */
+            @Override
+            public Dimension getPreferredSize() {
+                return new Dimension(400, scene.getPreferredSize().height + getHorizontalScrollBar().getPreferredSize().height + 4);
+            }
+
+            @Override
+            public Dimension getMaximumSize() {
+                return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+            }
+        };
         road.setBorder(BorderFactory.createLineBorder(Section.color("LootGobbler.line", Color.GRAY), 2));
         road.getHorizontalScrollBar().setUnitIncrement(24);
-        int h = Scene.HEIGHT + road.getHorizontalScrollBar().getPreferredSize().height + 4;
-        road.setPreferredSize(new Dimension(400, h));
-        road.setMaximumSize(new Dimension(Integer.MAX_VALUE, h));
         road.setAlignmentX(LEFT_ALIGNMENT);
         body.add(road);
         body.add(Box.createVerticalStrut(8));
@@ -91,7 +99,8 @@ public class CaravanView extends JPanel {
         holder.add(body, BorderLayout.NORTH);
         JButton refresh = new JButton("Refresh");
         refresh.addActionListener(e -> load());
-        section = new Section("Loot Caravan", Palette.GOLD, FitWidthPanel.scroll(holder, 24)).actions(refresh);
+        section = new Section("Loot Caravan", Palette.GOLD, FitWidthPanel.scroll(holder, 24)).actions(refresh)
+                .note("Ctrl + mouse wheel zooms");
         add(section);
         message("Open this tab while logged in to a server to see your guild.");
 
@@ -434,6 +443,9 @@ public class CaravanView extends JPanel {
         private final java.util.function.Consumer<CaravanMember> onPick;   // null for a click beside the members
         long picked = -1;   // the member drawn highlighted
         private double zoom = 1;
+        /** Ctrl + mouse wheel: the caravan larger or smaller than it fits (kept); not for the Profile's wagon. */
+        private double userZoom = savedZoom();
+        private static final double MIN_ZOOM = 0.4, MAX_ZOOM = 3, ZOOM_STEP = 1.1;
         private static final double MAX_FIT = 1.7;   // the caravan's size while only a few wagons drive
         private static final int FIT_MARGIN = 120;    // free space left and right of an enlarged caravan
         private AffineTransform view = new AffineTransform();   // caravan coordinates -> screen, as last drawn
@@ -466,6 +478,14 @@ public class CaravanView extends JPanel {
                 CaravanMember m = at(e.getPoint());
                 if (m != null || anyClick) onPick.accept(m);
             });
+            addMouseWheelListener(e -> {
+                if (anyClick || !e.isControlDown()) {   // scrolling as before: to the scroll pane around
+                    Container sp = SwingUtilities.getAncestorOfClass(JScrollPane.class, this);
+                    if (sp != null) sp.dispatchEvent(SwingUtilities.convertMouseEvent(this, e, sp));
+                    return;
+                }
+                zoomAt(e.getPoint(), Math.pow(ZOOM_STEP, -e.getPreciseWheelRotation()));
+            });
             addMouseMotionListener(new MouseAdapter() {
                 @Override
                 public void mouseMoved(MouseEvent e) {
@@ -474,6 +494,52 @@ public class CaravanView extends JPanel {
                     setCursor(Cursor.getPredefinedCursor(hand ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
                 }
             });
+        }
+
+        private static double savedZoom() {
+            try {
+                String v = util.PropertiesManager.getProperty("caravanZoom");
+                return v == null ? 1 : Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Double.parseDouble(v.trim())));
+            } catch (NumberFormatException e) {
+                return 1;
+            }
+        }
+
+        /** Zooms by factor, keeping the spot under the mouse (p, on screen) where it is. */
+        private void zoomAt(Point p, double factor) {
+            double next = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, userZoom * factor));
+            if (Math.abs(next - userZoom) < 1e-6) return;
+            Point at = toScene(p);   // the caravan point under the mouse
+            JViewport vp = getParent() instanceof JViewport v ? v : null;
+            int offset = vp == null ? 0 : p.x - vp.getViewPosition().x;
+            userZoom = next;
+            util.PropertiesManager.setProperties("caravanZoom", String.format(Locale.ROOT, "%.3f", next));
+            revalidate();
+            JScrollPane sp = (JScrollPane) SwingUtilities.getAncestorOfClass(JScrollPane.class, this);
+            if (sp != null && sp.getParent() instanceof JComponent outer) outer.revalidate();   // the road's height
+            SwingUtilities.invokeLater(() -> {
+                JRootPane root = getRootPane();
+                if (root != null) root.validate();
+                if (vp != null) {
+                    double[] place = placement();
+                    int x = (int) Math.round(zoom * (place[0] + (at.x - PAD) * place[1])) - offset;
+                    int max = Math.max(0, getWidth() - vp.getWidth());
+                    vp.setViewPosition(new Point(Math.max(0, Math.min(max, x)), 0));
+                }
+                repaint();
+            });
+        }
+
+        /** The caravan's scale: as it fits (fit), times the zoom chosen with the mouse wheel. */
+        private double scale() {
+            return anyClick ? 1 : fit() * userZoom;
+        }
+
+        /** Where the caravan starts (unzoomed x) and its scale: centered while it fits the width. */
+        private double[] placement() {
+            double w = Math.ceil(getWidth() / zoom), f = scale();
+            double drawn = contentWidth() * f;
+            return new double[]{anyClick || drawn + 2 * PAD > w ? PAD : (w - drawn) / 2, f};
         }
 
         /** Where the caravan's tallest part begins, from the top of the component (on screen pixels): the sky above is empty. */
@@ -579,9 +645,9 @@ public class CaravanView extends JPanel {
         @Override
         public Dimension getPreferredSize() {
             // each wagon on a bar behind the one before (or the ox), with its step at the back
-            int w = PAD + contentWidth() + PAD;
+            int w = PAD + (int) Math.ceil(contentWidth() * scale()) + PAD;
             if (zoom != 1) return new Dimension((int) Math.ceil(w * zoom), (int) Math.ceil(sceneHeight() * zoom));
-            return new Dimension(Math.max(400, w), HEIGHT);
+            return new Dimension(Math.max(400, w), sceneHeight());
         }
 
         private static String walkerTag(CaravanMember m) {
@@ -600,7 +666,8 @@ public class CaravanView extends JPanel {
          * that (it is never shrunk to fit, so the extra sky goes on top).
          */
         private int sceneHeight() {
-            return anyClick ? Math.max(HEIGHT, contentHeight() + 34 + 20) : HEIGHT;
+            if (anyClick) return Math.max(HEIGHT, contentHeight() + 34 + 20);
+            return Math.max(HEIGHT, (int) Math.ceil(contentHeight() * scale()) + 34 + 20);   // zoomed in: more sky
         }
 
         @Override
@@ -623,8 +690,8 @@ public class CaravanView extends JPanel {
                 return;
             }
             // the caravan (not the sky and road) enlarged around the road line, centered while it fits
-            double f = fit();
-            double drawn = contentWidth() * f, start = anyClick || drawn + 2 * PAD > w ? PAD : (w - drawn) / 2;
+            double[] place = placement();
+            double start = place[0], f = place[1];
             view = AffineTransform.getScaleInstance(zoom, zoom);
             view.translate(start, ground + Math.max(0, extra));
             view.scale(f, f);
@@ -930,7 +997,7 @@ public class CaravanView extends JPanel {
         /**
          * The enchanted items' stones on the step, standing on (cx, y): up to 12 as a loose pile; 13 to 50 in a chest
          * with a smaller pile looking out, one stone for every full 4 of a rarity (4 purple: 1 purple, 7: still 1);
-         * more in an open golden chest, one for every full 10.
+         * more in an open golden chest, one for every full 10. A rarity you have at all shows at least one stone.
          */
         private void paintHoard(Graphics2D g2, List<Integer> stones, long seed, int cx, int y) {
             if (stones.isEmpty()) return;
@@ -938,7 +1005,11 @@ public class CaravanView extends JPanel {
             List<Integer> shown = new ArrayList<>();
             int[] count = new int[5];
             for (int s : stones) count[s]++;
-            for (int r = 1; r <= 4; r++) for (int i = 0; i < count[r] / per; i++) shown.add(r);
+            // every rarity you have shows at least one stone (a few divines would otherwise round away to none)
+            for (int r = 1; r <= 4; r++) {
+                int n = count[r] == 0 ? 0 : Math.max(1, count[r] / per);
+                for (int i = 0; i < n; i++) shown.add(r);
+            }
             if (per == 1) {
                 paintPile(g2, shown, seed, cx, y, 40);
                 return;

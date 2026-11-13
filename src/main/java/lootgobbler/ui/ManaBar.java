@@ -6,12 +6,12 @@ import javax.swing.*;
 import java.awt.*;
 
 /**
- * The mana overlay: a blue bar filled as far as your mana goes, with "MP points / maximum" on it, in a dark rounded
- * box. Always the same size. Hidden while the game reports no character.
+ * The mana overlay: a blue bar filled as far as your mana goes, with "MP points / maximum" on it, without a box
+ * around it. Always the same size. Hidden while the game reports no character.
  */
 final class ManaBar extends JComponent {
-    private static final int W = 170, H = 30, PAD = 5;
-    private static final Color BOX = new Color(0x2A2620), EDGE = new Color(0x5A544A), TRACK = new Color(0x161B30),
+    private static final int W = 170, H = 22, PAD = 0;   // the bar alone, no box around it
+    private static final Color TRACK = new Color(0x161B30),
             FILL_TOP = new Color(0x4C86F0), FILL_BOTTOM = new Color(0x1E4CB8), TEXT = new Color(0xF2ECDC);
     private int mp = -1, max = -1;
 
@@ -52,10 +52,6 @@ final class ManaBar extends JComponent {
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
         int w = getWidth() - 1, h = getHeight() - 1;
-        g2.setColor(BOX);
-        g2.fillRoundRect(0, 0, w, h, 10, 10);
-        g2.setColor(EDGE);
-        g2.drawRoundRect(0, 0, w, h, 10, 10);
         int bw = w - 2 * PAD, bh = h - 2 * PAD;
         g2.setColor(TRACK);
         g2.fillRoundRect(PAD, PAD, bw, bh, 6, 6);
