@@ -4,7 +4,7 @@ plugins {
     id 'com.gradleup.shadow' version '8.3.5'
 }
 
-version = '0.7.22'
+version = '0.7.23'
 
 repositories {
     mavenCentral()
