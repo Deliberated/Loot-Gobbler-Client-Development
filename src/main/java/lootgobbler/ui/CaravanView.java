@@ -423,7 +423,7 @@ public class CaravanView extends JPanel {
     static class Scene extends JComponent implements Scrollable {
         static final int HEIGHT = 440;
         private static final int PAD = 28, OX_W = 120, BAR = 28, STEP_W = 46, WAGON_W = 186, BED_H = 34, WALKER_W = 80, DRIVER = 64;
-        private static final int ITEM = 24, ITEM_GAP = 2, PILE_COLS = 5, MAX_PILE = 40;
+        private static final int ITEM = 24, ITEM_GAP = 2, PILE_COLS = 5;
         private static final Color SKY = new Color(0x141B2B), STAR = new Color(0xF4E6C6), HILL_FAR = new Color(0x1E2A2A),
                 HILL_NEAR = new Color(0x24301F), ROAD = new Color(0x4A3522), ROAD_EDGE = new Color(0x6B4E2E),
                 RUT = new Color(0x3A2818), WOOD = new Color(0x8C6C47), WOOD_DARK = new Color(0x6B4E2E),
@@ -607,13 +607,12 @@ public class CaravanView extends JPanel {
 
         /** How high the caravan reaches above the road: the tallest pile, or the drivers and the ox. */
         /**
-         * What a wagon carries, rarest first: every copy while they fit (MAX_PILE), else every item once with its
-         * copies as a number (filled into copies). Nothing that was looted is ever left out: the pile grows taller.
+         * What a wagon carries, rarest first: every item once, its copies stacked as a number (filled into copies).
+         * Nothing that was looted is ever left out: the pile grows taller.
          */
         private static List<CaravanItem> pile(CaravanMember m, Map<Integer, Integer> copies) {
             List<CaravanItem> loot = new ArrayList<>(m.items);
             loot.sort(Comparator.comparingInt(CaravanView::rarity));
-            if (loot.size() <= MAX_PILE) return loot;
             Map<Integer, CaravanItem> once = new LinkedHashMap<>();
             for (CaravanItem it : loot) {
                 once.putIfAbsent(it.itemId, it);

@@ -467,8 +467,11 @@ final class DamageGraph extends JComponent {
         g2.setColor(new Color(0xC9C2B4));
         g2.draw(drop);
         g2.setStroke(new BasicStroke(1f));
-        Icon icon = enemy <= 0 ? smallIcons.computeIfAbsent(GROUND, t -> groundIcon(BUBBLE_ICON))
-                : smallIcons.computeIfAbsent(enemy, t -> bigIcon(t, BUBBLE_ICON));
+        Icon icon = enemy < 0 ? smallIcons.computeIfAbsent(enemy, t -> tileIcon(-t, BUBBLE_ICON)) : null;
+        if (icon == null) {
+            icon = enemy <= 0 ? smallIcons.computeIfAbsent(GROUND, t -> groundIcon(BUBBLE_ICON))
+                    : smallIcons.computeIfAbsent(enemy, t -> bigIcon(t, BUBBLE_ICON));
+        }
         if (icon == null) icon = smallIcons.computeIfAbsent(0, t -> warning(BUBBLE_ICON));
         if (icon != null) {
             Shape clip = g2.getClip();
@@ -572,6 +575,10 @@ final class DamageGraph extends JComponent {
      */
     private Icon enemyIcon(int type, Fight during) {
         // ground damage, and hits without a source (area effects; ground damage saved before its tile was kept)
+        if (type < 0) {   // the tile that hurt you, as the game draws it (e.g. the Void's dark floor)
+            Icon tile = icons.computeIfAbsent(type, t -> tileIcon(-t, ICON));
+            if (tile != null) return tile;
+        }
         if (type <= 0) return icons.computeIfAbsent(GROUND, t -> groundIcon(ICON));
         Icon icon = icons.computeIfAbsent(type, DamageGraph::bigIcon);
         if (icon == null && type > 0 && during != null) icon = icons.computeIfAbsent(during.type(), DamageGraph::bigIcon);
@@ -589,6 +596,42 @@ final class DamageGraph extends JComponent {
     /** Enemies (2) before damaging ground (1) before an unknown source (0). */
     private static int sourceRank(int type) {
         return type > 0 ? 2 : type < 0 ? 1 : 0;
+    }
+
+    /**
+     * A damaging ground tile as the game draws it, blown up pixel-sharp in an orange frame (the danger color), on the
+     * bottom of the square; null if the tile or its sprite is not known (yet: the game's images may still load).
+     */
+    static Icon tileIcon(int tile, int size) {
+        try {
+            String sheet = assets.IdToAsset.getTileTextureName(tile, 0);
+            if (sheet == null) return null;
+            java.awt.image.BufferedImage sprite = assets.ImageBuffer.getSpriteImage(sheet, assets.IdToAsset.getTileTextureIndex(tile, 0));
+            if (sprite == null || sprite.getWidth() <= 1) return null;
+            boolean any = false;
+            for (int y = 0; y < sprite.getHeight() && !any; y++) {
+                for (int x = 0; x < sprite.getWidth(); x++) {
+                    if ((sprite.getRGB(x, y) >>> 24) > 40) {
+                        any = true;
+                        break;
+                    }
+                }
+            }
+            if (!any) return null;
+            int pad = Math.max(2, size / 10), side = size - 2 * pad;
+            java.awt.image.BufferedImage img = new java.awt.image.BufferedImage(size, size, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+            Graphics2D g = img.createGraphics();
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+            g.drawImage(sprite, pad, size - pad - side, side, side, null);
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g.setColor(BIG);
+            g.setStroke(new BasicStroke(Math.max(1.5f, size / 14f)));
+            g.drawRoundRect(pad, size - pad - side, side - 1, side - 1, 4, 4);
+            g.dispose();
+            return new ImageIcon(img);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**

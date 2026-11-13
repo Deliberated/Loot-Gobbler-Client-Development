@@ -701,7 +701,24 @@ public class CharactersView extends JPanel {
         for (int i = 0; i < sessions.size(); i++) fame.add(sessionRow(sessions.get(i), i));
         panel.add(box("Fame Gain", Palette.GREEN, fame));
         panel.revalidate();
+        // built anew on every click (a stat, a toggle): laid out and its labels wrapped before it is drawn, so it
+        // does not jump a moment later
+        Point at = scrollAt();
+        LabelFit.settle(panel);
+        scrollTo(at);
         panel.repaint();
+    }
+
+    private Point scrollAt() {
+        JViewport v = (JViewport) SwingUtilities.getAncestorOfClass(JViewport.class, panel);
+        return v == null ? null : v.getViewPosition();
+    }
+
+    private void scrollTo(Point at) {
+        JViewport v = (JViewport) SwingUtilities.getAncestorOfClass(JViewport.class, panel);
+        if (v == null || at == null) return;
+        int maxY = Math.max(0, v.getView().getHeight() - v.getHeight());
+        v.setViewPosition(new Point(0, Math.min(at.y, maxY)));
     }
 
     /** One part of the right column in its own titled box; boxes are stacked with a gap. */

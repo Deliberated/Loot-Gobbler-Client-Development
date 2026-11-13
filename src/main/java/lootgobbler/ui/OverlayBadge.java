@@ -7,6 +7,7 @@ import lootgobbler.DpsHistory.Boss;
 import lootgobbler.DpsHistory.PlayerRow;
 import lootgobbler.DpsHistory.Run;
 import lootgobbler.DungeonVisits;
+import lootgobbler.ItemCooldowns;
 import lootgobbler.MoonlightLog;
 
 import javax.swing.*;
@@ -18,7 +19,8 @@ import java.util.Map;
 
 /**
  * The overlay's dungeon box, a short version of the title bar's: the portal | your rank "#x/y" (once you hit the
- * main boss) | the amulet (while it charges from a save in this dungeon), and in Moonlight Village | the flames of
+ * main boss) | the amulet (while it charges from a save in this dungeon) | the Protective Matrix armor that fired in
+ * this dungeon (Heavy, Magic or Fitted, as worn; while its 180 s charge up), and in Moonlight Village | the flames of
  * the fight you are in (the three dancers together, or Umi) with the loot tier they reach (a chest in the
  * enchant rarity color of the tier)
  * and the flames the next tier needs | the latest phase's flames as under DPS ("..." while it runs, kept with "FINAL" when
@@ -36,12 +38,14 @@ final class OverlayBadge extends JPanel {
     private final JLabel portal = new JLabel();
     private final JLabel rank = bold();
     private final JLabel amulet = new JLabel();
+    private final JLabel matrix = new JLabel();   // the matrix armor that fired, while it charges
+    private int matrixShown = -1;
     private final JLabel total = new JLabel();
     private final JLabel phase = bold();
     private final JLabel tier = new JLabel();   // the loot tier the total reaches, as a chest in its color
     private final JLabel next = new JLabel();   // the flames the next tier still needs ("+4 / to T3"), or MAX
     private final JLabel fin = new JLabel("FINAL");
-    private final Sep rankSep = new Sep(), amuletSep = new Sep(), totalSep = new Sep(), phaseSep = new Sep();
+    private final Sep rankSep = new Sep(), amuletSep = new Sep(), matrixSep = new Sep(), totalSep = new Sep(), phaseSep = new Sep();
     private final Timer poll = new Timer(300, e -> refresh());   // the lantern count changes without an event
     private Color tint = new Color(0x3A2C08);
     private boolean mv;
@@ -74,6 +78,8 @@ final class OverlayBadge extends JPanel {
         add(rank);
         add(amuletSep);
         add(amulet);
+        add(matrixSep);
+        add(matrix);
         add(totalSep);
         add(total);
         add(tier);
@@ -89,6 +95,7 @@ final class OverlayBadge extends JPanel {
         DpsHistory.get().onChange(() -> SwingUtilities.invokeLater(this::refresh));
         DungeonVisits.get().onChange(() -> SwingUtilities.invokeLater(this::refresh));
         AmuletSaves.get().onChange(() -> SwingUtilities.invokeLater(this::refresh));
+        ItemCooldowns.onMatrixFired(() -> SwingUtilities.invokeLater(this::refresh));
         refresh();
     }
 
@@ -102,6 +109,8 @@ final class OverlayBadge extends JPanel {
         int id = Amulets.restorationId();
         if (id >= 0) amulet.setIcon(ActiveDungeonBadge.fit(CharactersView.sprite(id, 40), AMULET));
         show(amuletSep, amulet, true);
+        showMatrix(0x0485);
+        show(matrixSep, matrix, true);
         if (mv) {
             phase.setIcon(ActiveDungeonBadge.fit(CharactersView.sprite(FLAME, 40), phase.getFontMetrics(phase.getFont()).getAscent()));
             total.setText(totalText(54));
@@ -115,6 +124,14 @@ final class OverlayBadge extends JPanel {
         next.setVisible(mv);
         fin.setVisible(mv);
         setVisible(true);
+    }
+
+    /** The icon of the matrix armor that fired (the heavy armor, robe or light armor version). */
+    private void showMatrix(int type) {
+        if (type < 0 || type == matrixShown) return;
+        matrixShown = type;
+        matrix.setIcon(ActiveDungeonBadge.fit(CharactersView.sprite(type, 40), AMULET));
+        matrix.setToolTipText(ItemCooldowns.MATRICES.get(type));
     }
 
     private static JLabel bold() {
@@ -131,7 +148,7 @@ final class OverlayBadge extends JPanel {
         Insets in = getInsets();
         FontMetrics b = getFontMetrics(rank.getFont()), f = getFontMetrics(fin.getFont());
         int sep = 2 * GAP + Sep.W;
-        int w = in.left + in.right + GAP + ICON + sep + b.stringWidth("#50/50") + sep + AMULET;
+        int w = in.left + in.right + GAP + ICON + sep + b.stringWidth("#50/50") + sep + AMULET + sep + AMULET;
         if (mv) {
             JLabel t = new JLabel(totalText(888));
             t.setFont(total.getFont());
@@ -244,6 +261,11 @@ final class OverlayBadge extends JPanel {
         }
         show(amuletSep, amulet, ami);
 
+        // the matrix: fired in this dungeon and still charging (180 s), shown as the armor that fired
+        boolean shield = ItemCooldowns.matrixFired() >= visit.start && ItemCooldowns.matrixCharging();
+        if (shield) showMatrix(ItemCooldowns.matrixType());
+        show(matrixSep, matrix, shield);
+
         show(totalSep, total, mv);
         show(phaseSep, phase, mv);
         tier.setVisible(mv);
@@ -257,23 +279,24 @@ final class OverlayBadge extends JPanel {
             for (int i = phases.size() - 1; i >= 0 && dancers == null; i--) {
                 if (phases.get(i).boss != 0) dancers = MoonlightLog.DANCERS.contains(phases.get(i).boss);
             }
+            DungeonVisits.MvPhase now = phases.isEmpty() ? null : phases.get(phases.size() - 1);
+            // a lantern phase in progress counts up live (0 to 8, from the beats you sit at the lantern); when it
+            // ends the game's own flames take over, as under DPS, and stay until the next phase starts
+            held = now != null && now.durationMs > 0;
+            boolean live = now != null && !held && now.lantern && now.beatsMax > 0;
             int flames = 0;
             for (DungeonVisits.MvPhase ph : phases) {
                 boolean ofDancers = ph.boss == 0 ? dancers == null || dancers : MoonlightLog.DANCERS.contains(ph.boss);
-                if (dancers == null || ofDancers == dancers) flames += ph.flames;
+                if (dancers == null || ofDancers == dancers) flames += ph == now && live ? ph.flamesSoFar() : ph.flames;
             }
             total.setText(totalText(flames));
             showTier(flames, dancers == null || dancers);
-            DungeonVisits.MvPhase now = phases.isEmpty() ? null : phases.get(phases.size() - 1);
-            // as under DPS: a phase's flames are the game's, given when it ends ("..." until then); they stay
-            // until the next phase starts
-            held = now != null && now.durationMs > 0;
-            phase.setText(now == null ? "0" : held ? String.valueOf(now.flames) : "...");
-            phase.setForeground(held ? HELD : ZERO);
+            phase.setText(now == null ? "0" : held ? String.valueOf(now.flames) : live ? String.valueOf(now.flamesSoFar()) : "...");
+            phase.setForeground(held ? HELD : live ? TEXT : ZERO);
         }
         fin.setVisible(held);
 
-        String state = visit.dungeon + '|' + r + '|' + ami + '|' + total.getText() + '|' + next.getText() + '|' + phase.getText() + '|' + held;
+        String state = visit.dungeon + '|' + r + '|' + ami + '|' + shield + '|' + total.getText() + '|' + next.getText() + '|' + phase.getText() + '|' + held;
         if (!poll.isRunning()) poll.start();
         if (!isVisible()) {
             setVisible(true);

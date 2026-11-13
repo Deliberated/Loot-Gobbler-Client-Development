@@ -55,6 +55,27 @@ final class LabelFit {
         });
     }
 
+    /**
+     * Lays out the scroll pane's content and fits its labels now, until nothing changes (a few rounds at most), for a
+     * part just built anew: otherwise it is drawn once with its labels on one line and moves when they wrap a moment
+     * later.
+     */
+    static void settle(JComponent inside) {
+        Container root = SwingUtilities.getAncestorOfClass(JScrollPane.class, inside);
+        if (!(root instanceof JComponent r) || !r.isShowing()) return;
+        for (int i = 0; i < 4; i++) {
+            r.validate();
+            fitBodies(r);
+            if (r.isValid()) return;
+        }
+        r.validate();
+    }
+
+    private static void fitBodies(Container c) {
+        if (c instanceof JComponent j && j.getClientProperty(BODY) != null) fit(j);
+        for (Component child : c.getComponents()) if (child instanceof Container k && child.isVisible()) fitBodies(k);
+    }
+
     static void fit(JComponent body) {
         if (body.getWidth() <= 0 || !body.isShowing() && body.getParent() == null) return;
         visit(body, body);

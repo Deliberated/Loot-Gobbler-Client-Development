@@ -93,6 +93,19 @@ public final class DungeonVisits implements Syncable {
         public int flames;
         /** Lantern phases: the song's beats (its progress bar's steps) you were within RANGE of the lantern. */
         public int beats;
+        /** The song's length in beats (its progress bar's maximum), 0 if not known. */
+        public int beatsMax;
+        /** The most flames a lantern phase scores. */
+        public static final int MAX_FLAMES = 8;
+
+        /**
+         * A lantern phase in progress: the flames earned so far, the beats you were in range as a share of the
+         * song (all of it: 8). The game's own count replaces it when the phase ends.
+         */
+        public int flamesSoFar() {
+            if (!lantern || beatsMax <= 0) return 0;
+            return Math.min(MAX_FLAMES, beats * MAX_FLAMES / beatsMax);
+        }
 
         public long duration(long now, Visit v) {   // a phase in progress counts up to now
             return durationMs > 0 ? durationMs : Math.max(0, now - v.start - startMs);

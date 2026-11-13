@@ -15,28 +15,37 @@ import java.util.concurrent.TimeUnit;
  * Items with a cooldown: when one can be used again (its Cooldown in the game data after each use), its sound plays.
  * The quickslot items Coral Juice Refinery (15 s, ItemSound.REFINERY) and Miniature Alien Generator (45 s,
  * ItemSound.ALIEN): a use is seen as the use packet you send for it, the classic one or the newer kind ItemUse reads
- * raw. The Fitted Protective Matrix armor (and its Neo version, 180 s, ItemSound.MATRIX) fires by itself: on a hit
- * below 50% of your life it gives you Invulnerable and Dazed at once, which the game tick sees (armorTick).
+ * raw. The Protective Matrix armors (Heavy, Magic and Fitted: heavy armor, robe, light armor; each also Shiny and Neo;
+ * one cooldown of 180 s, ItemSound.MATRIX) fire by themselves: on a hit below 50% of your life they give you
+ * Invulnerable and Dazed at once, which the game tick sees (armorTick); ItemSound.MATRIX_BREAK plays then.
  */
 public final class ItemCooldowns {
     public static final int REFINERY = 44495;   // Coral Juice Refinery (0xadcf, equip_design.xml)
     public static final int ALIEN_GENERATOR = 48164;   // Miniature Alien Generator (0xbc24, equip.xml)
-    public static final int MATRIX = 0x0485, NEO_MATRIX = 0xdc90;   // Fitted Protective Matrix, its Neo version
+    /** The Protective Matrix armors (equip.xml), all with the same shield and one shared cooldown. */
+    public static final Map<Integer, String> MATRICES = Map.of(
+            0x0483, "Heavy Protective Matrix", 0x0484, "Magic Protective Matrix", 0x0485, "Fitted Protective Matrix",
+            0x1D4A, "Heavy Protective Matrix Shiny", 0x1D49, "Magic Protective Matrix Shiny",
+            0x1D48, "Fitted Protective Matrix Shiny",
+            0xdc92, "Neo Heavy Protective Matrix", 0xdc91, "Neo Magic Protective Matrix", 0xdc90, "Neo Fitted Protective Matrix");
 
     private record Watched(String name, long cooldownMs, ItemSound sound) {
     }
 
-    private static final Map<Integer, Watched> WATCHED = Map.of(
-            REFINERY, new Watched("Coral Juice Refinery", 15_000, ItemSound.REFINERY),
-            ALIEN_GENERATOR, new Watched("Miniature Alien Generator", 45_000, ItemSound.ALIEN),
-            MATRIX, new Watched("Fitted Protective Matrix", 180_000, ItemSound.MATRIX),
-            NEO_MATRIX, new Watched("Neo Fitted Protective Matrix", 180_000, ItemSound.MATRIX));
+    private static final Map<Integer, Watched> WATCHED = new HashMap<>();
+
+    static {
+        WATCHED.put(REFINERY, new Watched("Coral Juice Refinery", 15_000, ItemSound.REFINERY));
+        WATCHED.put(ALIEN_GENERATOR, new Watched("Miniature Alien Generator", 45_000, ItemSound.ALIEN));
+        MATRICES.forEach((type, name) -> WATCHED.put(type, new Watched(name, 180_000, ItemSound.MATRIX)));
+    }
     private static final ScheduledExecutorService TIMER = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "item-cooldowns");
         t.setDaemon(true);
         return t;
     });
-    private static final Map<Integer, ScheduledFuture<?>> ready = new HashMap<>();
+    // by sound: the matrices share one cooldown, whichever of them fired
+    private static final Map<ItemSound, ScheduledFuture<?>> ready = new HashMap<>();
 
     private ItemCooldowns() {
     }
@@ -52,10 +61,32 @@ public final class ItemCooldowns {
     private static final double MATRIX_LIFE = 0.5;
     private static final long MATRIX_COOLDOWN_MS = 180_000, HIT_LOOK_BACK_MS = 1500;
     private static boolean wasInvulnerable;
-    private static long matrixFired;
+    private static volatile long matrixFired;
+    private static volatile int matrixType = -1;   // the armor that fired last
+    private static final java.util.List<Runnable> matrixListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /** When a matrix fired last (ms, 0: not yet). */
+    public static long matrixFired() {
+        return matrixFired;
+    }
+
+    /** The matrix armor that fired last (its item type), -1 if none. */
+    public static int matrixType() {
+        return matrixType;
+    }
+
+    /** Whether the matrix that fired last is still charging (180 s after it fired). */
+    public static boolean matrixCharging() {
+        return matrixFired > 0 && System.currentTimeMillis() - matrixFired < MATRIX_COOLDOWN_MS;
+    }
+
+    /** Called when a matrix fires (on the packet thread). */
+    public static void onMatrixFired(Runnable r) {
+        matrixListeners.add(r);
+    }
 
     /**
-     * Every game tick: wearing a Fitted Protective Matrix, the game putting Invulnerable on you right after a hit,
+     * Every game tick: wearing a Protective Matrix (any of them), the game putting Invulnerable on you right after a hit,
      * together with Dazed (or with your life at half or less, should Dazed be blocked), is the armor firing; its
      * sound then plays when it is charged again. Not within its cooldown of the last time, when it cannot fire.
      */
@@ -69,7 +100,7 @@ public final class ItemCooldowns {
         boolean fresh = invulnerable && !wasInvulnerable;
         wasInvulnerable = invulnerable;
         int type = armor == null ? -1 : armor.statValue;
-        if (!fresh || (type != MATRIX && type != NEO_MATRIX)) return;
+        if (!fresh || !MATRICES.containsKey(type)) return;
         long now = System.currentTimeMillis();
         if (now - matrixFired < MATRIX_COOLDOWN_MS) return;
         boolean hit = false;
@@ -86,6 +117,9 @@ public final class ItemCooldowns {
             return;
         }
         matrixFired = now;
+        matrixType = type;
+        ItemSound.MATRIX_BREAK.play();   // it broke: charged again in 180 s
+        matrixListeners.forEach(Runnable::run);
         used(type, "it fired: Invulnerable" + (dazed ? " and Dazed" : "") + " at " + (max > 0 ? 100 * hp / max : 0) + "% life");
     }
 
@@ -93,9 +127,9 @@ public final class ItemCooldowns {
     static synchronized void used(int itemType, String how) {
         Watched w = WATCHED.get(itemType);
         if (w == null) return;
-        ScheduledFuture<?> old = ready.get(itemType);
+        ScheduledFuture<?> old = ready.get(w.sound());
         if (old != null) old.cancel(false);
-        ready.put(itemType, TIMER.schedule(() -> {
+        ready.put(w.sound(), TIMER.schedule(() -> {
             AppLog.log("items", w.name() + " ready again");
             w.sound().play();
         }, w.cooldownMs(), TimeUnit.MILLISECONDS));

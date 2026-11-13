@@ -82,33 +82,63 @@ public class SettingsPanel extends JPanel {
 
     /**
      * Sounds for what items do, each in its own part: the Amulet of Restoration, and the cooldowns of the quickslot
-     * items and the Fitted Protective Matrix.
+     * items and the Protective Matrix armors.
      */
     private JPanel itemSoundsBody() {
         JPanel body = body();
-        itemSound(body, lootgobbler.ItemSound.AMULET, "Played when your Amulet of Restoration saves you.");
+        int amulet = lootgobbler.Amulets.restorationId();
+        int[] matrices = {0x0483, 0x0484, 0x0485};   // Heavy (heavy armor), Magic (robe), Fitted (light armor)
+        itemSound(body, lootgobbler.ItemSound.AMULET, "Played when your Amulet of Restoration breaks (it saved you).",
+                Arrow.BROKEN, amulet);
         body.add(Box.createVerticalStrut(14));
         itemSound(body, lootgobbler.ItemSound.AMULET_READY,
-                "Played when your Amulet of Restoration is charged again (1800 seconds after it saved you).");
+                "Played when your Amulet of Restoration is charged again (1800 seconds after it saved you).",
+                Arrow.RECHARGED, amulet);
         body.add(Box.createVerticalStrut(14));
         itemSound(body, lootgobbler.ItemSound.REFINERY,
-                "Played when your Coral Juice Refinery can be used again (15 seconds after using it).");
+                "Played when your Coral Juice Refinery can be used again (15 seconds after using it).",
+                null, lootgobbler.ItemCooldowns.REFINERY);
         body.add(Box.createVerticalStrut(14));
         itemSound(body, lootgobbler.ItemSound.ALIEN,
-                "Played when your Miniature Alien Generator can be used again (45 seconds after using it).");
+                "Played when your Miniature Alien Generator can be used again (45 seconds after using it).",
+                null, lootgobbler.ItemCooldowns.ALIEN_GENERATOR);
+        body.add(Box.createVerticalStrut(14));
+        itemSound(body, lootgobbler.ItemSound.MATRIX_BREAK,
+                "Played when your Protective Matrix (Heavy, Magic or Fitted) breaks (it shielded you).",
+                Arrow.BROKEN, matrices);
         body.add(Box.createVerticalStrut(14));
         itemSound(body, lootgobbler.ItemSound.MATRIX,
-                "Played when your Fitted Protective Matrix is charged again (180 seconds after it shielded you).");
+                "Played when your Protective Matrix is charged again (180 seconds after it shielded you).",
+                Arrow.RECHARGED, matrices);
         return body;
     }
 
-    /** One item's part: its name, when the sound plays, and the sound (a WAV file of your choice, or none). */
-    private void itemSound(JPanel body, lootgobbler.ItemSound sound, String when) {
+    /**
+     * One item's part: its name with the items behind it (and an arrow: down when it broke, up when it is charged
+     * again), when the sound plays, and the sound (a WAV file of your choice, or none).
+     */
+    private void itemSound(JPanel body, lootgobbler.ItemSound sound, String when, Arrow arrow, int... items) {
         JPanel title = row();
         JLabel name = new JLabel(sound.item);
         name.setFont(name.getFont().deriveFont(Font.BOLD, name.getFont().getSize2D() + 2));
         name.setForeground(Palette.GOLD);
         title.add(name);
+        JPanel icons = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));
+        icons.setOpaque(false);
+        for (int id : items) {
+            if (id < 0) continue;
+            JLabel it = new JLabel(ActiveDungeonBadge.fit(CharactersView.sprite(id, 40), 24));
+            String n = assets.IdToAsset.objectName(id);
+            if (n != null) it.setToolTipText(n);
+            icons.add(it);
+        }
+        if (arrow != null) {
+            JLabel a = new JLabel(arrow);
+            a.setToolTipText(arrow == Arrow.BROKEN ? "Broken" : "Recharged");
+            icons.add(Box.createHorizontalStrut(2));
+            icons.add(a);
+        }
+        title.add(icons);
         // its own volume, at the right: heard when let go
         JLabel level = new JLabel();
         JSlider volume = new JSlider(0, 100, sound.volume());
@@ -378,6 +408,52 @@ public class SettingsPanel extends JPanel {
         p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS));
         p.setBorder(new EmptyBorder(10, 12, 12, 12));
         return p;
+    }
+
+    /** Behind an item sound's name: down (red) when the item broke, up (green) when it is charged again. */
+    private enum Arrow implements Icon {
+        BROKEN(new Color(0xE0533D), false), RECHARGED(new Color(0x4CAF50), true);
+
+        private final Color color;
+        private final boolean up;
+
+        Arrow(Color color, boolean up) {
+            this.color = color;
+            this.up = up;
+        }
+
+        @Override
+        public void paintIcon(Component c, Graphics g, int x, int y) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.translate(x, y);
+            if (!up) g2.rotate(Math.PI, 7, 9);
+            java.awt.geom.Path2D p = new java.awt.geom.Path2D.Double();
+            p.moveTo(7, 1);
+            p.lineTo(13, 8);
+            p.lineTo(9.5, 8);
+            p.lineTo(9.5, 17);
+            p.lineTo(4.5, 17);
+            p.lineTo(4.5, 8);
+            p.lineTo(1, 8);
+            p.closePath();
+            g2.setColor(color);
+            g2.fill(p);
+            g2.setColor(color.darker().darker());
+            g2.setStroke(new BasicStroke(1f));
+            g2.draw(p);
+            g2.dispose();
+        }
+
+        @Override
+        public int getIconWidth() {
+            return 14;
+        }
+
+        @Override
+        public int getIconHeight() {
+            return 18;
+        }
     }
 
     private static JPanel row() {

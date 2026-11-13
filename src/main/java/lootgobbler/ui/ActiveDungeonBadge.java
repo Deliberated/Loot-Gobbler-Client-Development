@@ -221,7 +221,7 @@ public final class ActiveDungeonBadge extends JPanel {
 
         /** Shows this number (font: the badge's text font, made bigger); true if anything changed. */
         boolean set(String number, Font base) {
-            if (grave == null) {
+            if (grave == null) {   // until the game's images are loaded there is none yet: tried again each time
                 Font big = base.deriveFont(Font.BOLD, base.getSize2D() * 1.3f);
                 setFont(big);
                 // the gravestone as tall as the digits: measure how much of its icon it fills, then size it to them
@@ -229,6 +229,10 @@ public final class ActiveDungeonBadge extends JPanel {
                 double digits = -big.createGlyphVector(fm.getFontRenderContext(), "0123456789").getVisualBounds().getY();
                 grave = plainGravestone(digits);
                 visible = new Rectangle(0, 0, grave == null ? 0 : grave.getIconWidth(), grave == null ? 0 : grave.getIconHeight());
+                if (grave != null) {
+                    text = number;
+                    return true;   // it appeared: lay out again
+                }
             }
             if (number.equals(text)) return false;
             text = number;
@@ -244,6 +248,7 @@ public final class ActiveDungeonBadge extends JPanel {
                 java.awt.image.BufferedImage sprite = assets.ImageBuffer.getImage(GRAVESTONE);
                 if (sprite == null) return null;
                 Rectangle r = opaqueBounds(new ImageIcon(sprite));
+                if (r.isEmpty()) return null;   // not loaded yet (all clear)
                 java.awt.image.BufferedImage cut = sprite.getSubimage(r.x, r.y, r.width, r.height);
                 // exactly as tall as the digits (pixel-sharp, but not only by whole factors, which came out too small)
                 int height = Math.max(r.height, (int) Math.ceil(digits) + 1);   // the measured glyphs come out a pixel short
@@ -256,7 +261,7 @@ public final class ActiveDungeonBadge extends JPanel {
                 g.dispose();
                 return new ImageIcon(big);
             } catch (Exception e) {
-                return CharactersView.sprite(GRAVESTONE, Math.max(8, (int) Math.round(digits)));
+                return null;
             }
         }
 
@@ -277,7 +282,7 @@ public final class ActiveDungeonBadge extends JPanel {
                     y1 = Math.max(y1, y);
                 }
             }
-            return x1 < 0 ? new Rectangle(0, 0, icon.getIconWidth(), icon.getIconHeight()) : new Rectangle(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
+            return x1 < 0 ? new Rectangle() : new Rectangle(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
         }
 
         @Override
@@ -291,7 +296,7 @@ public final class ActiveDungeonBadge extends JPanel {
 
         @Override
         protected void paintComponent(Graphics g) {
-            if (grave == null) return;
+            if (text.isEmpty()) return;
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
             Insets in = getInsets();
@@ -310,6 +315,10 @@ public final class ActiveDungeonBadge extends JPanel {
             g2.setFont(getFont());
             g2.setColor(new Color(0xF2ECDC));
             g2.drawString(text, in.left, floor);
+            if (grave == null) {   // the number alone until the gravestone is there
+                g2.dispose();
+                return;
+            }
             int x = in.left + fm.stringWidth(text) + GAP - visible.x;
             grave.paintIcon(this, g2, x, floor - (visible.y + visible.height));
             g2.dispose();

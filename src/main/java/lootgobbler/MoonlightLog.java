@@ -174,12 +174,13 @@ public final class MoonlightLog {
             startPhase(n.message);
         } else if (packet instanceof packets.incoming.NotificationPacket n
                 && n.effect == packets.data.enums.NotificationEffectType.ProgressBar && n.extra == 40 && phaseOpen) {
-            beat(data);
+            beat(data, n.progressMax);
         }
     }
 
     /** A beat of the phase's song (a step of its bar): counted when you are in the lantern's range then. */
-    private void beat(TomatoData data) {
+    private void beat(TomatoData data, int songBeats) {
+        if (songBeats > 0) phase.beatsMax = songBeats;
         double d = lanternDistance(data);
         if (d < 0) return;
         phase.lantern = true;
@@ -222,7 +223,8 @@ public final class MoonlightLog {
         phase.durationMs = Math.max(1, System.currentTimeMillis() - v.start - phase.startMs);
         write(String.format(java.util.Locale.ROOT, "PHASE ended: %s (%s) %.1fs%s%s", phase.title, phase.lantern ? "lantern" : "damage",
                 phase.durationMs / 1000.0, phase.lanternMs > 0 ? ", in range " + 100 * phase.rangeMs / phase.lanternMs + "%" : "",
-                phase.lantern ? ", beats in range " + phase.beats : ""));
+                phase.lantern ? ", beats in range " + phase.beats + "/" + phase.beatsMax + " (live " + phase.flamesSoFar()
+                        + ", game " + phase.flames + ")" : ""));
     }
 
     /**

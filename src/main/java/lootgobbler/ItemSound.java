@@ -15,14 +15,19 @@ public final class ItemSound {
     public record Builtin(String file, String name) {
     }
 
-    /** Your Amulet of Restoration saved you (AmuletSaves). */
-    public static final ItemSound AMULET = new ItemSound("amuletSoundFile", "Amulet of Restoration",
+    /** Your Amulet of Restoration saved you and broke (AmuletSaves). */
+    public static final ItemSound AMULET = new ItemSound("amuletSoundFile", "Amulet of Restoration broken",
             List.of(new Builtin("sound/amulet_activation.wav", "Amulet activation")));
-    /** Your Amulet of Restoration is charged again, 1800 s after it saved you (AmuletSaves). */
+    /**
+     * Your Amulet of Restoration is charged again, 1800 s after it saved you (AmuletSaves): five short cues of a
+     * chain and its pendant (a Chain pulled out of a chest first).
+     */
     public static final ItemSound AMULET_READY = new ItemSound("amuletReadySoundFile", "Amulet of Restoration recharged", List.of(
-            new Builtin("sound/amulet_ready_restored.wav", "Restored"),
-            new Builtin("sound/amulet_ready_bell.wav", "Bell"),
-            new Builtin("sound/amulet_ready_glow.wav", "Glow")));
+            new Builtin("sound/amulet_ready_chain.wav", "Chain"),
+            new Builtin("sound/amulet_ready_dangle.wav", "Dangle"),
+            new Builtin("sound/amulet_ready_pull.wav", "Pull"),
+            new Builtin("sound/amulet_ready_clasp.wav", "Clasp"),
+            new Builtin("sound/amulet_ready_gleam.wav", "Gleam")));
     /** Your Coral Juice Refinery can be used again (ItemCooldowns): five quiet cues to choose from (Bubble first). */
     public static final ItemSound REFINERY = new ItemSound("refinerySoundFile", "Coral Juice Refinery", List.of(
             new Builtin("sound/refinery_bubble.wav", "Bubble"),
@@ -37,13 +42,24 @@ public final class ItemSound {
             new Builtin("sound/alien_saucer.wav", "Saucer"),
             new Builtin("sound/alien_arpeggio.wav", "Arpeggio"),
             new Builtin("sound/alien_signal.wav", "Signal")));
-    /** Your Fitted Protective Matrix is charged again (ItemCooldowns): five cues (a jacket's Zip first). */
-    public static final ItemSound MATRIX = new ItemSound("matrixSoundFile", "Fitted Protective Matrix", List.of(
+    /** Your Protective Matrix (Heavy, Magic or Fitted) is charged again (ItemCooldowns): five cues (Pulse first, the default). */
+    public static final ItemSound MATRIX = new ItemSound("matrixSoundFile", "Protective Matrix recharged", List.of(
+            new Builtin("sound/matrix_pulse.wav", "Pulse"),
             new Builtin("sound/matrix_zip.wav", "Zip"),
             new Builtin("sound/matrix_shield.wav", "Shield"),
-            new Builtin("sound/matrix_pulse.wav", "Pulse"),
             new Builtin("sound/matrix_recharge.wav", "Recharge"),
             new Builtin("sound/matrix_lock.wav", "Lock")));
+    /**
+     * Your Protective Matrix just broke (shielded you, ItemCooldowns): a pufferfish popping (the default), or a core
+     * powering down, five ways.
+     */
+    public static final ItemSound MATRIX_BREAK = new ItemSound("matrixBreakSoundFile", "Protective Matrix broken", List.of(
+            new Builtin("sound/matrix_break_pufferfish.wav", "Pufferfish"),
+            new Builtin("sound/matrix_break_core.wav", "Core down"),
+            new Builtin("sound/matrix_break_collapse.wav", "Collapse"),
+            new Builtin("sound/matrix_break_shatter.wav", "Shatter"),
+            new Builtin("sound/matrix_break_brownout.wav", "Brownout"),
+            new Builtin("sound/matrix_break_reactor.wav", "Reactor")));
 
     private static final String OFF = "off", BUILTIN = "builtin:";
     private final String key;   // setting: "" or unset = the first builtin; "builtin:<name>"; "off"; or a WAV file's path
