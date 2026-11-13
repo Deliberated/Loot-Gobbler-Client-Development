@@ -19,7 +19,8 @@ import java.util.Map;
 /**
  * The overlay's dungeon box, a short version of the title bar's: the portal | your rank "#x/y" (once you hit the
  * main boss) | the amulet (while it charges from a save in this dungeon), and in Moonlight Village | the flames of
- * the fight you are in (the three dancers together, or Umi) with the loot tier they reach (a chest in its color)
+ * the fight you are in (the three dancers together, or Umi) with the loot tier they reach (a chest in the
+ * enchant rarity color of the tier)
  * and the flames the next tier needs | the latest phase's flames as under DPS ("..." while it runs, kept with "FINAL" when
  * the phase ends, "..." again when the next phase starts). Split by thin lines. One width for the whole dungeon (room
  * for the most it can show), one for normal dungeons and a wider one for Moonlight Village. Hidden outside dungeons.
@@ -143,8 +144,10 @@ final class OverlayBadge extends JPanel {
 
     /** The lowest total of each loot tier (1 to 4): the three dancers together, and Umi. */
     private static final int[] DANCER_TIERS = {2, 40, 58, 78}, UMI_TIERS = {2, 24, 36, 48};
-    private static final Color[] TIER_COLORS = {new Color(0x5D5547), new Color(0x9A7448), new Color(0xB9C3CC),
-            new Color(0xE6B84A), new Color(0xC58CFF)};
+    /** No tier yet: grey; tiers 1 to 4 in the enchant rarities' colors (uncommon, rare, legendary, divine). */
+    private static final Color[] TIER_COLORS = {new Color(0x5D5547), lootgobbler.enchant.Rarity.UNCOMMON.color,
+            lootgobbler.enchant.Rarity.RARE.color, lootgobbler.enchant.Rarity.LEGENDARY.color,
+            lootgobbler.enchant.Rarity.DIVINE.color};
 
     /** The tier these flames reach (0: none yet), a total between two ranges counting as the lower tier. */
     static int tierOf(int flames, boolean dancers) {
