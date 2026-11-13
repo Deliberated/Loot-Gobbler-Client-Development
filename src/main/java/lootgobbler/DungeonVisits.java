@@ -91,6 +91,8 @@ public final class DungeonVisits implements Syncable {
         public boolean lantern;
         public long lanternMs, rangeMs, nearMs;
         public int flames;
+        /** Lantern phases: the song's beats (its progress bar's steps) you were within RANGE of the lantern. */
+        public int beats;
 
         public long duration(long now, Visit v) {   // a phase in progress counts up to now
             return durationMs > 0 ? durationMs : Math.max(0, now - v.start - startMs);

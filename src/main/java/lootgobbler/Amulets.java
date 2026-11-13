@@ -34,6 +34,14 @@ public final class Amulets {
         return load().get(itemId);
     }
 
+    private static volatile int restoration = -1;
+
+    /** The plain Amulet of Restoration's item id (not its shiny version, whose id is lower), or -1 if not found. */
+    public static int restorationId() {
+        load();
+        return restoration;
+    }
+
     public static boolean isAmulet(int itemId) {
         return of(itemId) != null;
     }
@@ -58,6 +66,7 @@ public final class Amulets {
                     String effect = eff.find() ? eff.group(1) : t.group(3).trim();
                     if (!effect.contains("Invulnerable")) continue;   // the Amulet of Restoration only
                     int type = Integer.decode(o.group(1));
+                    if ("Amulet of Restoration".equals(o.group(2))) restoration = type;
                     out.put(type, new Amulet(type, name, Double.parseDouble(t.group(2)), effect, cd.find() ? Integer.parseInt(cd.group(1)) : 0));
                 }
             } catch (Exception e) {

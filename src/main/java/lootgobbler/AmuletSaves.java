@@ -71,6 +71,45 @@ public final class AmuletSaves implements Syncable {
             System.err.println("Could not read " + FILE + ": " + e.getMessage());
         }
         dropOldRuleSaves();
+        scheduleReady();
+    }
+
+    /** How long the amulet takes to charge again after a save. */
+    public static final long RECHARGE_MS = COOLDOWN_MS;
+    /** Its own class, so it exists before INSTANCE (made above) first uses it. */
+    private static final class Recharge {
+        static final java.util.concurrent.ScheduledExecutorService TIMER =
+                java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                    Thread t = new Thread(r, "amulet-recharge");
+                    t.setDaemon(true);
+                    return t;
+                });
+    }
+    private java.util.concurrent.ScheduledFuture<?> ready;
+
+    /** When your amulet last saved you (ms since the epoch), or 0 if never. */
+    public synchronized long lastSave() {
+        for (int i = saves.size() - 1; i >= 0; i--) if (!saves.get(i).removed) return saves.get(i).t;
+        return 0;
+    }
+
+    /** Whether the amulet is still charging from a save (a save less than RECHARGE_MS ago). */
+    public boolean charging() {
+        long last = lastSave();
+        return last > 0 && System.currentTimeMillis() - last < RECHARGE_MS;
+    }
+
+    /** The "recharged" sound at the latest save plus RECHARGE_MS (also after a restart, if still to come). */
+    private synchronized void scheduleReady() {
+        if (ready != null) ready.cancel(false);
+        ready = null;
+        long last = lastSave(), wait = last + RECHARGE_MS - System.currentTimeMillis();
+        if (last == 0 || wait <= 0) return;
+        ready = Recharge.TIMER.schedule(() -> {
+            AppLog.log("game", "Amulet charged again");
+            ItemSound.AMULET_READY.play();
+            fire();   // e.g. the overlay drops the amulet icon
+        }, wait, java.util.concurrent.TimeUnit.MILLISECONDS);
     }
 
     /**
@@ -247,6 +286,7 @@ public final class AmuletSaves implements Syncable {
     }
 
     private void fire() {
+        scheduleReady();   // a new save, or one that turned out not to be one
         for (Runnable r : listeners) r.run();
     }
 

@@ -18,6 +18,11 @@ public final class ItemSound {
     /** Your Amulet of Restoration saved you (AmuletSaves). */
     public static final ItemSound AMULET = new ItemSound("amuletSoundFile", "Amulet of Restoration",
             List.of(new Builtin("sound/amulet_activation.wav", "Amulet activation")));
+    /** Your Amulet of Restoration is charged again, 1800 s after it saved you (AmuletSaves). */
+    public static final ItemSound AMULET_READY = new ItemSound("amuletReadySoundFile", "Amulet of Restoration recharged", List.of(
+            new Builtin("sound/amulet_ready_restored.wav", "Restored"),
+            new Builtin("sound/amulet_ready_bell.wav", "Bell"),
+            new Builtin("sound/amulet_ready_glow.wav", "Glow")));
     /** Your Coral Juice Refinery can be used again (ItemCooldowns): five quiet cues to choose from (Bubble first). */
     public static final ItemSound REFINERY = new ItemSound("refinerySoundFile", "Coral Juice Refinery", List.of(
             new Builtin("sound/refinery_bubble.wav", "Bubble"),

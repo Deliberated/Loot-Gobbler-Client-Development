@@ -20,7 +20,6 @@ import java.util.function.Consumer;
  * static flags as Tomato's original menus, so saved settings carry over.
  */
 public class SettingsPanel extends JPanel {
-
     public SettingsPanel() {
         super(new BorderLayout());
 
@@ -88,6 +87,9 @@ public class SettingsPanel extends JPanel {
     private JPanel itemSoundsBody() {
         JPanel body = body();
         itemSound(body, lootgobbler.ItemSound.AMULET, "Played when your Amulet of Restoration saves you.");
+        body.add(Box.createVerticalStrut(14));
+        itemSound(body, lootgobbler.ItemSound.AMULET_READY,
+                "Played when your Amulet of Restoration is charged again (1800 seconds after it saved you).");
         body.add(Box.createVerticalStrut(14));
         itemSound(body, lootgobbler.ItemSound.REFINERY,
                 "Played when your Coral Juice Refinery can be used again (15 seconds after using it).");

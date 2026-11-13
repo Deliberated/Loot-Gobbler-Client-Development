@@ -170,6 +170,7 @@ public class TomatoGUI {
         makeFrame();
 
         frame.setVisible(true);
+        lootgobbler.ui.Overlay.restoreAll();   // the overlays that were on when the app was closed
         lootgobbler.StartupSound.playSaved();
         lootgobbler.ui.WhatsNewDialog.showAfterUpdate(frame);   // after an update; reads its settings before the welcome
         SwingUtilities.invokeLater(() -> lootgobbler.ui.WelcomeDialog.showOnFirstStart(frame));   // once the window is up

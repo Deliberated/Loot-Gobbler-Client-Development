@@ -28,7 +28,7 @@ import java.util.Map;
  * a button to their boss damage under DPS) and the exaltation progress the game reported there.
  */
 public class DpsLoggerView extends JPanel {
-    private static final String[] PAGES = {"Dungeons", "DPS"};
+    private static final String[] PAGES = {"Dungeons", "DPS", "Overlay"};
     private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("d MMM, HH:mm", Locale.ENGLISH);
     private static final int ICON = 64, POTION = 22, MATE = 30, MATES = 4, SINGLES = 4, MULTIS = 2;
     private static final int TILE_MIN_WIDTH = 400, GAP = 8;
@@ -51,7 +51,7 @@ public class DpsLoggerView extends JPanel {
     private final JPanel detail = new JPanel();
     private final Map<Long, Long> fame = new HashMap<>();   // fame gained per finished visit (by its start)
     private final Map<Long, Boolean> done = new HashMap<>();   // whether a finished visit was completed (by its start)
-    private final java.util.Set<java.time.LocalDate> openDays = new java.util.HashSet<>();   // days showing their summary
+    private final java.util.Set<java.time.LocalDate> collapsedDays = new java.util.HashSet<>();   // days showing only their date
     private Map<java.time.LocalDate, DaySum> daySums = new HashMap<>();   // per day in the list, from the last refresh
     private Map<java.time.LocalDate, long[]> bagDays;   // white and orange bags per day (cached: from the whole collection)
     private long bagDaysAt;
@@ -108,6 +108,7 @@ public class DpsLoggerView extends JPanel {
         views.setOpaque(false);
         views.add(split, PAGES[0]);
         views.add(dps, PAGES[1]);
+        views.add(new OverlaysPage(), PAGES[2]);   // the overlays: what they look like, on or off, opacity
         add(views, BorderLayout.CENTER);
 
         Runnable later = ViewRefresh.of(this, this::refresh);   // only while it can be seen, once per burst
@@ -154,6 +155,7 @@ public class DpsLoggerView extends JPanel {
     /** The Dungeons list with this visit selected and shown on the right. */
     public void showVisit(Visit v) {
         selected = v.start;
+        collapsedDays.remove(dayOf(v));   // its day opens, so it can be seen
         scrollToSelected = true;
         picker.select(0);
         pages.show(views, PAGES[0]);
@@ -180,6 +182,7 @@ public class DpsLoggerView extends JPanel {
         if (now != null && now.start != lastNowStart) {   // a new dungeon entered: show it, whatever was selected
             selected = -1;
             scrollToSelected = true;
+            collapsedDays.remove(dayOf(now));
         }
         lastNowStart = now == null ? -1 : now.start;
         if (now != null && !clock.isRunning()) clock.start();
@@ -977,26 +980,28 @@ public class DpsLoggerView extends JPanel {
         return out;
     }
 
-    /** A day's group in the list: its date over a gold line, and an empty grid for its boxes (returned). */
+    /**
+     * A day's group in the list: its date over a gold line, what the day added up to, and an empty grid for its
+     * boxes (returned). A collapsed day shows only its date and line: the grid it returns is not in the list.
+     */
     private JPanel dayGrid(java.time.LocalDate day) {
         DaySum sum = daySums.getOrDefault(day, new DaySum());
-        boolean open = openDays.contains(day);
+        boolean open = !collapsedDays.contains(day);
         JLabel date = new JLabel(DAY.format(day));
         date.setFont(date.getFont().deriveFont(18f));
         date.setForeground(Section.color("LootGobbler.gold", Palette.GOLD));
-        // the date, a white bag and an arrow; a click shows what the day added up to
+        // the date and an arrow; a click collapses the day to its date (and opens it again)
         JPanel head = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
         head.setOpaque(false);
         head.setBorder(new EmptyBorder(list.getComponentCount() == 0 ? 4 : 18, 0, 4, 0));
         head.add(date);
-        head.add(new JLabel(ProfileView.bagIcon("White", 26)));   // always: the sign that the day opens a summary
         JLabel arrow = new JLabel(open ? "▾" : "▸");
         arrow.setForeground(Palette.MUTED);
         head.add(arrow);
-        head.setToolTipText(open ? "Hide the day's summary" : "Show what this day added up to");
+        head.setToolTipText(open ? "Collapse this day" : "Show this day's summary and dungeons");
         head.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         Clicks.onPress(head, () -> {
-            if (!openDays.remove(day)) openDays.add(day);
+            if (!collapsedDays.remove(day)) collapsedDays.add(day);
             refresh();
         });
         head.setMaximumSize(new Dimension(Integer.MAX_VALUE, head.getPreferredSize().height));
@@ -1011,8 +1016,10 @@ public class DpsLoggerView extends JPanel {
         line.setPreferredSize(new Dimension(10, 4));
         line.setMaximumSize(new Dimension(Integer.MAX_VALUE, 4));
         list.add(left(line));
-        if (open) list.add(left(daySummary(sum)));
-        list.add(Box.createVerticalStrut(8));
+        if (open) {
+            list.add(left(daySummary(sum)));
+            list.add(Box.createVerticalStrut(8));
+        }
         JPanel grid = new JPanel(new GridLayout(0, 1, GAP, GAP)) {
             @Override
             public Dimension getMaximumSize() {   // never stretched taller than its boxes
@@ -1020,8 +1027,10 @@ public class DpsLoggerView extends JPanel {
             }
         };
         grid.setOpaque(false);
-        list.add(left(grid));
-        dayGrids.add(grid);
+        if (open) {   // a collapsed day's boxes go into a grid that is not shown
+            list.add(left(grid));
+            dayGrids.add(grid);
+        }
         return grid;
     }
 

@@ -16,6 +16,7 @@ public class StatusBar extends JPanel {
     private final JLabel state = new JLabel();
     private final JLabel server = new JLabel();
     private final JButton sniffer = new JButton();
+    private final JButton overlay = new JButton();
     private final UpdateButton update = new UpdateButton();
 
     public StatusBar(Runnable toggleSniffer, Runnable openServer) {
@@ -41,6 +42,14 @@ public class StatusBar extends JPanel {
         version.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 12));
         buttons.add(version);
         buttons.add(update);
+        buttons.add(Box.createHorizontalStrut(6));
+        overlay.putClientProperty("FlatLaf.styleClass", "statusButton");
+        overlay.setFocusable(false);
+        overlay.setToolTipText("Hides the overlays that are on, or shows them again (each is set up under Battles > Overlay)");
+        overlay.addActionListener(e -> Overlay.toggleAll());
+        Overlay.onAnyChange(this::showOverlay);
+        showOverlay();
+        buttons.add(overlay);
         buttons.add(Box.createHorizontalStrut(6));
         buttons.add(sniffer);
         server.putClientProperty("FlatLaf.styleClass", "statusBar");
@@ -103,6 +112,10 @@ public class StatusBar extends JPanel {
      */
     private static boolean stable() {
         return System.getProperty("jpackage.app-path") != null;
+    }
+
+    private void showOverlay() {
+        overlay.setText(Overlay.anyOn() ? "HIDE OVERLAY" : "SHOW OVERLAY");
     }
 
     public void setRunning(boolean running) {

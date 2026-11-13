@@ -157,6 +157,7 @@ public class DpsGUI extends JPanel {
         lootgobbler.MoonlightLog.get().tick(data);   // Moonlight Village: lantern time
         lootgobbler.AmuletSaves.get().tick(data);   // an amulet making you invulnerable
         lootgobbler.ItemCooldowns.armorTick(data);   // the Fitted Protective Matrix firing
+        lootgobbler.PlayerVitals.tick(data);   // your mana, for the mana overlay
         lootgobbler.LootEvents.inventoryTick(data);
         lootgobbler.CharacterStore.get().live(data);
         if (!INSTANCE.liveUpdates) return;

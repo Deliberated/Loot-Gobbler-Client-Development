@@ -320,7 +320,7 @@ public final class ActiveDungeonBadge extends JPanel {
      * The portal's main color, darkened: the average of its opaque pixels, weighted by how colorful they are (so
      * the black outline and grey stone count little), at a low brightness so light text stays readable.
      */
-    private static Color tint(Icon portal) {
+    static Color tint(Icon portal) {
         if (portal == null || portal.getIconWidth() <= 0) return FALLBACK;
         BufferedImage img = new BufferedImage(portal.getIconWidth(), portal.getIconHeight(), BufferedImage.TYPE_INT_ARGB);
         Graphics2D g = img.createGraphics();
@@ -347,7 +347,7 @@ public final class ActiveDungeonBadge extends JPanel {
     }
 
     /** The color with its brightness scaled. */
-    private static Color shade(Color c, float factor) {
+    static Color shade(Color c, float factor) {
         float[] hsb = Color.RGBtoHSB(c.getRed(), c.getGreen(), c.getBlue(), null);
         return Color.getHSBColor(hsb[0], hsb[1], Math.min(1f, hsb[2] * factor));
     }

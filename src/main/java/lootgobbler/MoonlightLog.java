@@ -172,7 +172,30 @@ public final class MoonlightLog {
         if (packet instanceof packets.incoming.NotificationPacket n
                 && n.effect == packets.data.enums.NotificationEffectType.ProgressBar && n.extra == 42) {
             startPhase(n.message);
+        } else if (packet instanceof packets.incoming.NotificationPacket n
+                && n.effect == packets.data.enums.NotificationEffectType.ProgressBar && n.extra == 40 && phaseOpen) {
+            beat(data);
         }
+    }
+
+    /** A beat of the phase's song (a step of its bar): counted when you are in the lantern's range then. */
+    private void beat(TomatoData data) {
+        double d = lanternDistance(data);
+        if (d < 0) return;
+        phase.lantern = true;
+        if (d <= RANGE) phase.beats++;
+    }
+
+    /** Your distance to the lantern that is there now, in tiles, or -1 if there is none. */
+    private double lanternDistance(TomatoData data) {
+        if (data.player == null || data.player.pos == null) return -1;
+        double best = -1;
+        for (Entity e : data.entityList.values()) {
+            if (e == null || e.objectType != LANTERN || e.pos == null || !lanterns.contains(e.id)) continue;
+            double d = Math.sqrt(data.player.distSqrd(e.pos));
+            if (best < 0 || d < best) best = d;
+        }
+        return best;
     }
 
     /** A named progress bar: a new phase of the active boss (not the tutorial's). */
@@ -197,8 +220,9 @@ public final class MoonlightLog {
         if (!phaseOpen || v == null) return;
         phaseOpen = false;
         phase.durationMs = Math.max(1, System.currentTimeMillis() - v.start - phase.startMs);
-        write(String.format(java.util.Locale.ROOT, "PHASE ended: %s (%s) %.1fs%s", phase.title, phase.lantern ? "lantern" : "damage",
-                phase.durationMs / 1000.0, phase.lanternMs > 0 ? ", in range " + 100 * phase.rangeMs / phase.lanternMs + "%" : ""));
+        write(String.format(java.util.Locale.ROOT, "PHASE ended: %s (%s) %.1fs%s%s", phase.title, phase.lantern ? "lantern" : "damage",
+                phase.durationMs / 1000.0, phase.lanternMs > 0 ? ", in range " + 100 * phase.rangeMs / phase.lanternMs + "%" : "",
+                phase.lantern ? ", beats in range " + phase.beats : ""));
     }
 
     /**
