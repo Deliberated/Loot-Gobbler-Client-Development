@@ -72,8 +72,16 @@ public final class ItemDb {
         public boolean isCollectible() {
             boolean dungeonUt = isUT() && !labels.contains("RESKIN") && labels.stream().anyMatch(l -> l.startsWith("ORG_"));
             boolean utSt = labels.contains("TAB_UT") || labels.contains("TAB_ST") || (named && (isUT() || isST())) || dungeonUt;
-            return (utSt && (slotType != 0 && slotType != 10 || quickslotOnly)) || isTopTier();
+            return (utSt && (slotType != 0 && slotType != 10 || quickslotOnly)) || isTopTier() || FORGE_DROPS.contains(key);
         }
+
+        /**
+         * Forge materials worth as much as a drop, though not gear: counted like collectible items (Inventory, the
+         * guild's drops and their points): Concentrated Soul Fire (Moonlight Village) and the Vial of Soul Extract
+         * (Spectral Penitentiary), by the game's names for them.
+         */
+        static final Set<String> FORGE_DROPS = Set.of("Concentrated Soul Fire", "SpecPen Upgrade Token",
+                "SpecPen Upgrade Token Shiny");
 
         public boolean isTopTier() {
             return labels.contains("T14_WEAPON") || labels.contains("T14_ARMOR") || labels.contains("T7_ABILITY")

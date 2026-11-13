@@ -23,7 +23,8 @@ public final class Overlay {
     /** The dungeon you are in: portal, rank, amulet and in Moonlight Village the flames (OverlayBadge). */
     public static final Overlay DUNGEON = new Overlay("dungeon", "Dungeon",
             "The dungeon you are in: its portal, your rank once you hit the boss, the amulet while it recharges"
-                    + " from a save, and in Moonlight Village the flames of the run and of the current lantern phase.",
+                    + " from a save, and in Moonlight Village the flames of the fight (the three dancers, then Umi), the"
+                    + " loot tier they reach with the flames the next tier needs, and the latest phase's flames.",
             "Not in a dungeon", () -> new OverlayBadge(false));
     /** Your mana as a bar. */
     public static final Overlay MANA = new Overlay("mana", "Mana",

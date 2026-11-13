@@ -19,8 +19,9 @@ import java.util.Map;
 /**
  * The overlay's dungeon box, a short version of the title bar's: the portal | your rank "#x/y" (once you hit the
  * main boss) | the amulet (while it charges from a save in this dungeon), and in Moonlight Village | the flames of
- * the run so far | the current lantern phase's beats in the lantern's range (counting up live, kept with "FINAL" when
- * the phase ends, 0 again when the next phase starts). Split by thin lines. One width for the whole dungeon (room
+ * the fight you are in (the three dancers together, or Umi) with the loot tier they reach (a chest in its color)
+ * and the flames the next tier needs | the latest phase's flames as under DPS ("..." while it runs, kept with "FINAL" when
+ * the phase ends, "..." again when the next phase starts). Split by thin lines. One width for the whole dungeon (room
  * for the most it can show), one for normal dungeons and a wider one for Moonlight Village. Hidden outside dungeons.
  */
 final class OverlayBadge extends JPanel {
@@ -36,6 +37,8 @@ final class OverlayBadge extends JPanel {
     private final JLabel amulet = new JLabel();
     private final JLabel total = new JLabel();
     private final JLabel phase = bold();
+    private final JLabel tier = new JLabel();   // the loot tier the total reaches, as a chest in its color
+    private final JLabel next = new JLabel();   // the flames the next tier still needs ("+4 / to T3"), or MAX
     private final JLabel fin = new JLabel("FINAL");
     private final Sep rankSep = new Sep(), amuletSep = new Sep(), totalSep = new Sep(), phaseSep = new Sep();
     private final Timer poll = new Timer(300, e -> refresh());   // the lantern count changes without an event
@@ -57,6 +60,14 @@ final class OverlayBadge extends JPanel {
         fin.setForeground(HELD);
         fin.setFont(fin.getFont().deriveFont(Font.BOLD, fin.getFont().getSize2D() - 2.5f));
         phase.setIconTextGap(4);
+        // the rank always as wide as "#50/50", centered, so the amulet after it keeps its place
+        FontMetrics rm = rank.getFontMetrics(rank.getFont());
+        rank.setPreferredSize(new Dimension(rm.stringWidth("#50/50") + 2, rm.getHeight()));
+        rank.setHorizontalAlignment(SwingConstants.CENTER);
+        next.setForeground(new Color(0xC8C2B4));
+        next.setFont(next.getFont().deriveFont(Font.BOLD, next.getFont().getSize2D() - 2.5f));
+        FontMetrics nm = next.getFontMetrics(next.getFont());   // two short lines, always as wide as the widest
+        next.setPreferredSize(new Dimension(nm.stringWidth("to T4") + 4, 2 * nm.getHeight()));
         add(portal);
         add(rankSep);
         add(rank);
@@ -64,6 +75,8 @@ final class OverlayBadge extends JPanel {
         add(amulet);
         add(totalSep);
         add(total);
+        add(tier);
+        add(next);
         add(phaseSep);
         add(phase);
         add(fin);
@@ -91,11 +104,14 @@ final class OverlayBadge extends JPanel {
         if (mv) {
             phase.setIcon(ActiveDungeonBadge.fit(CharactersView.sprite(FLAME, 40), phase.getFontMetrics(phase.getFont()).getAscent()));
             total.setText(totalText(54));
-            phase.setText("14");
+            showTier(54, true);
+            phase.setText("6");
             phase.setForeground(HELD);
         }
         show(totalSep, total, mv);
         show(phaseSep, phase, mv);
+        tier.setVisible(mv);
+        next.setVisible(mv);
         fin.setVisible(mv);
         setVisible(true);
     }
@@ -114,14 +130,77 @@ final class OverlayBadge extends JPanel {
         Insets in = getInsets();
         FontMetrics b = getFontMetrics(rank.getFont()), f = getFontMetrics(fin.getFont());
         int sep = 2 * GAP + Sep.W;
-        int w = in.left + in.right + GAP + ICON + sep + b.stringWidth("#00/00") + sep + AMULET;
+        int w = in.left + in.right + GAP + ICON + sep + b.stringWidth("#50/50") + sep + AMULET;
         if (mv) {
             JLabel t = new JLabel(totalText(888));
             t.setFont(total.getFont());
             int flame = phase.getIcon() == null ? 0 : phase.getIcon().getIconWidth() + phase.getIconTextGap();
-            w += sep + t.getPreferredSize().width + sep + flame + b.stringWidth("88") + GAP + f.stringWidth("FINAL");
+            w += sep + t.getPreferredSize().width + GAP + Chest.W + GAP + next.getPreferredSize().width
+                    + sep + flame + b.stringWidth("88") + GAP + f.stringWidth("FINAL");
         }
         return new Dimension(Math.max(d.width, w), Math.max(d.height, ICON + in.top + in.bottom));
+    }
+
+    /** The lowest total of each loot tier (1 to 4): the three dancers together, and Umi. */
+    private static final int[] DANCER_TIERS = {2, 40, 58, 78}, UMI_TIERS = {2, 24, 36, 48};
+    private static final Color[] TIER_COLORS = {new Color(0x5D5547), new Color(0x9A7448), new Color(0xB9C3CC),
+            new Color(0xE6B84A), new Color(0xC58CFF)};
+
+    /** The tier these flames reach (0: none yet), a total between two ranges counting as the lower tier. */
+    static int tierOf(int flames, boolean dancers) {
+        int t = 0;
+        for (int start : dancers ? DANCER_TIERS : UMI_TIERS) if (flames >= start) t++;
+        return t;
+    }
+
+    /** The chest in the tier's color and what the next tier still needs. */
+    private void showTier(int flames, boolean dancers) {
+        int[] starts = dancers ? DANCER_TIERS : UMI_TIERS;
+        int t = tierOf(flames, dancers);
+        if (!(tier.getIcon() instanceof Chest c) || c.tier != t) tier.setIcon(new Chest(t, TIER_COLORS[t]));
+        next.setText(t >= starts.length ? "<html><b style='color:#f2ecdc'>MAX</b></html>"
+                : "<html><b style='color:#f2ecdc'>+" + (starts[t] - flames) + "</b><br>to T" + (t + 1) + "</html>");
+    }
+
+    /** A loot chest in its tier's color: lid, body, a dark band and the lock. */
+    private record Chest(int tier, Color color) implements Icon {
+        static final int W = 22, H = 20;
+
+        @Override
+        public void paintIcon(Component c, Graphics g, int x, int y) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.translate(x, y);
+            Color ink = new Color(0x140E08);
+            java.awt.geom.Path2D lid = new java.awt.geom.Path2D.Double();
+            lid.moveTo(2, 10);
+            lid.curveTo(2, 2, 20, 2, 20, 10);
+            lid.closePath();
+            g2.setColor(color);
+            g2.fill(lid);
+            g2.fillRect(2, 10, 18, 9);
+            g2.setColor(ink);
+            g2.setStroke(new BasicStroke(1.2f));
+            g2.draw(lid);
+            g2.drawRect(2, 10, 18, 9);
+            g2.setColor(new Color(20, 14, 8, 115));
+            g2.fillRect(2, 9, 18, 2);
+            g2.setColor(ink);
+            g2.fillRoundRect(9, 9, 4, 5, 2, 2);
+            g2.setColor(new Color(0xF2ECDC));
+            g2.fillRect(10, 10, 2, 3);
+            g2.dispose();
+        }
+
+        @Override
+        public int getIconWidth() {
+            return W;
+        }
+
+        @Override
+        public int getIconHeight() {
+            return H;
+        }
     }
 
     private static String totalText(int flames) {
@@ -164,21 +243,34 @@ final class OverlayBadge extends JPanel {
 
         show(totalSep, total, mv);
         show(phaseSep, phase, mv);
+        tier.setVisible(mv);
+        next.setVisible(mv);
         boolean held = false;
         if (mv) {
             List<DungeonVisits.MvPhase> phases = visit.mvPhases == null ? List.of() : visit.mvPhases;
+            // the total of the fight you are in: the three dancers' phases (88 flames at most), or once Umi starts,
+            // only hers (56 at most); a phase whose boss is not known yet goes with the fight before it
+            Boolean dancers = null;
+            for (int i = phases.size() - 1; i >= 0 && dancers == null; i--) {
+                if (phases.get(i).boss != 0) dancers = MoonlightLog.DANCERS.contains(phases.get(i).boss);
+            }
             int flames = 0;
-            for (DungeonVisits.MvPhase ph : phases) flames += ph.flames;
+            for (DungeonVisits.MvPhase ph : phases) {
+                boolean ofDancers = ph.boss == 0 ? dancers == null || dancers : MoonlightLog.DANCERS.contains(ph.boss);
+                if (dancers == null || ofDancers == dancers) flames += ph.flames;
+            }
             total.setText(totalText(flames));
+            showTier(flames, dancers == null || dancers);
             DungeonVisits.MvPhase now = phases.isEmpty() ? null : phases.get(phases.size() - 1);
-            int beats = now != null && now.lantern ? now.beats : 0;
-            held = now != null && now.lantern && now.durationMs > 0;   // the phase is over: its number stays
-            phase.setText(String.valueOf(beats));
-            phase.setForeground(beats == 0 && !held ? ZERO : held ? HELD : TEXT);
+            // as under DPS: a phase's flames are the game's, given when it ends ("..." until then); they stay
+            // until the next phase starts
+            held = now != null && now.durationMs > 0;
+            phase.setText(now == null ? "0" : held ? String.valueOf(now.flames) : "...");
+            phase.setForeground(held ? HELD : ZERO);
         }
         fin.setVisible(held);
 
-        String state = visit.dungeon + '|' + r + '|' + ami + '|' + total.getText() + '|' + phase.getText() + '|' + held;
+        String state = visit.dungeon + '|' + r + '|' + ami + '|' + total.getText() + '|' + next.getText() + '|' + phase.getText() + '|' + held;
         if (!poll.isRunning()) poll.start();
         if (!isVisible()) {
             setVisible(true);
