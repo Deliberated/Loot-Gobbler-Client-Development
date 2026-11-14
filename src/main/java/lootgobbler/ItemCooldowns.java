@@ -46,6 +46,21 @@ public final class ItemCooldowns {
     });
     // by sound: the matrices share one cooldown, whichever of them fired
     private static final Map<ItemSound, ScheduledFuture<?>> ready = new HashMap<>();
+    private static final Map<ItemSound, Running> running = new java.util.LinkedHashMap<>();
+
+    /** A cooldown that is running: the item used (its type), its name, when it started and how long it takes (ms). */
+    public record Running(int type, String name, long start, long durationMs) {
+        public long left(long now) {
+            return Math.max(0, start + durationMs - now);
+        }
+    }
+
+    /** The cooldowns running now, in the order they started. */
+    public static synchronized java.util.List<Running> running() {
+        long now = System.currentTimeMillis();
+        running.values().removeIf(r -> r.left(now) <= 0);
+        return new java.util.ArrayList<>(running.values());
+    }
 
     private ItemCooldowns() {
     }
@@ -129,6 +144,8 @@ public final class ItemCooldowns {
         if (w == null) return;
         ScheduledFuture<?> old = ready.get(w.sound());
         if (old != null) old.cancel(false);
+        running.remove(w.sound());   // a new use goes to the end
+        running.put(w.sound(), new Running(itemType, w.name(), System.currentTimeMillis(), w.cooldownMs()));
         ready.put(w.sound(), TIMER.schedule(() -> {
             AppLog.log("items", w.name() + " ready again");
             w.sound().play();

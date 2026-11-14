@@ -18,6 +18,12 @@ public class StatusBar extends JPanel {
     private final JButton sniffer = new JButton();
     private final JButton overlay = new JButton();
     private final UpdateButton update = new UpdateButton();
+    private static volatile boolean snifferRunning;
+
+    /** Whether the sniffer runs (as the status bar shows it). */
+    public static boolean snifferRunning() {
+        return snifferRunning;
+    }
 
     public StatusBar(Runnable toggleSniffer, Runnable openServer) {
         super(new BorderLayout());
@@ -27,6 +33,7 @@ public class StatusBar extends JPanel {
         sniffer.putClientProperty("FlatLaf.styleClass", "statusButton");
         sniffer.setFocusable(false);
         sniffer.addActionListener(e -> toggleSniffer.run());
+        GuideTargets.mark("sniffer", sniffer);
         update.addActionListener(e -> Updater.clicked(SwingUtilities.getWindowAncestor(this)));
         Updater.onChange(() -> SwingUtilities.invokeLater(update::refresh));
 
@@ -119,6 +126,7 @@ public class StatusBar extends JPanel {
     }
 
     public void setRunning(boolean running) {
+        snifferRunning = running;
         SwingUtilities.invokeLater(() -> {
             state.setIcon(new Section.Square(running ? Palette.GREEN : Palette.STONE, 10));
             state.setText(running ? "SNIFFING" : "SNIFFER OFF");

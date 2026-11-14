@@ -34,15 +34,29 @@ public final class Overlay {
     public static final Overlay DPS = new Overlay("dps", "DPS",
             "The boss you are fighting: your place, damage and share as under DPS, with the player above you and the"
                     + " one below.", "No boss fight", () -> new DpsOverlay(false));
-    private static final List<Overlay> ALL = List.of(DUNGEON, MANA, DPS);
+    /** The item cooldowns running: each item with a golden circle behind it running out. */
+    public static final Overlay BUFFS = new Overlay("buffs", "Buffs",
+            "Your item cooldowns while they run: the Coral Juice Refinery, the Miniature Alien Generator, the Protective"
+                    + " Matrix and the Amulet of Restoration after it saved you. Behind each item a golden circle runs"
+                    + " out until it can be used again, with the time left on it. While none runs, an empty grey circle.",
+            "No cooldowns running", () -> new BuffOverlay(false), true);
+    private static final List<Overlay> ALL = List.of(DUNGEON, MANA, DPS, BUFFS);
     private static final List<Runnable> anyListeners = new ArrayList<>();
 
     final String id, title, description, idleText;
+    /** Grows and shrinks around its middle (kept where it is: the middle), placed under your character at first. */
+    private final boolean centered;
     private final Supplier<JComponent> content;
     private final List<Runnable> listeners = new ArrayList<>();
     private JWindow window;
 
     private Overlay(String id, String title, String description, String idleText, Supplier<JComponent> content) {
+        this(id, title, description, idleText, content, false);
+    }
+
+    private Overlay(String id, String title, String description, String idleText, Supplier<JComponent> content,
+                    boolean centered) {
+        this.centered = centered;
         this.id = id;
         this.title = title;
         this.description = description;
@@ -170,7 +184,11 @@ public final class Overlay {
                 super.revalidate();
                 SwingUtilities.invokeLater(() -> {
                     idleBox.setVisible(!live.isVisible());
-                    if (w.isVisible() && !w.getSize().equals(w.getPreferredSize())) w.pack();
+                    if (w.isVisible() && !w.getSize().equals(w.getPreferredSize())) {
+                        int middle = w.getX() + w.getWidth() / 2;
+                        w.pack();
+                        if (centered) w.setLocation(middle - w.getWidth() / 2, w.getY());
+                    }
                 });
             }
         };
@@ -206,7 +224,7 @@ public final class Overlay {
             public void mouseReleased(MouseEvent e) {
                 if (grab[0] == null) return;
                 grab[0] = null;
-                PropertiesManager.setProperties(key("X"), String.valueOf(w.getX()));
+                PropertiesManager.setProperties(key(centered ? "CX" : "X"), String.valueOf(centered ? w.getX() + w.getWidth() / 2 : w.getX()));
                 PropertiesManager.setProperties(key("Y"), String.valueOf(w.getY()));
             }
         };
@@ -225,9 +243,9 @@ public final class Overlay {
     /** Where it was last, if still on a screen; else near the top right of the main screen, one below the other. */
     private Point savedLocation(Dimension size) {
         try {
-            String x = PropertiesManager.getProperty(key("X")), y = PropertiesManager.getProperty(key("Y"));
+            String x = PropertiesManager.getProperty(key(centered ? "CX" : "X")), y = PropertiesManager.getProperty(key("Y"));
             if (x != null && y != null) {
-                Point p = new Point(Integer.parseInt(x.trim()), Integer.parseInt(y.trim()));
+                Point p = new Point(Integer.parseInt(x.trim()) - (centered ? size.width / 2 : 0), Integer.parseInt(y.trim()));
                 Rectangle grip = new Rectangle(p.x, p.y, Math.max(40, size.width / 2), Math.max(20, size.height / 2));
                 for (GraphicsDevice d : GraphicsEnvironment.getLocalGraphicsEnvironment().getScreenDevices()) {
                     if (d.getDefaultConfiguration().getBounds().intersects(grip)) return p;
@@ -235,6 +253,14 @@ public final class Overlay {
             }
         } catch (NumberFormatException ignored) {
             // a broken entry: place it anew
+        }
+        if (centered) {
+            // under your character: the game draws it in the middle of the play field, which is the screen without
+            // the side bar on the right (as wide as a third of the height), a little below the middle
+            Rectangle s = GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice()
+                    .getDefaultConfiguration().getBounds();
+            int field = s.width - s.height / 3;
+            return new Point(s.x + field / 2 - size.width / 2, s.y + (int) Math.round(s.height * 0.70));
         }
         Rectangle main = GraphicsEnvironment.getLocalGraphicsEnvironment().getMaximumWindowBounds();
         return new Point(main.x + main.width - size.width - 40, main.y + 80 + 70 * ALL.indexOf(this));

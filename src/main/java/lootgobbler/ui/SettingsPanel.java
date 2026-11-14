@@ -30,7 +30,7 @@ public class SettingsPanel extends JPanel {
         sections.add(Box.createVerticalStrut(8));
         sections.add(new Section("Startup Sound", Palette.GOLD, startupBody()));
         sections.add(Box.createVerticalStrut(8));
-        sections.add(new Section("Item Sounds", Palette.GOLD, itemSoundsBody()));
+        sections.add(GuideTargets.mark("settings.itemSounds", new Section("Item Sounds", Palette.GOLD, itemSoundsBody())));
         sections.add(Box.createVerticalStrut(8));
         sections.add(new Section("Ping Lists", Palette.GOLD, pingListsBody()));
         sections.add(Box.createVerticalStrut(8));

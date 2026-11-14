@@ -98,6 +98,7 @@ public class CollectionPanel extends JPanel {
         headerActions.add(search);
         headerActions.add(gridFilterPicker);
         Section main = new Section("Collection · Items", Palette.GOLD, scroll(grid)).actions(headerActions);
+        GuideTargets.mark("inventory.grid", main);
 
         JPanel top = column(new Section("Progress", Palette.GREEN, progressBody("Collected", progress, progressText)),
                 new Section("Actions", Palette.BLUE, actionsBody()));

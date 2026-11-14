@@ -23,7 +23,9 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * <ul>
  * <li>you were hit just before,</li>
  * <li>your life was at 20% or below just before (or is now, without the heal), and</li>
- * <li>the amulet's last save is at least 30 minutes ago.</li>
+ * <li>the amulet's last save is at least 30 minutes ago, and</li>
+ * <li>the game shows its heal on you, "+120", within HEAL_WINDOW_MS of it (going to the Nexus at low life also makes
+ * you Invulnerable for a moment, without the heal).</li>
  * </ul>
  * Invulnerable from anything else (a priest's or paladin's buff, a dungeon's shield) misses at least one of these.
  * Game notifications about your character and system texts that mention the amulet count too. Each save is kept with
@@ -46,6 +48,10 @@ public final class AmuletSaves implements Syncable {
     private static final double LOW_LIFE = 0.2;
     private static final int HEAL = 120, MIN_HIT = 2;
     private static final long COOLDOWN_MS = 1800_000, LOOK_BACK_MS = 1500;
+    private static final long HEAL_WINDOW_MS = 1500;   // the "+120" comes with the Invulnerable, before or after it
+    private volatile long lastHealAt;   // the game last showed "+120" on you
+    private long pendingAt;             // an Invulnerable that passed the other checks, waiting for the heal
+    private String pendingMessage;
     // what the first version counted: any Invulnerable while wearing it, buffs included
     private static final String OLD_RULE = ": Invulnerable (";
     private boolean wasInvulnerable;
@@ -136,6 +142,11 @@ public final class AmuletSaves implements Syncable {
         String msg = p.message == null ? "" : p.message;
         boolean mine = data != null && data.player != null && (p.objectId == data.player.id || p.senderObjectId == data.player.id);
         if (!msg.isBlank()) AppLog.log("notify", p.effect + (mine ? " (you)" : "") + ": " + msg);
+        if (mine && isAmuletHeal(msg)) {
+            lastHealAt = System.currentTimeMillis();
+            String waiting = takePending(lastHealAt);
+            if (waiting != null) record(data, waiting);
+        }
         if (mine && mentionsAmulet(msg)) record(data, msg);
     }
 
@@ -154,12 +165,27 @@ public final class AmuletSaves implements Syncable {
         if (a != null && a.invulnerable() && invulnerable && !wasInvulnerable && max > 0) {
             String why = notTheAmulet(data, now, hp, max);
             if (why == null) {
-                record(data, String.format(Locale.ROOT, "%s: hit at %d%% life, Invulnerable", a.name(), lowestPercent(now, hp, max)));
+                String msg = String.format(Locale.ROOT, "%s: hit at %d%% life, Invulnerable", a.name(), lowestPercent(now, hp, max));
+                if (now - lastHealAt <= HEAL_WINDOW_MS) {
+                    record(data, msg);
+                } else {
+                    synchronized (this) {   // the heal may still come
+                        pendingAt = now;
+                        pendingMessage = msg;
+                    }
+                }
             } else {
                 AppLog.log("game", "Invulnerable while wearing " + a.name() + ", not counted: " + why);
             }
         }
         wasInvulnerable = invulnerable;
+        synchronized (this) {
+            if (pendingAt > 0 && now - pendingAt > HEAL_WINDOW_MS) {
+                AppLog.log("game", "Invulnerable while wearing the amulet, not counted: no +120 heal (e.g. going to the Nexus)");
+                pendingAt = 0;
+                pendingMessage = null;
+            }
+        }
         // your life over the last moments, to see how low it was right before
         if (max > 0) life.addLast(new long[]{now, hp, max});
         while (!life.isEmpty() && now - life.peekFirst()[0] > LOOK_BACK_MS) life.removeFirst();
@@ -235,6 +261,20 @@ public final class AmuletSaves implements Syncable {
             AppLog.log("notify", "text: " + p.text);
             record(data, p.text);
         }
+    }
+
+    /** The waiting Invulnerable's message if it is within the heal's window of t (and no longer waiting), else null. */
+    private synchronized String takePending(long t) {
+        if (pendingAt == 0 || Math.abs(t - pendingAt) > HEAL_WINDOW_MS) return null;
+        String m = pendingMessage;
+        pendingAt = 0;
+        pendingMessage = null;
+        return m;
+    }
+
+    /** The game's heal number on you for the amulet's 120: {"k":"s.plus_symbol","t":{"amount":"120",}}. */
+    private static boolean isAmuletHeal(String s) {
+        return s.contains("plus_symbol") && s.replace(" ", "").contains("\"amount\":\"" + HEAL + "\"");
     }
 
     private static boolean mentionsAmulet(String s) {

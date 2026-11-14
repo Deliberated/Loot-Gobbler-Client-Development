@@ -12,6 +12,9 @@ import java.util.function.IntConsumer;
  */
 public final class ItemLinks {
     private static IntConsumer opener;
+    private static final java.util.List<IntConsumer> openListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
+    /** Client property on a linked icon: the item's id (e.g. for the Newcomer's Guide to find a UT or ST). */
+    static final String ITEM = "lootgobbler.itemLink";
 
     private ItemLinks() {
     }
@@ -23,6 +26,12 @@ public final class ItemLinks {
 
     public static void open(int itemId) {
         if (opener != null) opener.accept(itemId);
+        for (IntConsumer l : openListeners) l.accept(itemId);
+    }
+
+    /** Called after an item was opened in the Inventory. */
+    static void onOpen(IntConsumer listener) {
+        openListeners.add(listener);
     }
 
     /**
@@ -40,8 +49,31 @@ public final class ItemLinks {
             else c.setToolTipText(tip + " - " + note);
             return c;
         }
-        c.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        Clicks.onClick(c, () -> open(itemId));
+        c.putClientProperty(ITEM, itemId);
+        // only the icon itself: a label stretched by its layout would otherwise take clicks around the icon too
+        Clicks.onClick(c, (java.awt.event.MouseEvent e) -> {
+            if (SwingUtilities.isLeftMouseButton(e) && iconArea(c).contains(e.getPoint())) open(itemId);
+        });
+        c.addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
+            @Override
+            public void mouseMoved(java.awt.event.MouseEvent e) {
+                c.setCursor(iconArea(c).contains(e.getPoint()) ? Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) : null);
+            }
+        });
         return c;
+    }
+
+    /** Where c draws its item icon (a label's icon), in c's coordinates; all of c for anything else. */
+    static Rectangle iconArea(JComponent c) {
+        if (c instanceof JLabel l && l.getIcon() != null) {
+            Insets in = l.getInsets();
+            Rectangle view = new Rectangle(in.left, in.top, l.getWidth() - in.left - in.right, l.getHeight() - in.top - in.bottom);
+            Rectangle icon = new Rectangle(), text = new Rectangle();
+            SwingUtilities.layoutCompoundLabel(l, l.getFontMetrics(l.getFont()), l.getText(), l.getIcon(),
+                    l.getVerticalAlignment(), l.getHorizontalAlignment(), l.getVerticalTextPosition(),
+                    l.getHorizontalTextPosition(), view, icon, text, l.getText() == null || l.getText().isEmpty() ? 0 : l.getIconTextGap());
+            return icon;
+        }
+        return new Rectangle(0, 0, c.getWidth(), c.getHeight());
     }
 }

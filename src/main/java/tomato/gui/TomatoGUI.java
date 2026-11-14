@@ -168,12 +168,32 @@ public class TomatoGUI {
         tabbedPane.restoreOrder("Profile", "Inventory", "Characters", "Battles", "Social", "Guild", "Server", "Settings");
         lootgobbler.ui.NavigationButtons.install();   // the mouse's back and forward buttons go through the views
         makeFrame();
+        lootgobbler.ui.NewcomerGuide.install(frame, new lootgobbler.ui.NewcomerGuide.Nav() {
+            public void tab(String title) {
+                tabbedPane.show(title);
+            }
+
+            public void character(int charId) {
+                characters.showCharacter(charId);
+            }
+
+            public void caravan() {
+                guild.show("Loot Caravan");
+            }
+
+            public void dungeons() {
+                dps.showDungeons();
+            }
+        });
 
         frame.setVisible(true);
         lootgobbler.ui.Overlay.restoreAll();   // the overlays that were on when the app was closed
         lootgobbler.StartupSound.playSaved();
         lootgobbler.ui.WhatsNewDialog.showAfterUpdate(frame);   // after an update; reads its settings before the welcome
-        SwingUtilities.invokeLater(() -> lootgobbler.ui.WelcomeDialog.showOnFirstStart(frame));   // once the window is up
+        SwingUtilities.invokeLater(() -> {   // once the window is up: the greeting, then the guide on the first start
+            boolean first = lootgobbler.ui.WelcomeDialog.showOnFirstStart(frame);
+            lootgobbler.ui.NewcomerGuide.afterStart(first);
+        });
         lootgobbler.Updater.start();   // first check a few seconds after start, then every hour
         lootgobbler.ServerSync.get().start();          // syncs player data whenever logged in to a server
         lootgobbler.GobblerServer.get().reconnect();   // to the saved Loot Gobbler server, if any

@@ -101,9 +101,9 @@ public class ServerPanel extends JPanel {
         JPanel sections = new JPanel();
         sections.setLayout(new BoxLayout(sections, BoxLayout.Y_AXIS));
         sections.setBorder(new EmptyBorder(8, 8, 8, 8));
-        sections.add(new Section("Connection", Palette.BLUE, connectionBody));
+        sections.add(GuideTargets.mark("server.connection", new Section("Connection", Palette.BLUE, connectionBody)));
         sections.add(Box.createVerticalStrut(8));
-        sections.add(new Section("Account", Palette.GOLD, accountBody));
+        sections.add(GuideTargets.mark("server.account", new Section("Account", Palette.GOLD, accountBody)));
         sections.add(Box.createVerticalStrut(8));
         sections.add(sync);
         sections.add(Box.createVerticalStrut(8));
@@ -176,7 +176,7 @@ public class ServerPanel extends JPanel {
         JPanel addressRow = row();
         addressRow.add(new JLabel("Server address"));
         addressRow.add(address);
-        addressRow.add(button("Connect", "primary", this::connect));
+        addressRow.add(GuideTargets.mark("server.connect", button("Connect", "primary", this::connect)));
         addressRow.add(button("Test connection", null, this::testConnection));
         if (!server.url().isEmpty()) addressRow.add(button("Forget", null, this::forget));
         connectionBody.add(addressRow);
@@ -298,7 +298,7 @@ public class ServerPanel extends JPanel {
             accountBody.add(formRow("Token", registerToken));
             JPanel buttons = row();
             buttons.add(button("Log in", "primary", this::login));
-            JButton register = button("Register", null, this::register);
+            JButton register = GuideTargets.mark("server.register", button("Register", null, this::register));
             register.setEnabled(identified);
             if (!identified) register.setToolTipText("Loot Gobbler needs to see your name in-game first");
             buttons.add(register);
@@ -376,6 +376,7 @@ public class ServerPanel extends JPanel {
                     }
                     password.setText("");
                     registerToken.setText("");
+                    NewcomerGuide.registeredAccount();
                     accountFeedback.setText("active".equals(u.status) ? " "
                             : "Registered. A moderator or admin needs to accept " + u.ign + " before you can log in.");
                 }));
@@ -415,24 +416,58 @@ public class ServerPanel extends JPanel {
                 }));
     }
 
-    /** Change password: the current one, and the new one twice. Your other devices are logged out. */
+    /**
+     * Change password: proven with the current one or, if you do not know it, with a reset code from a moderator or
+     * admin; then the new one twice. Your other devices are logged out (with a code this one too, so it logs in
+     * again with the new password).
+     */
     private void changePassword() {
+        User me = server.user();
+        if (me == null) return;
+        JRadioButton byPassword = new JRadioButton("Current password", true), byCode = new JRadioButton("Reset code");
+        ButtonGroup how = new ButtonGroup();
+        how.add(byPassword);
+        how.add(byCode);
+        JPanel choice = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        choice.setOpaque(false);
+        choice.add(byPassword);
+        choice.add(Box.createHorizontalStrut(12));
+        choice.add(byCode);
         JPasswordField current = new JPasswordField(14), pw = new JPasswordField(14), again = new JPasswordField(14);
-        JPanel form = form("Your other devices are logged out and log in again with the new password.",
-                "Current password", current, "New password", pw, "New password again", again);
+        JTextField code = field(20, "LGR-XXXX-XXXX-XXXX");
+        JLabel proofLabel = new JLabel("Current password");
+        JPanel proof = new JPanel(new CardLayout());
+        proof.setOpaque(false);
+        proof.add(current, "password");
+        proof.add(code, "code");
+        Runnable flip = () -> {
+            boolean c = byCode.isSelected();
+            ((CardLayout) proof.getLayout()).show(proof, c ? "code" : "password");
+            proofLabel.setText(c ? "Reset code" : "Current password");
+        };
+        byPassword.addActionListener(e -> flip.run());
+        byCode.addActionListener(e -> flip.run());
+        JPanel form = form("Prove it is you with your current password, or with a reset code from a moderator or admin"
+                        + " if you do not know it. Your other devices are logged out.",
+                "With", choice, proofLabel, proof, "New password", pw, "New password again", again);
         if (JOptionPane.showConfirmDialog(this, form, "Change password", JOptionPane.OK_CANCEL_OPTION,
                 JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) return;
+        boolean withCode = byCode.isSelected();
         String newPw = new String(pw.getPassword());
-        String problem = current.getPassword().length == 0 ? "Enter your current password."
-                : newPasswordProblem(newPw, new String(again.getPassword()));
+        String problem = withCode ? (code.getText().isBlank() ? "Enter the reset code." : null)
+                : (current.getPassword().length == 0 ? "Enter your current password." : null);
+        if (problem == null) problem = newPasswordProblem(newPw, new String(again.getPassword()));
         if (problem != null) {
             accountFeedback.setText(problem);
             return;
         }
         accountFeedback.setText("Changing the password...");
-        server.changePassword(new String(current.getPassword()), newPw).whenComplete((v, e) ->
-                SwingUtilities.invokeLater(() -> accountFeedback.setText(e != null ? GobblerServer.message(e)
-                        : "Password changed. Your other devices need to log in again.")));
+        CompletableFuture<?> change = withCode
+                // a code ends every session, this one too: logged in again right away with the new password
+                ? server.resetPassword(me.ign, code.getText(), newPw).thenCompose(v -> server.login(me.ign, newPw))
+                : server.changePassword(new String(current.getPassword()), newPw);
+        change.whenComplete((v, e) -> SwingUtilities.invokeLater(() -> accountFeedback.setText(e != null
+                ? GobblerServer.message(e) : "Password changed. Your other devices need to log in again.")));
     }
 
     /** Why a new password cannot be used (as the server checks it), or null. */
@@ -459,7 +494,8 @@ public class ServerPanel extends JPanel {
         for (int i = 0; i + 1 < labelsAndFields.length; i += 2) {
             c.gridy++;
             c.gridx = 0;
-            p.add(new JLabel((String) labelsAndFields[i]), c);
+            Object label = labelsAndFields[i];   // a text, or a label of its own (that changes)
+            p.add(label instanceof Component k ? k : new JLabel(String.valueOf(label)), c);
             c.gridx = 1;
             p.add((Component) labelsAndFields[i + 1], c);
         }

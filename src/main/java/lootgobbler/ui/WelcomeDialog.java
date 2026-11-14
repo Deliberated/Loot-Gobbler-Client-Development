@@ -78,11 +78,13 @@ public class WelcomeDialog extends JDialog {
     }
 
     /**
-     * Shows the greeting if it has never been shown, and remembers that it was.
+     * Shows the greeting if it has never been shown, and remembers that it was. Returns whether it was shown (the
+     * very first start).
      */
-    public static void showOnFirstStart(Window owner) {
-        if ("true".equals(PropertiesManager.getProperty(KEY_SHOWN))) return;
+    public static boolean showOnFirstStart(Window owner) {
+        if ("true".equals(PropertiesManager.getProperty(KEY_SHOWN))) return false;
         PropertiesManager.setProperties(KEY_SHOWN, "true");
         new WelcomeDialog(owner).setVisible(true);
+        return true;
     }
 }

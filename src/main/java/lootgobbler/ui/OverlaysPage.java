@@ -51,7 +51,8 @@ final class OverlaysPage extends JPanel {
             stage.add(sample("Any dungeon", new OverlayBadge("Ocean Trench")));
             stage.add(sample("Moonlight Village", new OverlayBadge(MoonlightLog.DUNGEON)));
         } else {
-            stage.add(sample(null, o == Overlay.MANA ? new ManaBar(true) : new DpsOverlay(true)));
+            stage.add(sample(null, o == Overlay.MANA ? new ManaBar(true)
+                    : o == Overlay.BUFFS ? new BuffOverlay(true) : new DpsOverlay(true)));
         }
         stage.setAlignmentX(LEFT_ALIGNMENT);
         body.add(stage);

@@ -271,7 +271,7 @@ public class ProfileView extends SubTabs {
             p.add(Box.createVerticalStrut(16));
             p.add(left(fameGain(store, most, chars, since)));
         }
-        return card(p);
+        return GuideTargets.mark("profile.overview", card(p));   // the Newcomer's Guide frames all of it
     }
 
     /** The character's skin, class, stats maxed and fame (level below 20); click: it in the Characters tab. */
@@ -295,6 +295,7 @@ public class ProfileView extends SubTabs {
         block.setToolTipText("Open in Characters");
         int id = c.charId;
         clickable(block, () -> openCharacter.accept(id));
+        GuideTargets.mark("profile.character", block);
         return block;
     }
 

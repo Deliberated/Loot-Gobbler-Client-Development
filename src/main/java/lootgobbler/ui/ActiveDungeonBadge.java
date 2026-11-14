@@ -35,9 +35,24 @@ public final class ActiveDungeonBadge extends JPanel {
     private long start;
     private String dungeon = "";
     private Color tint = FALLBACK;
+    private static final String PREVIEW_DUNGEON = "Lost Halls";
+    private boolean preview;      // the Newcomer's Guide shows what it looks like: a sample, nothing is counted
+    private long previewStart;
+
+    /**
+     * Shows a sample dungeon while you are in none (for the Newcomer's Guide), or ends that. Only shown here:
+     * nothing is logged or counted; a real dungeon you enter meanwhile is shown as usual.
+     */
+    void preview(boolean on) {
+        if (on == preview) return;
+        preview = on;
+        previewStart = System.currentTimeMillis() - 252_000;   // in it for 4:12
+        refresh();
+    }
 
     public ActiveDungeonBadge(Runnable open) {
         super(new BorderLayout());
+        GuideTargets.mark("title.dungeon", this);
         setOpaque(false);
         setBorder(new EmptyBorder(3, 12, 3, 10));
         for (JLabel l : new JLabel[]{since, rank, flames}) l.setForeground(new Color(0xF2ECDC));
@@ -139,7 +154,8 @@ public final class ActiveDungeonBadge extends JPanel {
 
     private void refresh() {
         lootgobbler.DungeonVisits.Visit visit = lootgobbler.DungeonVisits.get().current();
-        if (visit == null) {
+        boolean sample = visit == null && preview;
+        if (visit == null && !preview) {
             clock.stop();
             if (isVisible()) {
                 setVisible(false);
@@ -147,18 +163,19 @@ public final class ActiveDungeonBadge extends JPanel {
             }
             return;
         }
-        Run run = DpsHistory.get().live();
-        Boss boss = run == null || run.guildHall || !run.dungeon.equals(visit.dungeon) ? null : run.mainBoss();
+        String name = sample ? PREVIEW_DUNGEON : visit.dungeon;
+        Run run = sample ? null : DpsHistory.get().live();
+        Boss boss = run == null || run.guildHall || !run.dungeon.equals(name) ? null : run.mainBoss();
         PlayerRow me = boss == null ? null : boss.me();
-        Icon portal = icons.computeIfAbsent(visit.dungeon, d -> fit(ProfileView.dungeonIcon(d, 64)));
+        Icon portal = icons.computeIfAbsent(name, d -> fit(ProfileView.dungeonIcon(d, 64)));
         icon.setIcon(portal);
-        icon.setToolTipText(visit.dungeon);
-        tint = tints.computeIfAbsent(visit.dungeon, d -> tint(portal));
+        icon.setToolTipText(sample ? name + " (an example: this is how a dungeon you are in shows)" : name);
+        tint = tints.computeIfAbsent(name, d -> tint(portal));
         // the rank only once you have one (you hit the main boss)
         rank.setVisible(me != null);
         if (me != null) rank.setText("<html><b>Rank #" + boss.rankOf(me) + " / " + boss.players.size() + "</b></html>");
-        dungeon = visit.dungeon;
-        start = visit.start;
+        dungeon = name;
+        start = sample ? previewStart : visit.start;
         updateFlames(visit);
         updateSince();
         if (!clock.isRunning()) clock.start();

@@ -48,7 +48,7 @@ public class DpsLoggerView extends JPanel {
     private final Timer clock = new Timer(1000, e -> tick());   // the visit in progress counts up
     private JLabel nowWhen;   // the time line of the visit in progress
     private Visit nowVisit;
-    private final JPanel detail = new JPanel();
+    private final JPanel detail = GuideTargets.mark("battles.detail", new JPanel());
     private final Map<Long, Long> fame = new HashMap<>();   // fame gained per finished visit (by its start)
     private final Map<Long, Boolean> done = new HashMap<>();   // whether a finished visit was completed (by its start)
     private final java.util.Set<java.time.LocalDate> collapsedDays = new java.util.HashSet<>();   // days showing only their date
@@ -730,7 +730,7 @@ public class DpsLoggerView extends JPanel {
             for (Exalt e : merged(v)) exalts.add(exaltRow(e));
         }
         detail.add(CharactersView.box("Exaltations", Palette.PURPLE, exalts));
-        detail.add(CharactersView.box("Guild", Palette.GREEN, guildSection(v, run, current)));
+        detail.add(GuideTargets.mark("battles.guild", CharactersView.box("Guild", Palette.GREEN, guildSection(v, run, current))));
         detail.revalidate();
         detail.repaint();
     }

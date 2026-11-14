@@ -56,7 +56,7 @@ public class GuildPanel extends SubTabs {
         leaderboardSection = new Section("Leaderboard", Palette.GOLD, wrap(FitWidthPanel.scroll(leaderboardBody, 24)))
                 .actions(button("Refresh", this::refresh));
         memberSection = new Section("Member", Palette.BLUE, wrap(FitWidthPanel.scroll(memberBody, 24)));
-        page(CARAVAN, caravan);
+        page(CARAVAN, GuideTargets.mark("guild.caravan", caravan));
         page(QUEST_MAP, questMap);
         page(LEADERBOARD, leaderboardSection);
         page(DROPS, new Section("Recent Drops", Palette.PURPLE, wrap(FitWidthPanel.scroll(dropsBody, 24)))

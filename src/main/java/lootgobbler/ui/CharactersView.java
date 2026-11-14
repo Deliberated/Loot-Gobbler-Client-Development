@@ -91,9 +91,9 @@ public class CharactersView extends JPanel {
         }, "Alive", "Graveyard");
         list.setBorder(new EmptyBorder(8, 8, 8, 8));
         panel.setBorder(new EmptyBorder(0, 0, 0, 0));   // the boxes sit right at the divider, as on the Classes page
-        Section left = new Section("Characters", Palette.GOLD, wrap(scroll(list)))
+        Section left = GuideTargets.mark("characters.list", new Section("Characters", Palette.GOLD, wrap(scroll(list))))
                 .actions(played, rangePicker, (JComponent) Box.createHorizontalStrut(24), alivePicker);
-        JComponent right = scroll(panel);   // a column of boxes (character, loadout, ..., fame gain)
+        JComponent right = GuideTargets.mark("characters.detail", scroll(panel));   // a column of boxes (character, loadout, ..., fame gain)
         // about half and half; a new name, so earlier saved widths of the narrow panel do not apply
         SideSplit characters = new SideSplit(left, right, "characterDetail", 760, 300);   // drag the gap to resize
         characters.minMain(left.getPreferredSize().width + 24);   // keep the header readable
@@ -335,7 +335,7 @@ public class CharactersView extends JPanel {
         l.setAlignmentX(LEFT_ALIGNMENT);
         list.add(l);
         for (Char c : chars) {
-            list.add(card(c));
+            list.add(c.charId == selected ? GuideTargets.mark("characters.card", card(c)) : card(c));
             list.add(Box.createVerticalStrut(6));
         }
     }
@@ -668,13 +668,13 @@ public class CharactersView extends JPanel {
         // one box per part, like the boxes on the right of the Classes page (the card on the left says who it is)
         JComponent loadoutBox = box("Loadout", Palette.GOLD, CharacterDetail.loadout(c));
         ((Section) loadoutBox.getComponent(0)).actions(LoadoutCard.copyButton(c));   // the loadout as a picture to share
-        panel.add(loadoutBox);
+        panel.add(GuideTargets.mark("characters.loadout", loadoutBox));
         JComponent suggested = box("Suggested Loadout", Palette.BLUE, CharacterDetail.ideal(c, () -> renderPanel(c)));
         // until a stat is picked, the header says what to do
         if (!CharacterDetail.anyStatChosen()) ((Section) suggested.getComponent(0)).note("(click the preferred stats)");
         ((Section) suggested.getComponent(0)).afterTitle(CharacterDetail.resetButton(() -> renderPanel(c)));
-        panel.add(suggested);
-        panel.add(box("Inventory", Palette.PURPLE, CharacterDetail.inventory(c)));
+        panel.add(GuideTargets.mark("characters.suggested", suggested));
+        panel.add(GuideTargets.mark("characters.inventory", box("Inventory", Palette.PURPLE, CharacterDetail.inventory(c))));
         JPanel fame = column();
 
         JPanel kpis = new JPanel(new GridLayout(1, 3, 8, 0));
@@ -699,7 +699,7 @@ public class CharactersView extends JPanel {
         fame.add(Box.createVerticalStrut(4));
         if (sessions.isEmpty()) fame.add(muted("No sessions recorded in this range."));
         for (int i = 0; i < sessions.size(); i++) fame.add(sessionRow(sessions.get(i), i));
-        panel.add(box("Fame Gain", Palette.GREEN, fame));
+        panel.add(GuideTargets.mark("characters.fame", box("Fame Gain", Palette.GREEN, fame)));
         panel.revalidate();
         // built anew on every click (a stat, a toggle): laid out and its labels wrapped before it is drawn, so it
         // does not jump a moment later
