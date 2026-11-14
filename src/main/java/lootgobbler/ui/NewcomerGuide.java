@@ -86,12 +86,6 @@ public final class NewcomerGuide {
         layer.add(card);
         timer = new Timer(40, e -> tick());
         clicks = e -> {
-            if (e instanceof MouseEvent m && m.getID() == MouseEvent.MOUSE_MOVED && step() == Step.CHOOSE && menuOpen()) {
-                // the open menu would swallow the first click on the card (to close itself): close it on the way there
-                Point p = SwingUtilities.convertPoint(m.getComponent(), m.getPoint(), layer);
-                if (card.getBounds().contains(p)) MenuSelectionManager.defaultManager().clearSelectedPath();
-                return;
-            }
             if (!(e instanceof MouseEvent m) || m.getID() != MouseEvent.MOUSE_PRESSED || view == null || !view.advanceOnClick) return;
             for (Component c : view.clicks) {
                 if (c != null && (c == m.getComponent() || SwingUtilities.isDescendingFrom(m.getComponent(), c))) {
@@ -167,7 +161,7 @@ public final class NewcomerGuide {
             oldGlass = frame.getGlassPane();
             frame.setGlassPane(layer);
             layer.setVisible(true);
-            Toolkit.getDefaultToolkit().addAWTEventListener(clicks, AWTEvent.MOUSE_EVENT_MASK | AWTEvent.MOUSE_MOTION_EVENT_MASK);
+            Toolkit.getDefaultToolkit().addAWTEventListener(clicks, AWTEvent.MOUSE_EVENT_MASK);
             timer.start();
             running = true;
         }
@@ -181,6 +175,7 @@ public final class NewcomerGuide {
         PropertiesManager.setProperties(KEY_DONE, VERSION);
         if (!running) return;
         running = false;
+        clickThroughMenu(false);
         previewDungeon(false);
         timer.stop();
         Toolkit.getDefaultToolkit().removeAWTEventListener(clicks);
@@ -203,6 +198,7 @@ public final class NewcomerGuide {
             i = i > index ? Step.PROFILE.ordinal() : Step.WELCOME.ordinal();
         }
         index = Math.max(0, i);
+        clickThroughMenu(step() == Step.CHOOSE);
         previewDungeon(step() == Step.DUNGEON);   // a sample dungeon in the title bar, only during that step
         PropertiesManager.setProperties(KEY_STEP, String.valueOf(index));
         scrolled.clear();
@@ -257,6 +253,25 @@ public final class NewcomerGuide {
         if (!(info instanceof JMenu m) || !(guide instanceof JMenu g) || !(m.getParent() instanceof JMenuBar bar)) return;
         if (!m.isShowing()) return;
         MenuSelectionManager.defaultManager().setSelectedPath(new MenuElement[]{bar, m, m.getPopupMenu(), g, g.getPopupMenu()});
+    }
+
+    private static final String CONSUME_ON_CLOSE = "PopupMenu.consumeEventOnClose";
+    private Object consumeOnClose;   // the look and feel's setting while the guide changed it
+    private boolean consumeChanged;
+
+    /**
+     * The "quick or extensive?" step keeps Info > Newcomer's Guide open. A click outside an open menu normally only
+     * closes it (the click is swallowed), so QUICK took two clicks: during that step the click goes through.
+     */
+    private void clickThroughMenu(boolean on) {
+        if (on && !consumeChanged) {
+            consumeOnClose = UIManager.get(CONSUME_ON_CLOSE);
+            UIManager.put(CONSUME_ON_CLOSE, Boolean.FALSE);
+            consumeChanged = true;
+        } else if (!on && consumeChanged) {
+            UIManager.put(CONSUME_ON_CLOSE, consumeOnClose);
+            consumeChanged = false;
+        }
     }
 
     /** Whether the Info menu the guide opened is still open. */
