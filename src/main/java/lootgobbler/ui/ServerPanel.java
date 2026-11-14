@@ -302,6 +302,9 @@ public class ServerPanel extends JPanel {
             register.setEnabled(identified);
             if (!identified) register.setToolTipText("Loot Gobbler needs to see your name in-game first");
             buttons.add(register);
+            JButton forgot = button("Forgot password?", null, this::forgotPassword);
+            forgot.setToolTipText("Set a new password with a reset code from a moderator or admin");
+            buttons.add(forgot);
             accountBody.add(buttons);
             if (!identified) {
                 accountBody.add(left(muted("To register, start the sniffer and enter the Nexus or your vault in-game:")));
@@ -326,6 +329,7 @@ public class ServerPanel extends JPanel {
             accountBody.add(redeemRow);
 
             JPanel buttons = row();
+            buttons.add(button("Change password", null, this::changePassword));
             buttons.add(button("Log out", null, () -> {
                 accountFeedback.setText(" ");
                 server.logout();
@@ -375,6 +379,91 @@ public class ServerPanel extends JPanel {
                     accountFeedback.setText("active".equals(u.status) ? " "
                             : "Registered. A moderator or admin needs to accept " + u.ign + " before you can log in.");
                 }));
+    }
+
+    /**
+     * Forgot password: a moderator or admin made a reset code for you. With it, the IGN and a new password (twice),
+     * the password is set, and you are logged in with it.
+     */
+    private void forgotPassword() {
+        JTextField name = field(14, "Your IGN");
+        name.setText(ign.getText().trim());
+        JTextField code = field(20, "LGR-XXXX-XXXX-XXXX");
+        JPasswordField pw = new JPasswordField(14), again = new JPasswordField(14);
+        JPanel form = form(
+                "Ask a moderator or admin of this server for a reset code. It works once, for your IGN, for 24 hours.",
+                "IGN", name, "Reset code", code, "New password", pw, "New password again", again);
+        if (JOptionPane.showConfirmDialog(this, form, "Forgot password", JOptionPane.OK_CANCEL_OPTION,
+                JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) return;
+        String who = name.getText().trim(), newPw = new String(pw.getPassword());
+        String problem = who.isEmpty() || code.getText().isBlank() ? "Enter your IGN and the reset code."
+                : newPasswordProblem(newPw, new String(again.getPassword()));
+        if (problem != null) {
+            accountFeedback.setText(problem);
+            return;
+        }
+        accountFeedback.setText("Setting the new password...");
+        server.resetPassword(who, code.getText(), newPw)
+                .thenCompose(v -> server.login(who, newPw))
+                .whenComplete((u, e) -> SwingUtilities.invokeLater(() -> {
+                    if (e != null) {
+                        accountFeedback.setText(GobblerServer.message(e));
+                        return;
+                    }
+                    password.setText("");
+                    accountFeedback.setText("New password set. You are logged in.");
+                }));
+    }
+
+    /** Change password: the current one, and the new one twice. Your other devices are logged out. */
+    private void changePassword() {
+        JPasswordField current = new JPasswordField(14), pw = new JPasswordField(14), again = new JPasswordField(14);
+        JPanel form = form("Your other devices are logged out and log in again with the new password.",
+                "Current password", current, "New password", pw, "New password again", again);
+        if (JOptionPane.showConfirmDialog(this, form, "Change password", JOptionPane.OK_CANCEL_OPTION,
+                JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) return;
+        String newPw = new String(pw.getPassword());
+        String problem = current.getPassword().length == 0 ? "Enter your current password."
+                : newPasswordProblem(newPw, new String(again.getPassword()));
+        if (problem != null) {
+            accountFeedback.setText(problem);
+            return;
+        }
+        accountFeedback.setText("Changing the password...");
+        server.changePassword(new String(current.getPassword()), newPw).whenComplete((v, e) ->
+                SwingUtilities.invokeLater(() -> accountFeedback.setText(e != null ? GobblerServer.message(e)
+                        : "Password changed. Your other devices need to log in again.")));
+    }
+
+    /** Why a new password cannot be used (as the server checks it), or null. */
+    private static String newPasswordProblem(String pw, String again) {
+        int n = pw.codePointCount(0, pw.length());
+        if (n < 8 || n > 128) return "The new password must be 8 to 128 characters.";
+        if (!pw.equals(again)) return "The two new passwords are not the same.";
+        return null;
+    }
+
+    /** A small form for a dialog: a note on top, then label and field pairs. */
+    private static JPanel form(String note, Object... labelsAndFields) {
+        JPanel p = new JPanel(new GridBagLayout());
+        GridBagConstraints c = new GridBagConstraints();
+        c.anchor = GridBagConstraints.WEST;
+        c.insets = new Insets(3, 0, 3, 10);
+        c.gridx = 0;
+        c.gridy = 0;
+        c.gridwidth = 2;
+        JLabel top = muted(note);
+        top.setBorder(new EmptyBorder(0, 0, 6, 0));
+        p.add(top, c);
+        c.gridwidth = 1;
+        for (int i = 0; i + 1 < labelsAndFields.length; i += 2) {
+            c.gridy++;
+            c.gridx = 0;
+            p.add(new JLabel((String) labelsAndFields[i]), c);
+            c.gridx = 1;
+            p.add((Component) labelsAndFields[i + 1], c);
+        }
+        return p;
     }
 
     private void redeem() {
@@ -487,6 +576,12 @@ public class ServerPanel extends JPanel {
                         m.ign + " is a moderator now.")));
             }
             if (outranks) {
+                buttons.add(button("Reset password", null, () -> {
+                    if (confirm("Make a password reset code for " + m.ign + "?\nTheir current password keeps working"
+                            + " until they use it.", "Reset password")) {
+                        resetPasswordFor(m);
+                    }
+                }));
                 buttons.add(button("Remove", "danger", () -> {
                     if (confirm("Remove " + m.ign + " and all their data from the server?", "Remove member")) {
                         act(server.remove(m.id), moderationFeedback, m.ign + " was removed.");
@@ -497,6 +592,31 @@ public class ServerPanel extends JPanel {
             moderationBody.add(listRow(m.ign + (m.id == me.id ? " (you)" : ""), sub, buttons));
         }
         moderationBody.add(moderationFeedback);
+    }
+
+    /** Makes a reset code for a member and shows it once (also copied), to pass on. */
+    private void resetPasswordFor(User m) {
+        moderationFeedback.setText("Making a reset code...");
+        server.createPasswordReset(m.id).whenComplete((rc, e) -> SwingUtilities.invokeLater(() -> {
+            if (e != null) {
+                moderationFeedback.setText(GobblerServer.message(e));
+                return;
+            }
+            moderationFeedback.setText("Reset code made for " + rc.ign + ".");
+            JTextField shown = new JTextField(rc.code, 20);
+            shown.setEditable(false);
+            shown.setFont(shown.getFont().deriveFont(18f));
+            Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(rc.code), null);
+            JPanel p = column();
+            p.add(left(new JLabel("Reset code for " + rc.ign + " (copied):")));
+            p.add(Box.createVerticalStrut(6));
+            p.add(left(shown));
+            p.add(Box.createVerticalStrut(6));
+            p.add(left(muted("Pass it on to " + rc.ign + " privately. In Loot Gobbler they choose \"Forgot password?\"")));
+            p.add(left(muted("and enter their IGN, this code and a new password. Works once, until " + date(rc.expiresAt) + ".")));
+            p.add(left(muted("It is shown only now. A new code replaces this one.")));
+            JOptionPane.showMessageDialog(this, p, "Password reset code", JOptionPane.PLAIN_MESSAGE);
+        }));
     }
 
     /** Reloads the approval queue and scrolls to it (e.g. from the notifications bell). */

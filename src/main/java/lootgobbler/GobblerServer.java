@@ -86,6 +86,13 @@ public final class GobblerServer {
         public long expiresAt;
     }
 
+    /** A password reset code a moderator or admin made for a player; shown only once. */
+    public static final class ResetCode {
+        public String code = "";
+        public String ign = "";
+        public long expiresAt;
+    }
+
     /** Outcome of {@link #test()}. */
     public static final class TestResult {
         public long millis;          // round trip of the ping
@@ -480,6 +487,25 @@ public final class GobblerServer {
     public void logout() {
         if (!token.isEmpty()) call("POST", "/auth/logout", null, Void.class);
         signedOut();
+    }
+
+    /** Changes your password; your other devices are logged out. Fails with "wrong_password" if current is wrong. */
+    public CompletableFuture<Void> changePassword(String current, String newPassword) {
+        return call("PATCH", "/me/password", Map.of("currentPassword", current, "newPassword", newPassword), Void.class);
+    }
+
+    /**
+     * Sets a new password with a reset code from a moderator or admin (no login needed); every session of that
+     * account ends. Fails with "invalid_code" if the code is wrong, expired, used or for another IGN.
+     */
+    public CompletableFuture<Void> resetPassword(String ign, String code, String newPassword) {
+        return call("POST", "/auth/reset-password", Map.of("ign", ign.trim(), "code", code.trim(), "newPassword", newPassword),
+                Void.class);
+    }
+
+    /** Makes a one-time password reset code for a member ranked below you (moderator or admin). */
+    public CompletableFuture<ResetCode> createPasswordReset(long userId) {
+        return call("POST", "/admin/users/" + userId + "/password-reset", null, ResetCode.class);
     }
 
     /** Applies an admin or moderator token to the logged-in account. */
