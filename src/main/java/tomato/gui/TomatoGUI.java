@@ -189,8 +189,9 @@ public class TomatoGUI {
         frame.setVisible(true);
         lootgobbler.ui.Overlay.restoreAll();   // the overlays that were on when the app was closed
         lootgobbler.StartupSound.playSaved();
-        lootgobbler.ui.WhatsNewDialog.showAfterUpdate(frame);   // after an update; reads its settings before the welcome
-        SwingUtilities.invokeLater(() -> {   // once the window is up: the greeting, then the guide on the first start
+        // after an update the release notes; once they are closed (or there are none) the greeting on the first
+        // start, then the Newcomer's Guide
+        lootgobbler.ui.WhatsNewDialog.showAfterUpdate(frame, () -> {
             boolean first = lootgobbler.ui.WelcomeDialog.showOnFirstStart(frame);
             lootgobbler.ui.NewcomerGuide.afterStart(first);
         });

@@ -46,7 +46,12 @@ public final class NewcomerGuide {
         GUILD_RUN, CONNECT, ACCOUNT, GUILD, SETTINGS, DONE}
 
     private static final String KEY_ACTIVE = "guideActive", KEY_STEP = "guideStep", KEY_CHOSEN = "guideQuickChosen",
-            KEY_DONE = "guideDone";   // finished or skipped once: it no longer starts by itself
+            KEY_DONE = "guideDoneVersion";   // the guide's version finished or skipped: it no longer starts by itself
+    /**
+     * The guide's version: raise it when the guide changed enough that everyone should see it again. A version
+     * finished or skipped earlier counts as unseen. (1 was v0.7.28, kept under "guideDone".)
+     */
+    private static final String VERSION = "2";
     private static final Step[] STEPS = Step.values();
     private static final int CARD_W = 390, RING = 6;
     private static NewcomerGuide instance;
@@ -67,6 +72,7 @@ public final class NewcomerGuide {
     private final Set<String> scrolled = new HashSet<>();
     private long lastCharacterNav;
     private boolean running;
+    private boolean menuWasOpen;   // the "quick or extensive?" step: Info > Newcomer's Guide was open
     private boolean tourChosen;   // started from the menu's Quick tour: no "quick or extensive?" step
 
     private NewcomerGuide(JFrame frame, Nav nav) {
@@ -80,6 +86,12 @@ public final class NewcomerGuide {
         layer.add(card);
         timer = new Timer(40, e -> tick());
         clicks = e -> {
+            if (e instanceof MouseEvent m && m.getID() == MouseEvent.MOUSE_MOVED && step() == Step.CHOOSE && menuOpen()) {
+                // the open menu would swallow the first click on the card (to close itself): close it on the way there
+                Point p = SwingUtilities.convertPoint(m.getComponent(), m.getPoint(), layer);
+                if (card.getBounds().contains(p)) MenuSelectionManager.defaultManager().clearSelectedPath();
+                return;
+            }
             if (!(e instanceof MouseEvent m) || m.getID() != MouseEvent.MOUSE_PRESSED || view == null || !view.advanceOnClick) return;
             for (Component c : view.clicks) {
                 if (c != null && (c == m.getComponent() || SwingUtilities.isDescendingFrom(m.getComponent(), c))) {
@@ -129,7 +141,7 @@ public final class NewcomerGuide {
             }
             instance.tourChosen = "true".equals(PropertiesManager.getProperty(KEY_CHOSEN));   // as it was started
             instance.begin(at);
-        } else if (firstStart || !"true".equals(PropertiesManager.getProperty(KEY_DONE))) {
+        } else if (firstStart || !VERSION.equals(PropertiesManager.getProperty(KEY_DONE))) {
             // the first time, and for everyone who has not done it yet (also players from before it existed):
             // it asks "quick or extensive?"
             instance.choose(false);
@@ -155,7 +167,7 @@ public final class NewcomerGuide {
             oldGlass = frame.getGlassPane();
             frame.setGlassPane(layer);
             layer.setVisible(true);
-            Toolkit.getDefaultToolkit().addAWTEventListener(clicks, AWTEvent.MOUSE_EVENT_MASK);
+            Toolkit.getDefaultToolkit().addAWTEventListener(clicks, AWTEvent.MOUSE_EVENT_MASK | AWTEvent.MOUSE_MOTION_EVENT_MASK);
             timer.start();
             running = true;
         }
@@ -166,7 +178,7 @@ public final class NewcomerGuide {
 
     private void end() {
         PropertiesManager.setProperties(KEY_ACTIVE, "false");
-        PropertiesManager.setProperties(KEY_DONE, "true");
+        PropertiesManager.setProperties(KEY_DONE, VERSION);
         if (!running) return;
         running = false;
         previewDungeon(false);
@@ -194,6 +206,7 @@ public final class NewcomerGuide {
         previewDungeon(step() == Step.DUNGEON);   // a sample dungeon in the title bar, only during that step
         PropertiesManager.setProperties(KEY_STEP, String.valueOf(index));
         scrolled.clear();
+        menuWasOpen = false;
         shownSig = "";
         if (!byClick) open(step());
         tick();
@@ -244,6 +257,11 @@ public final class NewcomerGuide {
         if (!(info instanceof JMenu m) || !(guide instanceof JMenu g) || !(m.getParent() instanceof JMenuBar bar)) return;
         if (!m.isShowing()) return;
         MenuSelectionManager.defaultManager().setSelectedPath(new MenuElement[]{bar, m, m.getPopupMenu(), g, g.getPopupMenu()});
+    }
+
+    /** Whether the Info menu the guide opened is still open. */
+    private static boolean menuOpen() {
+        return GuideTargets.any("menu.info") instanceof JMenu m && m.getPopupMenu().isShowing();
     }
 
     private static boolean recognized() {
@@ -586,6 +604,10 @@ public final class NewcomerGuide {
 
     /** Below what it frames if there is room, else above, right or left; in the middle when it frames nothing. */
     private void placeCard() {
+        if (step() == Step.CHOOSE) {   // stays where it was once the menu closed, so it does not jump from under the mouse
+            if (menuOpen()) menuWasOpen = true;
+            else if (menuWasOpen) return;
+        }
         Dimension d = card.getPreferredSize();
         int w = d.width, h = d.height, W = layer.getWidth(), H = layer.getHeight(), gap = 18;
         int x, y;
@@ -642,7 +664,7 @@ public final class NewcomerGuide {
             g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
             Color gold = Section.color("LootGobbler.gold", Palette.GOLD);
             // what the step is about stays as it is in a gold frame with a soft glow; the rest is greyed out, still readable
-            if (!spots.isEmpty()) {
+            {   // a step that frames nothing (the welcome, the end, waiting): all of it greyed, just the card stands out
                 Area grey = new Area(new Rectangle(0, 0, getWidth(), getHeight()));
                 for (Rectangle r : spots) grey.subtract(new Area(round(r)));
                 g2.setColor(new Color(24, 22, 20, 140));

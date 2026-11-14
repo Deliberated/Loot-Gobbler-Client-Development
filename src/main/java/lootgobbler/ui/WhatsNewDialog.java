@@ -118,14 +118,18 @@ public class WhatsNewDialog extends JDialog {
      * On start, before the welcome dialog: if this version is newer than the one that ran last, fetch the notes in
      * the background and show them. The first start ever only remembers the version (the welcome dialog covers
      * that). Versions before 0.4.3 did not remember theirs: if you used Loot Gobbler before (the welcome dialog was
-     * shown), the notes of this version are shown, coming from the release before it.
+     * shown), the notes of this version are shown, coming from the release before it. then runs once they are
+     * closed, or at once when there are none to show (e.g. the welcome and the Newcomer's Guide come after them).
      */
-    public static void showAfterUpdate(Window owner) {
+    public static void showAfterUpdate(Window owner, Runnable then) {
         String last = PropertiesManager.getProperty(KEY_LAST_RUN);
         boolean usedBefore = "true".equals(PropertiesManager.getProperty("welcomeShown"));
         PropertiesManager.setProperties(KEY_LAST_RUN, Version.VERSION);
         boolean known = last != null && !last.isBlank();
-        if (known ? Updater.compare(Version.VERSION, last) <= 0 : !usedBefore) return;
+        if (known ? Updater.compare(Version.VERSION, last) <= 0 : !usedBefore) {
+            SwingUtilities.invokeLater(then);
+            return;
+        }
         Thread t = new Thread(() -> {
             List<Notes> notes = List.of();
             String from = known ? last : "an older version";
@@ -143,7 +147,10 @@ public class WhatsNewDialog extends JDialog {
             }
             List<Notes> shown = notes;
             String old = from, problem = error;
-            SwingUtilities.invokeLater(() -> new WhatsNewDialog(owner, old, shown, problem).setVisible(true));
+            SwingUtilities.invokeLater(() -> {
+                new WhatsNewDialog(owner, old, shown, problem).setVisible(true);   // modal: returns once closed
+                then.run();
+            });
         }, "whats-new");
         t.setDaemon(true);
         t.start();
