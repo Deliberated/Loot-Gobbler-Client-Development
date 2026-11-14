@@ -149,6 +149,30 @@ public final class NewcomerGuide {
         PropertiesManager.setProperties(KEY_CHOSEN, String.valueOf(chosen));
     }
 
+    private static final List<Runnable> doneListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /** Whether the guide starts by itself on the next start (not finished or skipped in its current version). */
+    public static boolean onNextStart() {
+        return !VERSION.equals(PropertiesManager.getProperty(KEY_DONE));
+    }
+
+    /**
+     * Settings: on, the whole guide runs on the next start as if never seen (from the welcome, with "quick or
+     * extensive?"); off, it does not. Finishing or skipping it switches this off again.
+     */
+    public static void setOnNextStart(boolean on) {
+        PropertiesManager.setProperties(KEY_DONE, on ? "" : VERSION);
+        if (on && (instance == null || !instance.running)) {   // from the start, not where an earlier run stopped
+            PropertiesManager.setProperties(KEY_ACTIVE, "false");
+            PropertiesManager.setProperties(KEY_STEP, "0");
+        }
+    }
+
+    /** Called when the guide was finished or skipped (e.g. the setting switches off). */
+    public static void onDone(Runnable r) {
+        doneListeners.add(r);
+    }
+
     /** The Server tab registered an account. */
     public static void registeredAccount() {
         registered = true;
@@ -173,6 +197,7 @@ public final class NewcomerGuide {
     private void end() {
         PropertiesManager.setProperties(KEY_ACTIVE, "false");
         PropertiesManager.setProperties(KEY_DONE, VERSION);
+        doneListeners.forEach(Runnable::run);
         if (!running) return;
         running = false;
         clickThroughMenu(false);

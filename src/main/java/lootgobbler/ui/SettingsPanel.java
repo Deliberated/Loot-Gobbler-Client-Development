@@ -39,6 +39,8 @@ public class SettingsPanel extends JPanel {
         sections.add(new Section("Theme", Palette.GOLD, themeBody()));
         sections.add(Box.createVerticalStrut(8));
         sections.add(new Section("Logging", Palette.GOLD, loggingBody()));
+        sections.add(Box.createVerticalStrut(8));
+        sections.add(new Section("Newcomer's Guide", Palette.GOLD, guideBody()));
 
         JPanel holder = new JPanel(new BorderLayout());   // keeps sections at their natural height
         holder.add(sections, BorderLayout.NORTH);
@@ -303,6 +305,22 @@ public class SettingsPanel extends JPanel {
     /**
      * Log files (off by default) and the folder they go to. Viewed and exported under Info > Logs.
      */
+    /** Run the Newcomer's Guide again on the next start, as if never seen; switches off once it ran through. */
+    private JPanel guideBody() {
+        JPanel body = body();
+        JPanel hint = row();
+        hint.add(new JLabel("The tour through Loot Gobbler. Info > Newcomer's Guide starts the quick tour at any time."));
+        body.add(hint);
+        JCheckBox next = checkBox("Show the whole guide on the next start, as if never seen", NewcomerGuide.onNextStart());
+        next.setToolTipText("Switches off by itself once the guide was finished or skipped");
+        next.addActionListener(e -> NewcomerGuide.setOnNextStart(next.isSelected()));
+        NewcomerGuide.onDone(() -> SwingUtilities.invokeLater(() -> next.setSelected(NewcomerGuide.onNextStart())));
+        JPanel nextRow = row();
+        nextRow.add(next);
+        body.add(nextRow);
+        return body;
+    }
+
     private JPanel loggingBody() {
         JPanel body = body();
         JPanel hint = row();
