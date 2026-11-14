@@ -202,6 +202,7 @@ public final class NewcomerGuide {
         running = false;
         clickThroughMenu(false);
         previewDungeon(false);
+        exampleRun(false);
         timer.stop();
         Toolkit.getDefaultToolkit().removeAWTEventListener(clicks);
         layer.setVisible(false);
@@ -225,6 +226,7 @@ public final class NewcomerGuide {
         index = Math.max(0, i);
         clickThroughMenu(step() == Step.CHOOSE);
         previewDungeon(step() == Step.DUNGEON);   // a sample dungeon in the title bar, only during that step
+        exampleRun(step() == Step.BATTLES || step() == Step.DUNGEON || step() == Step.GUILD_RUN);   // and in Battles
         PropertiesManager.setProperties(KEY_STEP, String.valueOf(index));
         scrolled.clear();
         menuWasOpen = false;
@@ -260,6 +262,15 @@ public final class NewcomerGuide {
     /** The title bar's dungeon box with a sample dungeon (nothing counted), while you are in none. */
     private static void previewDungeon(boolean on) {
         if (GuideTargets.any("title.dungeon") instanceof ActiveDungeonBadge b) b.preview(on);
+    }
+
+    /** Battles > Dungeons with an example dungeon (nothing stored), while you have none logged. */
+    private static void exampleRun(boolean on) {
+        if (GuideTargets.any("battles.view") instanceof DpsLoggerView v) v.showExample(on);
+    }
+
+    private static boolean battlesExample() {
+        return GuideTargets.any("battles.view") instanceof DpsLoggerView v && v.showingExample();
     }
 
     private void showACharacter() {
@@ -432,7 +443,8 @@ public final class NewcomerGuide {
             }
             case BATTLES -> {
                 title = "Every dungeon run";
-                body = "Each dungeon you enter is logged: how long it took, your damage and what dropped.";
+                body = "Each dungeon you enter is logged: how long it took, your damage and what dropped."
+                        + (battlesExample() ? "<br>Here, an example: your own dungeons show up by themselves." : "");
                 add(spot, "battles.detail");
             }
             case DUNGEON -> {

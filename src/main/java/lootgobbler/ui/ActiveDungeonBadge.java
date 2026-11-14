@@ -35,7 +35,7 @@ public final class ActiveDungeonBadge extends JPanel {
     private long start;
     private String dungeon = "";
     private Color tint = FALLBACK;
-    private static final String PREVIEW_DUNGEON = "Lost Halls";
+    private static final String PREVIEW_DUNGEON = "Pirate Cave";   // the same example as in Battles
     private boolean preview;      // the Newcomer's Guide shows what it looks like: a sample, nothing is counted
     private long previewStart;
 
@@ -46,7 +46,7 @@ public final class ActiveDungeonBadge extends JPanel {
     void preview(boolean on) {
         if (on == preview) return;
         preview = on;
-        previewStart = System.currentTimeMillis() - 252_000;   // in it for 4:12
+        previewStart = System.currentTimeMillis() - 72_000;   // in it for 1:12
         refresh();
     }
 

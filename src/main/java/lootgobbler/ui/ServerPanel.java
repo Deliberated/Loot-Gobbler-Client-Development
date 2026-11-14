@@ -4,7 +4,6 @@ import lootgobbler.CharacterStore;
 import lootgobbler.GobblerServer;
 import lootgobbler.GobblerServer.IssuedToken;
 import lootgobbler.GobblerServer.OpenToken;
-import lootgobbler.GobblerServer.QuestTemplate;
 import lootgobbler.GobblerServer.State;
 import lootgobbler.GobblerServer.User;
 import lootgobbler.ServerSync;
@@ -42,10 +41,6 @@ public class ServerPanel extends JPanel {
     private final Section sync;
     private final Section moderation;
     private final Section tokens;
-    private final Section pool;
-    private final JPanel poolBody = body();
-    private final JLabel poolFeedback = feedback();
-    private List<QuestTemplate> questPool = List.of();
     private final JLabel connectionFeedback = feedback();
     private final JLabel accountFeedback = feedback();
     private final JLabel moderationFeedback = feedback();
@@ -88,7 +83,6 @@ public class ServerPanel extends JPanel {
         moderation = new Section("Moderation", Palette.PURPLE, moderationBody)
                 .actions(button("Refresh", null, this::refreshModeration));
         tokens = new Section("Moderator Tokens", Palette.PURPLE, tokensBody);
-        pool = new Section("Quest Pool", Palette.GREEN, poolBody).actions(button("Refresh", null, this::refreshModeration));
         scoring = new Section("Item Scores", Palette.GOLD, scoringBody);
         buildScoring();
         showWeights();
@@ -110,8 +104,6 @@ public class ServerPanel extends JPanel {
         sections.add(moderation);
         sections.add(Box.createVerticalStrut(8));
         sections.add(tokens);
-        sections.add(Box.createVerticalStrut(8));
-        sections.add(pool);
         sections.add(Box.createVerticalStrut(8));
         sections.add(scoring);
         sections.add(Box.createVerticalStrut(8));
@@ -145,7 +137,6 @@ public class ServerPanel extends JPanel {
             pending = List.of();
             members = List.of();
             openTokens = List.of();
-            questPool = List.of();
             lastIssued = null;
             if (mod) refreshModeration();
             if (mod && u.atLeastAdmin()) lootgobbler.ItemScore.get().reload();
@@ -154,7 +145,6 @@ public class ServerPanel extends JPanel {
         sync.setVisible(u != null);
         moderation.setVisible(mod);
         tokens.setVisible(mod && u.atLeastAdmin());
-        pool.setVisible(mod && u.atLeastAdmin());
         scoring.setVisible(mod && u.atLeastAdmin());
         guild.setVisible(mod && u.atLeastAdmin());
 
@@ -163,7 +153,6 @@ public class ServerPanel extends JPanel {
         buildSync();
         buildModeration();
         buildTokens();
-        buildPool();
         revalidate();
         repaint();
     }
@@ -669,9 +658,7 @@ public class ServerPanel extends JPanel {
         CompletableFuture<List<User>> m = server.members();
         CompletableFuture<List<OpenToken>> t = u.atLeastAdmin() ? server.moderatorTokens()
                 : CompletableFuture.completedFuture(List.of());
-        CompletableFuture<List<QuestTemplate>> qp = u.atLeastAdmin() ? server.questPool("")
-                : CompletableFuture.completedFuture(List.of());
-        CompletableFuture.allOf(p, m, t, qp).whenComplete((v, e) -> SwingUtilities.invokeLater(() -> {
+        CompletableFuture.allOf(p, m, t).whenComplete((v, e) -> SwingUtilities.invokeLater(() -> {
             if (e != null) {
                 moderationFeedback.setText(GobblerServer.message(e));
             } else {
@@ -679,11 +666,9 @@ public class ServerPanel extends JPanel {
                 lootgobbler.ApprovalWatcher.get().update(pending);   // the bell follows accepts and denies
                 members = m.join();
                 openTokens = t.join();
-                questPool = qp.join();
             }
             buildModeration();
             buildTokens();
-            buildPool();
             revalidate();
             repaint();
         }));
@@ -698,68 +683,6 @@ public class ServerPanel extends JPanel {
             feedback.setText(e == null ? done : GobblerServer.message(e));
             refreshModeration();
         }));
-    }
-
-    // --- quest pool ---
-
-    /**
-     * Admins decide which suggested quests are used: as personal quests (each player rolls 3 a week) or as guild
-     * quests (one a week, the same for the whole guild). Accepted quests can be taken out of the rotation again.
-     */
-    private void buildPool() {
-        poolBody.removeAll();
-        poolBody.add(left(muted("Members suggest quests in the Guild tab. Each week every player gets 3 personal quests "
-                + "and each guild 1 guild quest from the accepted ones.")));
-        List<QuestTemplate> suggested = questPool.stream().filter(q -> q.status.equals("pending")).toList();
-        poolBody.add(Box.createVerticalStrut(8));
-        poolBody.add(heading("Suggestions (" + suggested.size() + ")"));
-        if (suggested.isEmpty()) poolBody.add(left(muted("No suggestions waiting.")));
-        for (QuestTemplate q : suggested) {
-            JTextField points = new JTextField(String.valueOf(q.points), 4);
-            points.setToolTipText("Points for finishing it");
-            JPanel buttons = buttons();
-            buttons.add(points);
-            buttons.add(new JLabel("pts"));
-            buttons.add(button("Personal", "primary", () -> approve(q, "personal", points)));
-            buttons.add(button("Guild", "primary", () -> approve(q, "guild", points)));
-            buttons.add(button("Deny", "danger", () -> act(server.denyQuest(q.id), poolFeedback, "Denied \"" + q.title + "\".")));
-            String by = q.proposedBy.isEmpty() ? "built-in suggestion" : "suggested by " + q.proposedBy;
-            poolBody.add(listRow(q.title, by + " as a " + q.scope + " quest", buttons));
-        }
-        for (String scope : new String[]{"personal", "guild"}) {
-            List<QuestTemplate> active = questPool.stream()
-                    .filter(q -> q.status.equals("approved") && q.scope.equals(scope)).toList();
-            poolBody.add(Box.createVerticalStrut(10));
-            poolBody.add(heading((scope.equals("personal") ? "Personal" : "Guild") + " quests in rotation (" + active.size() + ")"));
-            if (active.isEmpty()) poolBody.add(left(muted("None yet.")));
-            for (QuestTemplate q : active) {
-                JPanel buttons = buttons();
-                buttons.add(button("Remove", "danger", () -> {
-                    if (confirm("Take \"" + q.title + "\" out of the rotation? Quests already running this week keep going.",
-                            "Remove quest")) {
-                        act(server.denyQuest(q.id), poolFeedback, "Removed \"" + q.title + "\".");
-                    }
-                }));
-                poolBody.add(listRow(q.title, q.points + " points", buttons));
-            }
-        }
-        poolBody.add(poolFeedback);
-    }
-
-    private void approve(QuestTemplate q, String scope, JTextField pointsField) {
-        int points;
-        try {
-            points = Integer.parseInt(pointsField.getText().trim());
-        } catch (NumberFormatException e) {
-            poolFeedback.setText("Points must be a number.");
-            return;
-        }
-        if (points < 1 || points > 500) {
-            poolFeedback.setText("Points must be between 1 and 500.");
-            return;
-        }
-        act(server.approveQuest(q.id, scope, points), poolFeedback,
-                "\"" + q.title + "\" is now a " + scope + " quest.");
     }
 
     // --- item scores ---

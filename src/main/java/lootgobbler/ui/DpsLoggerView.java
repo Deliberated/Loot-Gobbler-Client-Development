@@ -61,6 +61,8 @@ public class DpsLoggerView extends JPanel {
     private Visit graphVisit;
     private boolean scrollToSelected;   // bring the selected row into view after the next rebuild
     private long selected = -1;
+    private boolean example;          // the Newcomer's Guide: an example dungeon while none is logged
+    private Visit exampleVisit;
     private long lastNowStart = -1;         // start of the dungeon in progress at the last refresh
     private String detailKey = "";          // what the details were last built from
     private boolean detailPending;          // a rebuild waits for a scrollbar drag to end   // start of the visit shown on the right; -1 = the newest
@@ -69,6 +71,7 @@ public class DpsLoggerView extends JPanel {
         super(new BorderLayout(0, 8));
         setBorder(new EmptyBorder(8, 8, 8, 8));   // the same frame as the Characters page
         this.dps = dps;
+        GuideTargets.mark("battles.view", this);
         setOpaque(false);
         dps.setBorder(new EmptyBorder(0, 0, 0, 0));   // framed here already
         picker = new Segmented(false, 0, i -> pages.show(views, PAGES[i]), PAGES);
@@ -188,6 +191,7 @@ public class DpsLoggerView extends JPanel {
         if (now != null && !clock.isRunning()) clock.start();
         if (now == null) clock.stop();
         List<Visit> visits = DungeonVisits.get().visits();
+        if (example && now == null && visits.isEmpty()) visits = List.of(exampleVisit());   // shown only, never stored
         List<Run> runs = DpsHistory.get().allRuns();
         list.removeAll();
         dayGrids.clear();
@@ -241,6 +245,31 @@ public class DpsLoggerView extends JPanel {
             detailPending = false;
             showDetail(shown, shownRun, shown != null && shown == now);
         }
+    }
+
+    /**
+     * For the Newcomer's Guide: while no dungeon is logged, an example (Pirate Cave) in the list and on the right, so
+     * the page is not empty. It is only shown: never stored, synced or counted.
+     */
+    void showExample(boolean on) {
+        if (on == example) return;
+        example = on;
+        refresh();
+    }
+
+    /** Whether the example is what the page shows (no dungeon of your own logged yet). */
+    boolean showingExample() {
+        return example && DungeonVisits.get().current() == null && DungeonVisits.get().visits().isEmpty();
+    }
+
+    private Visit exampleVisit() {
+        if (exampleVisit == null) {
+            exampleVisit = new Visit();
+            exampleVisit.dungeon = "Pirate Cave";
+            exampleVisit.start = System.currentTimeMillis() - 15 * 60_000L;
+            exampleVisit.durationMs = 3 * 60_000L + 12_000L;
+        }
+        return exampleVisit;
     }
 
     /** The column on the right: the visit, its boss fights and the exaltation progress made in it. */
