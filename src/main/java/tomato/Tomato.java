@@ -50,11 +50,8 @@ public class Tomato {
                 System.getProperty("sun.arch.data.model") +
                 " - bit)"
         );
+        lootgobbler.LinuxGameFiles.apply();   // the game's files inside a Proton/Wine prefix; --path still wins
         parseArgs(args);
-
-        parseCustomAssetPath(args);
-
-        parseCustomAssetPath(args);
         Util.setSaveLogs(false); // turns the logger to, save in to files.
         TcpStreamErrorHandler.INSTANCE.setErrorMessageHandler(
             Tomato::errorMessageHandler

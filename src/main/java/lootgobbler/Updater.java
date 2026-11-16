@@ -230,13 +230,15 @@ public final class Updater {
 
     /**
      * Downloads and unpacks the new version, then hands over to update.ps1 and closes the app. Started from source
-     * (no LootGobbler.exe), or for a release without the zip, the release page is opened instead.
+     * (no LootGobbler.exe), on Linux, or for a release without the zip, the release page is opened instead.
      */
     private static void install(Window window) {
         Release r = latest;
         String exe = System.getProperty("jpackage.app-path");   // set by the jpackage launcher only
         if (r == null) return;
-        if (exe == null || r.zipUrl() == null) {
+        // the in-app install swaps the Windows app folder; on Linux the release page has the tar.gz and rpm
+        boolean windows = System.getProperty("os.name").toLowerCase().contains("win");
+        if (exe == null || r.zipUrl() == null || !windows) {
             openPage(r.pageUrl());
             return;
         }

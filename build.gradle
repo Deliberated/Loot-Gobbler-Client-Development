@@ -1,7 +1,7 @@
 plugins {
     id 'java'
     id 'application'
-    id 'com.gradleup.shadow' version '8.3.5'
+    id 'com.gradleup.shadow' version '9.6.1'
 }
 
 version = '0.7.32'
@@ -117,6 +117,90 @@ tasks.register('packageExe', Exec) {
         }
         ant.zip(destfile: new File(distDir, 'LootGobbler-portable.zip').path) {
             zipfileset(dir: new File(distDir, 'LootGobbler').path, prefix: 'LootGobbler')
+        }
+    }
+}
+
+// `gradlew packageLinux`: build/dist-linux/LootGobbler/bin/LootGobbler with its own Java runtime, the Linux
+// counterpart of packageExe, plus build/dist-linux/LootGobbler-linux-x86_64.tar.gz to share. Like the exe it keeps its data files next to itself (in bin/). Capturing needs
+// CAP_NET_RAW and CAP_NET_ADMIN on the launcher, given once per build (a rebuild replaces the file):
+//   sudo setcap cap_net_raw,cap_net_admin=eip build/dist-linux/LootGobbler/bin/LootGobbler
+def linuxDistDir = layout.buildDirectory.dir('dist-linux').get().asFile
+def linuxInput = layout.buildDirectory.dir('jpackage-input-linux').get().asFile
+def linuxIcon = file('src/main/resources/icon/lootgobbler-256.png')
+
+tasks.register('packageLinux', Exec) {
+    group = 'distribution'
+    description = 'Builds the Linux LootGobbler app folder with jpackage.'
+    dependsOn tasks.named('shadowJar')
+    doFirst {
+        delete linuxDistDir, linuxInput
+        copy {
+            from tasks.named('shadowJar')
+            into linuxInput
+        }
+    }
+    def javaOptions = ['-Xmx1g', '-XX:+UseG1GC', '-XX:G1PeriodicGCInterval=60000', '-XX:MinHeapFreeRatio=10',
+                       '-XX:MaxHeapFreeRatio=30', '-XX:-UsePerfData']
+    def cmd = ['jpackage', '--type', 'app-image', '--name', 'LootGobbler', '--app-version', project.version,
+               '--vendor', 'Pluribus Guild', '--description', 'Loot Gobbler - your right hand for your RotMG adventures',
+               '--input', linuxInput.path, '--main-jar', "LootGobbler-${project.version}.jar",
+               '--main-class', 'tomato.Tomato', '--dest', linuxDistDir.path]
+    // A JDK without jmods (Fedora's, Temurin 24+) makes jlink copy the installed runtime; Fedora edits its
+    // java.security (system crypto policies) and jlink refuses a modified runtime without this flag. JDKs that
+    // still ship jmods (JDK 21) don't know the flag.
+    if (!new File(System.getProperty('java.home'), 'jmods').isDirectory()) {
+        cmd += ['--jlink-options', '--strip-native-commands --strip-debug --no-man-pages --no-header-files --ignore-modified-runtime']
+    }
+    javaOptions.each { cmd += ['--java-options', it] }
+    if (linuxIcon.exists()) cmd += ['--icon', linuxIcon.path]
+    commandLine cmd
+    doLast {
+        // Fedora's java.security includes redhat/crypto-policies.properties, which jlink doesn't copy (every HTTPS
+        // call would fail) and which would tie the app to Fedora's /etc/crypto-policies anyway: use OpenJDK's own
+        def jdkSecurity = new File(System.getProperty('java.home'), 'conf/security/java.security.upstream')
+        if (jdkSecurity.exists()) {
+            copy {
+                from jdkSecurity
+                into new File(linuxDistDir, 'LootGobbler/lib/runtime/conf/security')
+                rename { 'java.security' }
+            }
+        }
+        copy {
+            from 'LICENSE', 'THIRD_PARTY_LICENSE-RealmShark.md', 'src/main/resources/fonts/OFL-Jersey10.txt',
+                    'src/main/resources/fonts/OFL-Jersey15.txt'
+            into new File(linuxDistDir, 'LootGobbler')
+        }
+        // tar (not Gradle's Tar task) so the launcher keeps its executable bit exactly as jpackage made it
+        def tar = ['tar', '-czf', 'LootGobbler-linux-x86_64.tar.gz', 'LootGobbler'].execute(null, linuxDistDir)
+        tar.waitForProcessOutput(System.out, System.err)
+        if (tar.exitValue() != 0) throw new GradleException('tar failed')
+    }
+}
+
+// `gradlew packageRpm`: build/dist-linux/LootGobbler-x86_64.rpm, installing the packageLinux folder into
+// /opt/LootGobbler with a menu entry and the capture capabilities (packaging/linux/lootgobbler.spec). Needs rpmbuild
+// (Fedora: rpm-build, Ubuntu: rpm).
+def rpmTop = layout.buildDirectory.dir('rpmbuild').get().asFile
+
+tasks.register('packageRpm', Exec) {
+    group = 'distribution'
+    description = 'Builds the Linux rpm package from the packageLinux folder.'
+    dependsOn tasks.named('packageLinux')
+    doFirst { delete rpmTop }
+    commandLine 'rpmbuild', '--quiet', '-bb', file('packaging/linux/lootgobbler.spec').path,
+            '--define', "_topdir ${rpmTop.path}",
+            '--define', "app_version ${project.version}",
+            '--define', "app_image ${new File(linuxDistDir, 'LootGobbler').path}",
+            '--define', "desktop_file ${file('packaging/linux/lootgobbler.desktop').path}",
+            '--define', "icon_file ${linuxIcon.path}"
+    doLast {
+        copy {
+            from(fileTree(new File(rpmTop, 'RPMS')).matching { include '**/*.rpm' }) {
+                eachFile { path = 'LootGobbler-x86_64.rpm' }
+                includeEmptyDirs = false
+            }
+            into linuxDistDir
         }
     }
 }

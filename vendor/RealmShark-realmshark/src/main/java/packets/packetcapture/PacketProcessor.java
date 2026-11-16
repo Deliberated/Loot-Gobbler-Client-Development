@@ -11,6 +11,9 @@ import packets.packetcapture.register.Register;
 import packets.packetcapture.sniff.PProcessor;
 import packets.packetcapture.sniff.Sniffer;
 import packets.reader.BufferReader;
+import packets.packetcapture.sniff.CapturePermissionException;
+import packets.packetcapture.sniff.assembly.TcpStreamErrorHandler;
+import packets.packetcapture.sniff.gui.LinuxCaptureGUI;
 import packets.packetcapture.sniff.gui.MissingNpcapGUI;
 import util.Util;
 
@@ -32,7 +35,6 @@ public class PacketProcessor extends Thread implements PProcessor {
 
     /**
      * Basic constructor of packetProcessor
-     * TODO: Add linux and mac support later
      */
     public PacketProcessor() {
         sniffer = new Sniffer(this);
@@ -63,12 +65,24 @@ public class PacketProcessor extends Thread implements PProcessor {
         logger.startLogger();
         incomingPacketConstructor.startResets();
         outgoingPacketConstructor.startResets();
+        boolean linux = System.getProperty("os.name").toLowerCase().contains("linux");
         try {
             sniffer.startSniffer();
-        } catch (UnsatisfiedLinkError e) {
-            new MissingNpcapGUI();
+        } catch (UnsatisfiedLinkError | NoClassDefFoundError e) {
+            // NoClassDefFoundError: the native mapping class failed to initialize on an earlier attempt
+            if (linux) {
+                LinuxCaptureGUI.missingLibpcap();
+                TcpStreamErrorHandler.INSTANCE.errorStop();
+            } else {
+                new MissingNpcapGUI();
+            }
+        } catch (CapturePermissionException e) {
+            if (linux) LinuxCaptureGUI.noPermission(e.getMessage());
+            else e.printStackTrace();
+            TcpStreamErrorHandler.INSTANCE.errorStop();
         } catch (Exception e) {
             e.printStackTrace();
+            TcpStreamErrorHandler.INSTANCE.errorStop();
         }
     }
 

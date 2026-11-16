@@ -19,9 +19,11 @@ import util.Util;
 
 import java.net.Inet4Address;
 import java.util.Arrays;
+import java.util.IdentityHashMap;
+import java.util.Map;
 
 /**
- * A sniffer used to tap packets out of the Windows OS network layer. Before sniffing
+ * A sniffer used to tap packets out of the OS network layer (Npcap on Windows, libpcap on Linux and macOS). Before sniffing
  * packets it needs to find what network interface the packets are sent or received from,
  * aka if proxies are used.
  */
@@ -35,6 +37,8 @@ public class Sniffer {
     private Pcap[] pcaps;
     private Pcap realmPcap;
     private boolean stop;
+    /** Link-layer type (DLT_*) of each open handle, so non-Ethernet frames can be turned into Ethernet ones. */
+    private final Map<Pcap, Integer> linkTypes = new IdentityHashMap<>();
 
     /**
      * Constructor of a Windows sniffer.
@@ -61,13 +65,18 @@ public class Sniffer {
     public void startSniffer() throws ErrorException, RadioFrequencyModeNotSupportedException,
             ActivatedException, InterfaceNotSupportTimestampTypeException,
             PromiscuousModePermissionDeniedException, InterfaceNotUpException,
-            PermissionDeniedException, NoSuchDeviceException, TimestampPrecisionNotSupportedException {
+            PermissionDeniedException, NoSuchDeviceException, TimestampPrecisionNotSupportedException,
+            CapturePermissionException {
 
         Service service = Service.Creator.create("PcapService");
         Interface[] interfaceList = NativeBridge.getInterfaces(service);
         pcaps = new Pcap[interfaceList.length];
         realmPcap = null;
         stop = false;
+        String os = System.getProperty("os.name").toLowerCase();
+        boolean onlyIp4Interfaces = os.contains("mac") || os.contains("linux");
+        int opened = 0;
+        Exception permissionError = null;
 
         for (int i = 0; i < interfaceList.length; i++) {
             DefaultLiveOptions defaultLiveOptions = new DefaultLiveOptions();
@@ -81,8 +90,9 @@ public class Sniffer {
                 Otherwise it will break and not work
                 */
 
-                // Check if we're running on macOS
-                if (System.getProperty("os.name").toLowerCase().contains("mac")) {
+                // Check if we're running on macOS. Linux too: it lists pseudo devices ("any", nflog, dbus,
+                // bluetooth, usbmon...) that either can't be opened or would see every packet twice.
+                if (onlyIp4Interfaces) {
                     // Loop over the interfaces addresses and check if there is a valid IPv4 address
                     for (Address addr : interfaceList[i].addresses()) {
                         if (addr.address() instanceof Inet4Address) {
@@ -91,6 +101,7 @@ public class Sniffer {
                             // If we've got an IPv4 address that isn't loopback or link local, start the sniffer
                             if (!ip.isLoopbackAddress() && !ip.isLinkLocalAddress()) {
                                 pcap = service.live(interfaceList[i], defaultLiveOptions);
+                                break;
                             }
                         }
                     }
@@ -105,13 +116,25 @@ public class Sniffer {
 
                 pcap.setFilter("tcp port " + port, true);
                 pcaps[i] = pcap;
+                linkTypes.put(pcap, pcap.datalink());
+                opened++;
 
+            } catch (PermissionDeniedException | PromiscuousModePermissionDeniedException e) {
+                permissionError = e;
+                System.out.println("[X] No permission to capture on " + interfaceList[i].name() + ": " + e.getMessage());
+                continue;
             } catch (Exception e) {
                 e.printStackTrace();
                 continue;
             }
 
             startPacketSniffer(pcap);
+        }
+
+        if (opened == 0) {
+            // nothing to listen on: without this the sniffer would wait forever for a first packet
+            if (permissionError != null) throw new CapturePermissionException(permissionError.getMessage());
+            throw new ErrorException("No network interface could be opened for capturing.");
         }
 
         closeUnusedSniffers();
@@ -141,7 +164,9 @@ public class Sniffer {
 
             @Override
             public void run() {
-                NativeBridge.PacketListener listener = packet -> {
+                final int linkType = linkTypes.getOrDefault(pcap, LinkLayer.DLT_EN10MB);
+                NativeBridge.PacketListener listener = raw -> {
+                    RawPacket packet = LinkLayer.toEthernet(raw, linkType);
                     TcpStreamErrorHandler.INSTANCE.logTCPPacket(packet);
 
                     if (packet != null && computeChecksum(packet.getPayload())) {

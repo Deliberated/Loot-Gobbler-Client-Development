@@ -235,7 +235,7 @@ public class DungeonListGUI extends JPanel {
         public void save(File folder, boolean saveDebugData) {
             SimpleDateFormat simpleDateFormat = new SimpleDateFormat("yyyy-MM-dd-HH.mm.ss");
             Date date = new Date(data.dungeonStartTime);
-            String fileName = folder + "\\" + name + " " + simpleDateFormat.format(date) + ".dps ";
+            String fileName = folder + File.separator + name + " " + simpleDateFormat.format(date) + ".dps ";
 
             try {
                 FileOutputStream f = new FileOutputStream(fileName);

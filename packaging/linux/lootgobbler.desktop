@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Loot Gobbler
+GenericName=RotMG Companion
+Comment=Your right hand for your RotMG adventures
+Exec=/opt/LootGobbler/bin/LootGobbler
+Icon=lootgobbler
+Terminal=false
+Categories=Game;
+StartupWMClass=tomato-Tomato
