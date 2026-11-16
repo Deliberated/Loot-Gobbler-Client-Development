@@ -54,7 +54,10 @@ public final class CharacterStore implements Syncable {
         public long favoriteAt;        // when favorite last changed (epoch ms), so syncing keeps the latest choice
         public boolean backpack, extender;
         public boolean alive = true;
-        public String diedBy;          // "game" (Dead tag in the char list) or "user" (gravestone clicked); null while alive
+        public String diedBy;          // "game" (death packet / Dead tag), "list" (gone from your account's char list:
+                                       // died unseen or deleted) or "user" (gravestone clicked); null while alive
+        public String account;         // the game account's name, from the char list; null = not seen in one yet
+        public long aliveAt;           // when alive/dead was last decided (death, revival), epoch ms; 0 = before this
         public long lastPlayed;        // epoch ms, 0 = not played since tracking started
         public int[] equipment;        // weapon, ability, armor, ring item ids (-1 = empty); null = unknown
         public int[] enchants;         // enchantment slots (rarity) per equipment slot; null = unknown
@@ -172,11 +175,13 @@ public final class CharacterStore implements Syncable {
                 }
                 String dead = r.rawTags.get("Dead");
                 if ("true".equalsIgnoreCase(dead)) {
+                    if (c.alive) c.aliveAt = System.currentTimeMillis();
                     c.alive = false;
                     c.diedBy = "game";
                 } else if ("false".equalsIgnoreCase(dead) && "game".equals(c.diedBy)) {
                     c.alive = true;
                     c.diedBy = null;
+                    c.aliveAt = System.currentTimeMillis();
                 }
             }
             // Characters missing from the list are left alone: the game sometimes sends only part of the list.
@@ -210,8 +215,7 @@ public final class CharacterStore implements Syncable {
      * The servers may refuse this outside the Daily Quest Room / Pet Yard; then nothing changes.
      */
     public void fetchAll(Consumer<String> done) {
-        Consumer<String> report = done != null ? done : s -> {
-        };
+        Consumer<String> report = done != null ? done : s -> AppLog.log("game", "Char list: " + s);
         IntSupplier f = fetcher;
         long now = System.currentTimeMillis();
         if (f == null) {
@@ -275,6 +279,7 @@ public final class CharacterStore implements Syncable {
                 Char c = chars.computeIfAbsent(id, k -> new Char());
                 String before = shown(c);
                 c.charId = id;
+                if (name != null && !name.isBlank()) c.account = name;   // a player's name is the account's name
                 c.classType = p.objectType;
                 c.className = className(p.objectType);
                 int skin = intStat(p, StatType.SKIN_ID);
@@ -740,9 +745,71 @@ public final class CharacterStore implements Syncable {
             if (c == null || !c.alive) return;
             c.alive = false;
             c.diedBy = "game";
+            c.aliveAt = System.currentTimeMillis();
             save();
         }
         fire();
+    }
+
+    private static final java.util.regex.Pattern CHAR_BLOCK = java.util.regex.Pattern.compile("<Char id=\"\\d+\">.*?</Char>",
+            java.util.regex.Pattern.DOTALL);
+    private static final java.util.regex.Pattern ACCOUNT_NAME = java.util.regex.Pattern.compile(
+            "<Account>.*?<Name>([^<]+)</Name>", java.util.regex.Pattern.DOTALL);
+
+    /**
+     * The name of the account a char list belongs to (its own Account block, not the small ones inside every
+     * character's pet), or null.
+     */
+    static String listAccount(String xml) {
+        java.util.regex.Matcher m = ACCOUNT_NAME.matcher(CHAR_BLOCK.matcher(xml).replaceAll(""));
+        return m.find() ? m.group(1).trim() : null;
+    }
+
+    private static final java.util.regex.Pattern NEXT_CHAR_ID = java.util.regex.Pattern.compile("<Chars\\b[^>]*\\bnextCharId=\"(\\d+)\"");
+
+    /** The list's nextCharId: every character with this id or higher was created after the list. MAX if absent. */
+    static int nextCharId(String xml) {
+        java.util.regex.Matcher m = NEXT_CHAR_ID.matcher(xml);
+        return m.find() ? Integer.parseInt(m.group(1)) : Integer.MAX_VALUE;
+    }
+
+    /**
+     * Ties the characters in a full char list to the list's game account, and buries those of that account that
+     * are missing from it: they were deleted, or died while the sniffer didn't see it. Only characters known to be
+     * of that account (seen in one of its lists, or played on it with the sniffer running) - character ids are per
+     * account, so one never seen with an account may well be another account's - and none created after the list.
+     */
+    void buryMissing(String xml) {
+        String account = listAccount(xml);
+        if (account == null) return;
+        Set<Integer> listed = new HashSet<>();
+        java.util.regex.Matcher m = CHAR_XML.matcher(xml);
+        while (m.find()) listed.add(Integer.parseInt(m.group(1)));
+        if (listed.isEmpty()) return;
+        int nextId = nextCharId(xml);
+        boolean changed = false;
+        long now = System.currentTimeMillis();
+        synchronized (this) {
+            for (int id : listed) {
+                Char c = chars.get(id);
+                if (c != null && !account.equals(c.account)) {
+                    c.account = account;
+                    changed = true;
+                }
+            }
+            for (Char c : chars.values()) {
+                if (!c.alive || listed.contains(c.charId) || c.charId >= nextId) continue;
+                if (c.account == null || !c.account.equalsIgnoreCase(account)) continue;
+                c.alive = false;
+                c.diedBy = "list";
+                c.aliveAt = now;
+                changed = true;
+                AppLog.log("game", "Gone from the char list (deleted, or died unseen): character " + c.charId
+                        + " (" + c.className + ")");
+            }
+            if (changed) save();
+        }
+        if (changed) fire();
     }
 
     public enum Flag {FAVORITE, DEAD}
@@ -762,6 +829,7 @@ public final class CharacterStore implements Syncable {
                 case DEAD -> {
                     c.alive = !c.alive;
                     c.diedBy = c.alive ? null : "user";
+                    c.aliveAt = System.currentTimeMillis();
                 }
             }
             save();
@@ -830,6 +898,11 @@ public final class CharacterStore implements Syncable {
             importItemData(xml, true);
         } catch (Exception e) {
             System.err.println("Could not read equipment enchantments: " + e);
+        }
+        try {
+            buryMissing(xml);
+        } catch (Exception e) {
+            System.err.println("Could not check the char list for gone characters: " + e);
         }
         try {
             Holdings.get().listedVault(Holdings.vaultFromCharList(xml));   // the regular vault, without walking in
@@ -904,6 +977,7 @@ public final class CharacterStore implements Syncable {
                 Char winner = other.lastPlayed > mine.lastPlayed ? other : mine;
                 Char loser = winner == mine ? other : mine;
                 if (fillUnknown(winner, loser) && winner == mine) changed = true;
+                if (takeLife(winner, loser) && winner == mine) changed = true;
                 if (winner != mine || mine.samples == null || samples.size() != mine.samples.size()) changed = true;
                 winner.samples = samples;
                 chars.put(t.getKey(), winner);
@@ -912,6 +986,27 @@ public final class CharacterStore implements Syncable {
         }
         if (changed) fire();
         return changed;
+    }
+
+    /**
+     * Alive or dead is decided by whichever side saw it last, not by which side was played last: a death or a
+     * gravestone click doesn't change lastPlayed, so the more recently played copy may not know about it yet. A side
+     * last saw the character at its death/revival (aliveAt) or, if later, when it was played. On a tie the dead side
+     * wins: nobody played the character after it died. Data from before aliveAt existed has 0 there, so a death
+     * then counts from the last time the character was played.
+     *
+     * @return True if n changed.
+     */
+    static boolean takeLife(Char n, Char o) {
+        long seenN = Math.max(n.aliveAt, n.lastPlayed), seenO = Math.max(o.aliveAt, o.lastPlayed);
+        boolean oDecides = seenO > seenN || (seenO == seenN && !o.alive && n.alive);
+        if (!oDecides || (n.alive == o.alive && java.util.Objects.equals(n.diedBy, o.diedBy) && n.aliveAt >= o.aliveAt)) {
+            return false;
+        }
+        n.alive = o.alive;
+        n.diedBy = o.alive ? null : (o.diedBy != null ? o.diedBy : "game");
+        n.aliveAt = Math.max(n.aliveAt, o.aliveAt);
+        return true;
     }
 
     /**
@@ -948,6 +1043,10 @@ public final class CharacterStore implements Syncable {
         if (n.petSkin == 0 && o.petSkin != 0) {
             n.petSkin = o.petSkin;
             n.petName = o.petName;
+            c = true;
+        }
+        if (n.account == null && o.account != null) {
+            n.account = o.account;
             c = true;
         }
         if (n.skin == 0 && o.skin != 0) {

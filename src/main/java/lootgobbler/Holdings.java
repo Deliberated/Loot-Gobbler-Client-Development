@@ -2,6 +2,7 @@ package lootgobbler;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonElement;
 import packets.incoming.VaultContentPacket;
 
 import java.io.Reader;
@@ -32,8 +33,12 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * <p>
  * Every change is written to the journal (holdings-journal.txt), so whatever appears or disappears can be traced to
  * what the game showed. Kept in holdings.json.
+ * <p>
+ * Synced with the server place by place: whichever PC saw a place last has it, no matter which PC synced last.
+ * Characters that left the character list are remembered as gone (with when), so another PC can't bring them back
+ * with an older look.
  */
-public final class Holdings {
+public final class Holdings implements Syncable {
     private static final Path FILE = Path.of("holdings.json");
     private static final Gson GSON = new GsonBuilder().create();
 
@@ -78,6 +83,7 @@ public final class Holdings {
     private static final class State {
         int version = 1;
         Map<String, Place> places = new HashMap<>();   // "char:506", "vault", "vault:seasonal"
+        Map<String, Long> gone = new HashMap<>();      // places removed (character died or deleted) -> when
     }
 
     /**
@@ -227,7 +233,10 @@ public final class Holdings {
         if (!persist || !Files.exists(file)) return;
         try (Reader r = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
             State s = GSON.fromJson(r, State.class);
-            if (s != null && s.places != null) state = s;
+            if (s != null && s.places != null) {
+                if (s.gone == null) s.gone = new HashMap<>();   // files from before syncing
+                state = s;
+            }
         } catch (Exception e) {
             System.err.println("Could not read " + file + ": " + e.getMessage());
         }
@@ -281,6 +290,7 @@ public final class Holdings {
                 if (!key.startsWith("char:") || keep.contains(key)) continue;
                 journal.line(key, "not in the character list: removed (" + describe(state.places.get(key)) + ")");
                 state.places.remove(key);
+                state.gone.put(key, now);
                 changed = true;
             }
         }
@@ -1024,6 +1034,71 @@ public final class Holdings {
         } catch (Exception e) {
             System.err.println("Could not save " + file + ": " + e.getMessage());
         }
+    }
+
+    // ---- server sync -----------------------------------------------------------------------------------------------
+
+    @Override
+    public String syncKind() {
+        return "holdings";
+    }
+
+    @Override
+    public String syncLabel() {
+        return "Inventory & vaults";
+    }
+
+    @Override
+    public synchronized int syncCount() {
+        return state.places.size();
+    }
+
+    @Override
+    public synchronized JsonElement exportSync() {
+        return GSON.toJsonTree(state);
+    }
+
+    /**
+     * Place by place, the newer look wins: a place the other side saw later replaces ours, one only it knows is added
+     * (unless it was removed here after that look), and a place it removed after our look goes.
+     */
+    @Override
+    public boolean mergeSync(JsonElement remote) {
+        State theirs = GSON.fromJson(remote, State.class);
+        if (theirs == null || theirs.places == null) return false;
+        boolean changed = false;
+        synchronized (this) {
+            if (theirs.gone != null) {
+                for (Map.Entry<String, Long> g : theirs.gone.entrySet()) {
+                    String key = g.getKey();
+                    long at = g.getValue() == null ? 0 : g.getValue();
+                    Place mine = state.places.get(key);
+                    if (mine != null && mine.seenAt <= at) {
+                        journal.line(key, "removed on another PC: removed (" + describe(mine) + ")");
+                        state.places.remove(key);
+                        changed = true;
+                    }
+                    if (at > state.gone.getOrDefault(key, 0L)) {
+                        state.gone.put(key, at);
+                        changed = true;
+                    }
+                }
+            }
+            for (Map.Entry<String, Place> t : theirs.places.entrySet()) {
+                String key = t.getKey();
+                Place other = t.getValue();
+                if (other == null || other.sections == null) continue;
+                Place mine = state.places.get(key);
+                if (mine != null ? other.seenAt <= mine.seenAt : other.seenAt <= state.gone.getOrDefault(key, -1L)) {
+                    continue;
+                }
+                String when = other.seenAt > 0 ? java.time.Instant.ofEpochMilli(other.seenAt).toString() : "earlier";
+                replace(key, mine, other, "from another PC, seen " + when);
+                changed = true;
+            }
+        }
+        if (changed) changed();
+        return changed;
     }
 
     /** Test access: the slots of a place's section (null if there is none). */

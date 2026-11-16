@@ -42,6 +42,7 @@ public class Tomato {
 
     public static void main(String[] args) {
         if (lootgobbler.Launcher.relaunchedNextToExe(args)) return;
+        if (lootgobbler.Launcher.alreadyRunning()) System.exit(0);
         lootgobbler.AppLog.install();   // log files, if turned on in Settings
         System.out.println(
             "Java Version: " +
@@ -142,6 +143,7 @@ public class Tomato {
             long t0 = System.currentTimeMillis();
             lootgobbler.AssetCheck.run(Version.VERSION);   // extracts only when the game's asset file really changed
             long t1 = System.currentTimeMillis();
+            preload();
             TomatoData data = new TomatoData();
             loadControllers(data);
             long t2 = System.currentTimeMillis();
@@ -168,6 +170,35 @@ public class Tomato {
         } finally {
             dispose();
         }
+    }
+
+    /**
+     * Reads the game data the window needs (items, objects, sprite sheets, dungeons) on other threads while the
+     * window is built: one after another on the main thread they took most of the startup. Each is a class
+     * initialization or a synchronized getter, so whoever needs one first simply waits for it.
+     */
+    private static void preload() {
+        String[] classes = {"assets.IdToAsset", "assets.SpriteFlatBuffer", "assets.ImageBuffer", "tomato.realmshark.ParseDungeon"};
+        for (String name : classes) {
+            Thread t = new Thread(() -> {
+                try {
+                    Class.forName(name, true, Tomato.class.getClassLoader());
+                } catch (Throwable e) {
+                    System.err.println("Preload " + name + ": " + e);
+                }
+            }, "preload-" + name.substring(name.lastIndexOf('.') + 1));
+            t.setDaemon(true);
+            t.start();
+        }
+        Thread items = new Thread(() -> {
+            try {
+                lootgobbler.ItemDb.get();
+            } catch (Throwable e) {
+                System.err.println("Preload items: " + e);
+            }
+        }, "preload-ItemDb");
+        items.setDaemon(true);
+        items.start();
     }
 
     /**

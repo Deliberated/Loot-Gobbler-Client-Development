@@ -41,6 +41,36 @@ public final class Launcher {
         }
     }
 
+    private static java.nio.channels.FileChannel lockChannel;   // held open (and locked) while the app runs
+
+    /**
+     * Two instances on the same data folder would overwrite each other's files. Call once the working directory is
+     * final.
+     *
+     * @return true if another Loot Gobbler already runs in this folder (this one should quit)
+     */
+    public static boolean alreadyRunning() {
+        try {
+            lockChannel = java.nio.channels.FileChannel.open(Path.of("lootgobbler.lock"),
+                    java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.WRITE);
+            // a restart (Grant permission, updates) starts the new instance while the old one is still closing
+            for (int i = 0; i < 50; i++) {
+                if (lockChannel.tryLock() != null) return false;
+                Thread.sleep(100);
+            }
+        } catch (java.nio.channels.OverlappingFileLockException e) {
+            return true;
+        } catch (Exception e) {
+            System.err.println("Could not check for another running Loot Gobbler: " + e);
+            return false;   // can't tell: better to start than to refuse
+        }
+        if (!java.awt.GraphicsEnvironment.isHeadless()) {
+            javax.swing.JOptionPane.showMessageDialog(null, "Loot Gobbler is already running.", "Loot Gobbler",
+                    javax.swing.JOptionPane.INFORMATION_MESSAGE);
+        }
+        return true;
+    }
+
     /**
      * The jpackage launcher sets _JPACKAGE_LAUNCHER (a launcher that inherits it acts as a plain "java" command and
      * only prints java's usage, at least on Linux) and adds its lib/app folder to LD_LIBRARY_PATH. A launcher started

@@ -39,6 +39,8 @@ public class Sniffer {
     private boolean stop;
     /** Link-layer type (DLT_*) of each open handle, so non-Ethernet frames can be turned into Ethernet ones. */
     private final Map<Pcap, Integer> linkTypes = new IdentityHashMap<>();
+    /** Handles whose loop thread has returned and closed them; stopping one of these again must not touch it. */
+    private final java.util.Set<Pcap> closed = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
 
     /**
      * Constructor of a Windows sniffer.
@@ -94,7 +96,9 @@ public class Sniffer {
                 // bluetooth, usbmon...) that either can't be opened or would see every packet twice.
                 if (onlyIp4Interfaces) {
                     // Loop over the interfaces addresses and check if there is a valid IPv4 address
-                    for (Address addr : interfaceList[i].addresses()) {
+                    Address addresses = interfaceList[i].addresses();   // null: no address at all
+                    if (addresses == null) continue;
+                    for (Address addr : addresses) {
                         if (addr.address() instanceof Inet4Address) {
                             Inet4Address ip = (Inet4Address) addr.address();
 
@@ -180,6 +184,11 @@ public class Sniffer {
                     }
                 };
                 NativeBridge.loop(p, -1, listener);
+                // only this thread closes the handle, once pcap_loop is out of it
+                synchronized (closed) {
+                    closed.add(p);
+                    p.close();
+                }
             }
         }).start();
         pause(1);
@@ -198,7 +207,7 @@ public class Sniffer {
                 if (realmPcap != null) {
                     for (Pcap pcap : pcaps) {
                         if (pcap != null && realmPcap != pcap) {
-                            pcap.close();
+                            stopLoop(pcap);
                         }
                     }
                     return;
@@ -308,19 +317,19 @@ public class Sniffer {
      */
     public void closeSniffers() {
         stop = true;
-        if (realmPcap != null) {
-            realmPcap.close();
-        } else {
-            try {
-                for (Pcap c : pcaps) {
-                    if (c != null) {
-                        c.close();
-                    }
-                }
-            } catch (NullPointerException e) {
-                // Network tap is already closed
-                System.out.println("[X] Error stopping sniffer: sniffer not running.");
-            }
+        if (pcaps == null) {
+            System.out.println("[X] Error stopping sniffer: sniffer not running.");
+            return;
+        }
+        for (Pcap c : pcaps) {
+            if (c != null) stopLoop(c);
+        }
+    }
+
+    /** Asks the handle's loop thread to return; that thread then closes it. */
+    private void stopLoop(Pcap pcap) {
+        synchronized (closed) {
+            if (!closed.contains(pcap)) NativeBridge.breakLoop(pcap);
         }
     }
 }

@@ -71,14 +71,30 @@ public class NativeBridge {
      */
     public static void loop(Pcap pcap, int packetCount, PacketListener listener) {
         try {
-            Field field = pcap.getClass().getDeclaredField("pointer");
-            field.setAccessible(true);
-            Pointer p = (Pointer) field.get(pcap);
+            Pointer p = pointer(pcap);
 
             NativeMappings.pcap_loop(p, packetCount, new GotPacketFuncExecutor(listener, SimpleExecutor.getInstance()), null);
         } catch (Exception e) {
             e.printStackTrace();
         }
+    }
+
+    /**
+     * Makes a running {@link #loop} on this handle return soon (libpcap wakes a blocked read for it). The handle
+     * must only be closed after the loop has returned: closing it under a running pcap_loop crashes on Linux.
+     */
+    public static void breakLoop(Pcap pcap) {
+        try {
+            NativeMappings.pcap_breakloop(pointer(pcap));
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private static Pointer pointer(Pcap pcap) throws ReflectiveOperationException {
+        Field field = pcap.getClass().getDeclaredField("pointer");
+        field.setAccessible(true);
+        return (Pointer) field.get(pcap);
     }
 
     /**

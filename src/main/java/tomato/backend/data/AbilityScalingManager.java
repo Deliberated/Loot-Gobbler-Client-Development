@@ -279,26 +279,49 @@ public class AbilityScalingManager {
         try {
             Document doc = projectileElement.getOwnerDocument();
             if (doc == null) return;
-
-            NodeList objectNodes = doc.getElementsByTagName("Object");
-            for (int i = 0; i < objectNodes.getLength(); i++) {
-                Node objectNode = objectNodes.item(i);
-                if (objectNode.getNodeType() != Node.ELEMENT_NODE) continue;
-
-                Element objectElement = (Element) objectNode;
-                Integer parentId = findProjectileMapping(
-                    objectElement,
-                    projectileType
-                );
-
-                if (parentId != null) {
-                    projectileToWeaponMap.put(projectileId, parentId);
-                    return;
-                }
+            if (shooterIndex == null || shooterDoc != doc) {
+                shooterIndex = shooterIndex(doc);
+                shooterDoc = doc;
             }
+            Integer parentId = shooterIndex.get(projectileType.toUpperCase());
+            if (parentId != null) projectileToWeaponMap.put(projectileId, parentId);
         } catch (Exception e) {
             // Best-effort mapping
         }
+    }
+
+    // [Loot Gobbler patch] the first object (in file order) whose (OnPlayerShoot)Activate names a projectile type,
+    // by that type in upper case: what findProjectileMapping finds, built once instead of scanning every object for
+    // every projectile (that took a core for ~15 s at startup)
+    private Map<String, Integer> shooterIndex;
+    private Document shooterDoc;
+
+    private Map<String, Integer> shooterIndex(Document doc) {
+        Map<String, Integer> index = new HashMap<>();
+        NodeList objectNodes = doc.getElementsByTagName("Object");
+        for (int i = 0; i < objectNodes.getLength(); i++) {
+            Node objectNode = objectNodes.item(i);
+            if (objectNode.getNodeType() != Node.ELEMENT_NODE) continue;
+            Element objectElement = (Element) objectNode;
+            int weaponId = parseWeaponId(objectElement);
+            if (weaponId == -1) continue;
+            for (String tagName : new String[]{"OnPlayerShootActivate", "Activate"}) {
+                NodeList nodes = objectElement.getElementsByTagName(tagName);
+                for (int j = 0; j < nodes.getLength(); j++) {
+                    Element act = (Element) nodes.item(j);
+                    String typeAttr = act.getAttribute("type");
+                    String text = act.getTextContent();
+                    String candidate = (typeAttr != null && !typeAttr.isEmpty())
+                        ? typeAttr.trim()
+                        : (text != null ? text.trim() : "");
+                    if (candidate.isEmpty()) continue;
+                    index.putIfAbsent(candidate.toUpperCase(), weaponId);
+                    String hex = extractHex(candidate);
+                    if (hex != null) index.putIfAbsent(hex.toUpperCase(), weaponId);
+                }
+            }
+        }
+        return index;
     }
 
     private Integer findProjectileMapping(

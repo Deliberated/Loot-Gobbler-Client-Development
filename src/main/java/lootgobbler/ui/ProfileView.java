@@ -759,7 +759,7 @@ public class ProfileView extends SubTabs {
         GobblerServer.MemberFacts friendA = byId(all, guildFriends == null ? 0 : guildFriends.a);
         GobblerServer.MemberFacts friendB = byId(all, guildFriends == null ? 0 : guildFriends.b);
         if (friendA != null && friendB != null) blocks.add(fact("BEST FRIENDS",
-                new FacingIcon(lookOf(friendA, FACT_ICON * 3 / 4), lookOf(friendB, FACT_ICON * 3 / 4)),
+                facing(friendA, friendB),
                 name(friendA) + " and " + name(friendB) + " played the most dungeons together: <b>" + NUM.format(guildFriends.count) + "</b>",
                 friendA.ign + " and " + friendB.ign + " were in " + guildFriends.count + " dungeon"
                         + (guildFriends.count == 1 ? "" : "s") + " together in the last " + FACT_DAYS + " days"));
@@ -853,6 +853,30 @@ public class ProfileView extends SubTabs {
     }
 
     /** The guildmate's character as they played it last; their class sprite, or null, when only that is known. */
+    /**
+     * The two guildmates facing each other at the same size per sprite pixel, so a 16x16 skin is twice as big as an
+     * 8x8 one instead of both squeezed into the same box. The bigger one may grow to 4/3 of the card's icon size.
+     */
+    private static Icon facing(GobblerServer.MemberFacts a, GobblerServer.MemberFacts b) {
+        int pa = spritePixels(a), pb = spritePixels(b);
+        double perPixel = Math.min(FACT_ICON * 3 / 4 / 8.0, FACT_ICON * 4 / 3.0 / Math.max(pa, pb));
+        return new FacingIcon(lookOf(a, (int) Math.round(pa * perPixel)), lookOf(b, (int) Math.round(pb * perPixel)));
+    }
+
+    /** The width in pixels of the guildmate's sprite in the game files (8 for most classes and skins). */
+    private static int spritePixels(GobblerServer.MemberFacts m) {
+        if (m.look == null || m.look.classType <= 0) return 8;
+        DpsHistory.PlayerRow p = new DpsHistory.PlayerRow();
+        p.classType = m.look.classType;
+        p.skin = m.look.skin;
+        try {
+            java.awt.image.BufferedImage img = assets.ImageBuffer.getImage(p.spriteId());
+            return img == null || img.getWidth() <= 1 ? 8 : img.getWidth();
+        } catch (Exception e) {
+            return 8;
+        }
+    }
+
     private static Icon lookOf(GobblerServer.MemberFacts m, int size) {
         if (m.look == null || m.look.classType <= 0) return null;
         DpsHistory.PlayerRow p = new DpsHistory.PlayerRow();

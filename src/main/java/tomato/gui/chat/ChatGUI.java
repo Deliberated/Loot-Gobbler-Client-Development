@@ -96,12 +96,29 @@ public class ChatGUI extends JPanel {
             Type listType = new TypeToken<ArrayList<String>>() {
             }.getType();
             ArrayList<String> blocked = new Gson().fromJson(response.toString(), listType);
+            if (blocked == null) throw new IOException("empty answer");
             blockedSpam.addAll(blocked);
-        } catch (IOException e) {
-            // the RealmShark spam-filter list is optional; the server is sometimes down
-            System.err.println("Chat spam filter list unavailable: " + e.getMessage());
+            try {
+                java.nio.file.Files.writeString(SPAM_CACHE, response.toString());
+            } catch (IOException ignored) {
+            }
+        } catch (Exception e) {
+            // the RealmShark spam-filter list is optional and its server is sometimes down: use the last list we got
+            try {
+                Type listType = new TypeToken<ArrayList<String>>() {
+                }.getType();
+                ArrayList<String> cached = new Gson().fromJson(java.nio.file.Files.readString(SPAM_CACHE), listType);
+                if (cached != null) blockedSpam.addAll(cached);
+                System.out.println("Chat spam filter: RealmShark server unavailable (" + e.getMessage() + "), using the list from "
+                        + java.nio.file.Files.getLastModifiedTime(SPAM_CACHE).toString().substring(0, 10));
+            } catch (Exception none) {
+                System.out.println("Chat spam filter: RealmShark server unavailable (" + e.getMessage() + "), no saved list yet");
+            }
         }
     }
+
+    /** The last keyword list the RealmShark server gave, for when it is down. [Loot Gobbler patch] */
+    private static final java.nio.file.Path SPAM_CACHE = java.nio.file.Path.of("chat-spam-keywords.json");
 
     /**
      * Add text to the chat text area.

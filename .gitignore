@@ -62,3 +62,7 @@ season-art/
 
 # assets that stay on this machine only
 /local-assets/
+
+# --- Held while Loot Gobbler runs (one instance per data folder) ---
+lootgobbler.lock
+chat-spam-keywords.json
