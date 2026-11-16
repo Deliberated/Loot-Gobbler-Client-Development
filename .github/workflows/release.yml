@@ -2,6 +2,8 @@
 # publishes them as a release of Deliberated/Loot-Gobbler-Client, where the in-app updater looks for new versions.
 #
 # Release title: the subject of the tagged commit ("v0.7.33: Linux Sniffer"). Release notes: RELEASE_NOTES.md.
+# Run by hand (Actions > Release > Run workflow, or `gh workflow run release.yml`) it only builds both platforms as a
+# test and publishes nothing.
 # Needs the repository secret RELEASE_TOKEN: a fine-grained token with "Contents: read and write" on
 # Deliberated/Loot-Gobbler-Client (this workflow's own token can't write to another repository).
 name: Release
@@ -9,6 +11,7 @@ name: Release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -18,8 +21,8 @@ jobs:
     # windows-2022 ships WiX 3.14, which the installer (packaging/windows/main.wxs, from JDK 21's jpackage) needs
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
@@ -30,11 +33,12 @@ jobs:
           if (-not $wix) { choco install wixtoolset -y --no-progress; $wix = Get-ChildItem 'C:\Program Files (x86)' -Directory -Filter 'WiX Toolset v3*' | Select-Object -First 1 }
           Add-Content $env:GITHUB_PATH (Join-Path $wix.FullName 'bin')
       - name: Check the version
+        if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         run: grep -q "^version = '${GITHUB_REF_NAME#v}'$" build.gradle || { echo "build.gradle version is not ${GITHUB_REF_NAME#v}"; exit 1; }
       - name: Build exe and zip
         run: ./gradlew.bat --no-daemon packageInstaller
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows
           path: |
@@ -45,8 +49,8 @@ jobs:
   linux:
     runs-on: ubuntu-22.04   # older glibc than Fedora, so the launcher runs there and on most other distributions
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
@@ -58,7 +62,7 @@ jobs:
         run: |
           rpm -qp --filecaps build/dist-linux/LootGobbler-x86_64.rpm | grep -q 'bin/LootGobbler.*cap_net_raw' \
             || { echo "the launcher in the rpm has no capture capabilities"; exit 1; }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux
           path: |
@@ -68,15 +72,18 @@ jobs:
 
   release:
     needs: [windows, linux]
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
+      - name: Check the release notes
+        run: grep -q '[^[:space:]]' RELEASE_NOTES.md || { echo "RELEASE_NOTES.md is empty"; exit 1; }
       - name: Publish to Loot-Gobbler-Client
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
