@@ -30,8 +30,19 @@ public class TcpStreamErrorHandler {
      * @param error Message of the error.
      */
     public void dumpData(String error) {
+        // [Loot Gobbler patch] the dump is 500 packets: at most one a minute, otherwise only the message
+        long now = System.currentTimeMillis();
+        if (now - lastDump < 60_000) {
+            errorMessage(error, error);
+            return;
+        }
+        lastDump = now;
         errorMessage(error, error + "\n" + getRawPacketDump());
     }
+
+    private static long lastDump, lastMessage;
+    private static String lastText;
+    private static int repeats;
 
     /**
      * TCP stream error checker for instances where packets are missing in a TCP stream.
@@ -39,24 +50,29 @@ public class TcpStreamErrorHandler {
      * @param tcpStreamBuilder TCP packet object to be checked.
      */
     void errorChecker(TcpStreamBuilder tcpStreamBuilder) {
-        if (tcpStreamBuilder.packetMap.size() > 95) {
-            long index = tcpStreamBuilder.sequenseNumber;
-            int counter = 0;
-            while (counter < 100000) {
-                if (tcpStreamBuilder.packetMap.containsKey(index)) {
-                    tcpStreamBuilder.sequenseNumber = index;
-                    TcpPacket tempPack = tcpStreamBuilder.packetMap.get(index);
-                    String errorMsg = "Packets missing. id:" + (tcpStreamBuilder.idNumber - tempPack.getIp4Packet().getIdentification()) + " seq:" + (tcpStreamBuilder.sequenseNumber - tempPack.getSequenceNumber()) + " outgoing:" + (tempPack.getDstPort() == 2050);
-                    errorMessage(errorMsg, errorMsg);
-                    break;
-                }
-                index++;
-                counter++;
+        // [Loot Gobbler patch] when too many segments wait for one that never comes (the capture missed it), go on
+        // at the nearest one that is there: the bytes in between are lost, the stream goes on. The old version
+        // searched a fixed byte range, and its "give up and reset" branch could never run (size > 95 came first).
+        if (tcpStreamBuilder.packetMap.size() <= 95) return;
+        long expected = tcpStreamBuilder.sequenseNumber;
+        TcpPacket nearest = null;
+        long nearestGap = Long.MAX_VALUE;
+        for (TcpPacket p : tcpStreamBuilder.packetMap.values()) {
+            long gap = -TcpStreamBuilder.after(expected, p.getSequenceNumber());
+            if (gap >= 0 && gap < nearestGap) {
+                nearestGap = gap;
+                nearest = p;
             }
-        } else if (tcpStreamBuilder.packetMap.size() >= 100) {
-            stop();
-            tcpStreamBuilder.reset();
         }
+        if (nearest == null) {
+            tcpStreamBuilder.packetMap.clear();
+            return;
+        }
+        final long start = nearest.getSequenceNumber();
+        tcpStreamBuilder.packetMap.values().removeIf(p -> TcpStreamBuilder.after(start, p.getSequenceNumber()) > 0);
+        tcpStreamBuilder.sequenseNumber = start;
+        String errorMsg = "Packets missing: skipped " + nearestGap + " bytes. outgoing:" + (nearest.getDstPort() == 2050);
+        errorMessage(errorMsg, errorMsg);
     }
 
     /**
@@ -115,6 +131,19 @@ public class TcpStreamErrorHandler {
      * @param errorDump Error dump for debugger
      */
     public void errorMessage(String errorMsg, String errorDump) {
+        // [Loot Gobbler patch] the same error again within 10 seconds is only counted, not logged each time
+        long now = System.currentTimeMillis();
+        synchronized (TcpStreamErrorHandler.class) {
+            if (errorMsg.equals(lastText) && now - lastMessage < 10_000) {
+                repeats++;
+                return;
+            }
+            String text = errorMsg;
+            if (repeats > 0 && lastText != null) errorMsg = "(" + repeats + " more of: " + lastText + ") " + errorMsg;
+            repeats = 0;
+            lastText = text;
+            lastMessage = now;
+        }
         if (errorMessage != null) errorMessage.errorLogs(errorMsg, errorDump);
     }
 

@@ -27,6 +27,11 @@ public final class ItemDb {
         public boolean soulbound;
         public boolean chest;   // opens into an item when used (Eerie Music Box, mystery ST chests...)
         public boolean quickslotOnly;   // used only from a quick slot, again and again (Coral Juice Refinery...)
+        /**
+         * A consumable that raises loot for a while: the Loot Drop / Loot Tier Potions (LDBoosted, LTBoosted) and the
+         * accelerators for drop rate, class-specific loot, enchanted drops and dust (not experience boosts).
+         */
+        public boolean lootBoost;
         public final List<Stat> onEquip = new ArrayList<>();
         public Set<String> labels = Set.of();
         /** How it takes enchantments (pool, slot chances, dust), or null if it cannot be enchanted. */
@@ -80,6 +85,9 @@ public final class ItemDb {
          * guild's drops and their points): Concentrated Soul Fire (Moonlight Village) and the Vial of Soul Extract
          * (Spectral Penitentiary), by the game's names for them.
          */
+        static final Set<String> LOOT_ACCELERATORS = Set.of("DROPLOOTBOOST", "TIEREDLOOTBOOST", "ITEMSLOTCHANCE",
+                "DROPDUSTVOLUMEBOOST");
+
         static final Set<String> FORGE_DROPS = Set.of("Concentrated Soul Fire", "SpecPen Upgrade Token",
                 "SpecPen Upgrade Token Shiny");
 
@@ -319,6 +327,11 @@ public final class ItemDb {
                         case "Soulbound" -> cur.soulbound = true;
                         case "OnlyUsableFromQuickslot" -> cur.quickslotOnly = true;
                         case "Chest" -> cur.chest = true;
+                        case "LDBoosted", "LTBoosted" -> cur.lootBoost = true;
+                        case "Activate" -> {
+                            String acc = r.getAttributeValue(null, "acceleratorId");
+                            if (acc != null && Item.LOOT_ACCELERATORS.contains(acc)) cur.lootBoost = true;
+                        }
                         case "EnchantmentSlots" -> cur.enchantSlots = EnchantSlots.read(r);
                         case "OnPlayerHitActivate" -> {
                             boolean lowLife = r.getAttributeValue(null, "hpMinThresholdRelative") != null;

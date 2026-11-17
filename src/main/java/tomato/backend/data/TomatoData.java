@@ -240,6 +240,8 @@ public class TomatoData {
         lootgobbler.DungeonVisits.get().entered(map);   // after clear(): the run of the map left is saved by now
         lootgobbler.MoonlightLog.get().entered(map.name);
         lootgobbler.Holdings.get().entered("{s.vault}".equals(map.displayName));
+        lootgobbler.Upe.get().inVault("{s.vault}".equals(map.displayName));   // items turning up there came out of it
+        lootgobbler.Upe.get().where(lootgobbler.LootEvents.mapName(map));   // where a UPE gathers what it finds
     }
 
     /**
@@ -1108,11 +1110,14 @@ public class TomatoData {
             }
         }
         RealmCharacter currentChar = charMap.get(charId);
-        if (charId != -1 && currentChar != null) {
-            makePet(currentChar);
-            MyInfoGUI.updatePet(pet);
-        }
-        CharacterPanelGUI.updateRealmChars();
+        if (charId != -1 && currentChar != null) makePet(currentChar);
+        // [Loot Gobbler patch] the list comes in on a background thread (char-list-fetch): the panels are rebuilt on
+        // the Swing thread, else a paint at the same moment finds their children gone ("No such child: 0")
+        Entity shownPet = charId != -1 && currentChar != null ? pet : null;
+        javax.swing.SwingUtilities.invokeLater(() -> {
+            if (shownPet != null) MyInfoGUI.updatePet(shownPet);
+            CharacterPanelGUI.updateRealmChars();
+        });
     }
 
     private void makePet(RealmCharacter currentChar) {

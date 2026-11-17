@@ -349,6 +349,7 @@ public final class Missions {
         if (s.startsWith("pool/#")) s = s.substring(6);
         if (!s.startsWith("prog/")) return;
         boolean changed = false;
+        List<String> started = new ArrayList<>(), going = new ArrayList<>();   // for UPE runs: begun at 0 or not
         synchronized (this) {
             if (defs == null) return;
             for (String entry : s.substring(5).split("\\|")) {
@@ -360,6 +361,7 @@ public final class Missions {
                     if (def == null) continue;
                     int[] step = ints(f[2]);
                     Prog p = progs.computeIfAbsent(tree + ":" + id, k -> new Prog());
+                    boolean wasZero = java.util.Arrays.stream(p.progress).allMatch(v -> v == 0);
                     if (p.progress.length < step.length) p.progress = java.util.Arrays.copyOf(p.progress, step.length);
                     boolean any = false;
                     for (int i = 0; i < step.length; i++) {
@@ -368,12 +370,57 @@ public final class Missions {
                         any = true;
                     }
                     if (!any) continue;
+                    (wasZero ? started : going).add(tree + ":" + id);
                     changed = true;
                 } catch (NumberFormatException ignored) {
                 }
             }
         }
+        CharacterStore.Char playing = CharacterStore.get().playing();
+        if (playing != null) {
+            for (String m : started) Upe.get().missionStep(m, playing.charId, true);
+            for (String m : going) Upe.get().missionStep(m, playing.charId, false);
+        }
         if (changed) fire();
+    }
+
+    /**
+     * Which mission a claim (packet 163: the season and the mission's place on its board) is about, with its item
+     * rewards per group (one of each group is given), for UPE runs. The place is taken as the mission's position in
+     * the season's list; if that one is not finished, the season's only finished, unclaimed mission is taken.
+     */
+    public void claimedMission(int seasonId, int position) {
+        String key = null;
+        List<int[]> rewards = new ArrayList<>();
+        synchronized (this) {
+            Season season = defs == null ? null : defs.seasons.stream().filter(x -> x.id == seasonId).findFirst().orElse(null);
+            Mission m = null;
+            if (season != null) {
+                if (position >= 0 && position < season.missions.size() && ready(seasonId, season.missions.get(position))) {
+                    m = season.missions.get(position);
+                } else {
+                    List<Mission> ready = season.missions.stream().filter(x -> ready(seasonId, x)).toList();
+                    if (ready.size() == 1) m = ready.get(0);
+                }
+            }
+            if (m != null) {
+                key = seasonId + ":" + m.id;
+                for (List<Reward> g : m.rewardGroups()) {
+                    int[] items = g.stream().filter(r -> r.type == 2).mapToInt(Reward::itemId).filter(id -> id > 0).toArray();
+                    if (items.length > 0) rewards.add(items);
+                }
+            }
+            AppLog.log("game", "Mission claimed: season " + seasonId + ", place " + position + " -> "
+                    + (m == null ? "not known" : m.name + " (" + key + ")"));
+        }
+        CharacterStore.Char playing = CharacterStore.get().playing();
+        Upe.get().missionClaimed(key, playing == null ? 0 : playing.charId, rewards);
+    }
+
+    /** Finished and not claimed yet. */
+    private boolean ready(int seasonId, Mission m) {
+        Prog p = progs.get(seasonId + ":" + m.id);
+        return p != null && (p.state == 1 || (p.state == 0 && m.complete(p.progress)));
     }
 
     /** You claimed a mission (packet 163): asked again shortly, to show what the game made of it. */

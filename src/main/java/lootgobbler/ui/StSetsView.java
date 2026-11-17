@@ -35,6 +35,13 @@ public class StSetsView extends JPanel {
     private List<StSets.Set> sets = List.of();
     private Set<Integer> owned = Set.of();
     private Map<Integer, CollectionStore.Entry> entries = Map.of();
+    /** The most enchantments on a copy you have: the collection's, or a UPE run's. */
+    private java.util.function.IntUnaryOperator bestOf = id -> lootgobbler.CollectionStore.get().bestEnchants(id);
+
+    /** Where the enchantment badges come from (null: the collection's). */
+    public void counts(java.util.function.IntUnaryOperator best) {
+        bestOf = best != null ? best : id -> lootgobbler.CollectionStore.get().bestEnchants(id);
+    }
     private int filter = 0;   // 0 all, 1 complete, 2 in progress (not complete), 3 craftable from set tokens
 
     public StSetsView(Consumer<ItemDb.Item> onPieceClick) {
@@ -415,7 +422,7 @@ public class StSetsView extends JPanel {
                 g2.setComposite(AlphaComposite.SrcOver);
             }
             if (have && entries.get(id) != null) {
-                EnchantBadge.draw(g2, x + TILE - 3, TILE - 3, lootgobbler.CollectionStore.get().bestEnchants(id), 5);   // best copy you have
+                EnchantBadge.draw(g2, x + TILE - 3, TILE - 3, bestOf.applyAsInt(id), 5);   // best copy you have
             }
             g2.setColor(hover ? accent : Color.BLACK);
             g2.setStroke(new BasicStroke(hover ? 2f : 1f));

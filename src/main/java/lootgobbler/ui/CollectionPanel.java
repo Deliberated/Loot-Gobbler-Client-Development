@@ -4,6 +4,7 @@ import assets.IdToAsset;
 import lootgobbler.CollectionStore;
 import lootgobbler.ItemDb;
 import lootgobbler.StSets;
+import util.PropertiesManager;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -48,13 +49,42 @@ public class CollectionPanel extends JPanel {
     private JButton backToRecent;
     private ItemDb.Item historyItem;   // item whose history replaces the Recent list, or null
     private final JTextField search = new JTextField();
+    /** The UPE character whose gathered items are shown (0: the whole collection), and the column to pick it. */
+    private int upeChar;
+    private Map<Integer, CollectionStore.Entry> upeItems = Map.of();
+    private final JPanel upeColumn = new JPanel();
+    private final JScrollPane upeScroll;
 
     public CollectionPanel() {
         super(new BorderLayout(0, 8));
         setBorder(new EmptyBorder(8, 8, 8, 8));
 
         viewPicker = new Segmented(false, 0, i -> cards.show(views, VIEWS[i]), "Items", "ST Sets", "Log");
-        add(viewPicker, BorderLayout.NORTH);
+        // the white bag left of the pages opens a column to pick whose items are shown: all, or one UPE character's
+        JLabel bag = new JLabel(CharactersView.sprite(tomato.realmshark.enums.LootBags.WHITE.getId(), 34));
+        bag.setToolTipText("Show the whole collection or a UPE character's own finds");
+        bag.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        JPanel bar = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        bar.setOpaque(false);
+        bar.add(bag);
+        bar.add(viewPicker);
+        add(bar, BorderLayout.NORTH);
+        upeColumn.setLayout(new BoxLayout(upeColumn, BoxLayout.Y_AXIS));
+        upeColumn.setOpaque(false);
+        upeColumn.setBorder(new EmptyBorder(4, 4, 4, 4));
+        upeScroll = new JScrollPane(upeColumn, ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED, ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        upeScroll.setBorder(new EmptyBorder(0, 0, 0, 0));
+        upeScroll.setOpaque(false);
+        upeScroll.getViewport().setOpaque(false);
+        upeScroll.setVisible(Boolean.parseBoolean(String.valueOf(PropertiesManager.getProperty(UPE_COLUMN))));
+        add(upeScroll, BorderLayout.WEST);
+        Clicks.onClick(bag, () -> {
+            upeScroll.setVisible(!upeScroll.isVisible());
+            PropertiesManager.setProperties(UPE_COLUMN, String.valueOf(upeScroll.isVisible()));
+            if (upeScroll.isVisible()) renderUpeColumn(lootgobbler.Upe.get().markedRuns());   // built only while shown
+            revalidate();
+            repaint();
+        });
         grid.onItemClick(item -> showHistory(item, false));
         views.setOpaque(false);
         views.add(gridView(), VIEWS[0]);
@@ -64,6 +94,7 @@ public class CollectionPanel extends JPanel {
 
         CollectionStore.get().onChange(ViewRefresh.of(this, this::refresh));   // only while it can be seen
         lootgobbler.Holdings.get().onChange(ViewRefresh.of(this, this::refresh));   // copies moved, came or went
+        lootgobbler.Upe.get().onChange(ViewRefresh.of(this, this::refresh));       // a UPE gathered something
         Thread loader = new Thread(() -> {
             ItemDb db = ItemDb.get();
             List<StSets.Set> sets = StSets.get();
@@ -97,7 +128,8 @@ public class CollectionPanel extends JPanel {
         headerActions.setOpaque(false);
         headerActions.add(search);
         headerActions.add(gridFilterPicker);
-        Section main = new Section("Collection · Items", Palette.GOLD, scroll(grid)).actions(headerActions);
+        Section main = new Section("Collection", Palette.GOLD, scroll(grid)).actions(headerActions);
+        mainSection = main;
         GuideTargets.mark("inventory.grid", main);
 
         JPanel top = column(new Section("Progress", Palette.GREEN, progressBody("Collected", progress, progressText)),
@@ -145,8 +177,160 @@ public class CollectionPanel extends JPanel {
         return p;
     }
 
+    private static final String UPE_COLUMN = "collectionUpeColumn";
+    private JButton clearButton;   // off while a UPE's finds are shown: it clears the whole collection
+    private Section mainSection;
+
+    /**
+     * The column of whose items are shown: the whole collection first, then every character marked as a UPE (lost
+     * runs too, faded). The one shown is highlighted.
+     */
+    private void renderUpeColumn(List<lootgobbler.Upe.Run> runs) {
+        upeColumn.removeAll();
+        upeColumn.add(upeEntry(new JLabel(CharactersView.sprite(tomato.realmshark.enums.LootBags.WHITE.getId(), 40)),
+                "All", "Your whole collection", 0, false));
+        Map<Integer, lootgobbler.CharacterStore.Char> chars = new java.util.HashMap<>();
+        for (lootgobbler.CharacterStore.Char c : lootgobbler.CharacterStore.get().all()) chars.put(c.charId, c);
+        for (String mode : lootgobbler.Upe.MODES) {   // per mode: a gold line with its name, its characters below
+            List<lootgobbler.Upe.Run> inMode = runs.stream().filter(r -> mode.equals(r.mode) && chars.containsKey(r.charId)).toList();
+            if (inMode.isEmpty()) continue;
+            upeColumn.add(modeLine(lootgobbler.Upe.label(mode)));
+            for (lootgobbler.Upe.Run r : inMode) {
+                lootgobbler.CharacterStore.Char c = chars.get(r.charId);
+                String tip = "<html><b>" + c.className + "</b> (" + lootgobbler.Upe.label(mode) + ")<br>" + r.gathered.size() + " item"
+                        + (r.gathered.size() == 1 ? "" : "s") + " gathered<br>"
+                        + lootgobbler.Upe.describe(r).replace("&", "&amp;").replace("<", "&lt;").replace("\n", "<br>") + "</html>";
+                upeColumn.add(upeEntry(new JLabel(CharactersView.skin(c, 40)), c.className, tip, r.charId, r.broken != null || !c.alive));
+            }
+        }
+        if (runs.isEmpty()) {
+            JLabel none = new JLabel("<html><div style='width:70px;text-align:center'>No game mode runs yet</div></html>");
+            none.setForeground(Palette.MUTED);
+            none.putClientProperty("FlatLaf.styleClass", "small");
+            none.setAlignmentX(CENTER_ALIGNMENT);
+            upeColumn.add(Box.createVerticalStrut(8));
+            upeColumn.add(none);
+        }
+        upeColumn.revalidate();
+        upeColumn.repaint();
+    }
+
+    /** A mode's heading in the column: its name in gold over a thin gold line. */
+    private static JComponent modeLine(String mode) {
+        Color gold = Section.color("LootGobbler.gold", Palette.GOLD);
+        JLabel name = new JLabel(mode);
+        name.putClientProperty("FlatLaf.styleClass", "small");
+        name.setForeground(gold);
+        name.setAlignmentX(LEFT_ALIGNMENT);
+        JPanel line = new JPanel() {
+            @Override
+            protected void paintComponent(Graphics g) {
+                g.setColor(gold);
+                g.fillRect(0, 0, getWidth(), 2);
+            }
+        };
+        line.setOpaque(false);
+        line.setPreferredSize(new Dimension(80, 2));
+        line.setMaximumSize(new Dimension(Integer.MAX_VALUE, 2));
+        line.setAlignmentX(LEFT_ALIGNMENT);
+        JPanel p = new JPanel();
+        p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS));
+        p.setOpaque(false);
+        p.setBorder(new EmptyBorder(10, 6, 4, 6));
+        p.add(name);
+        p.add(Box.createVerticalStrut(2));
+        p.add(line);
+        p.setMaximumSize(new Dimension(110, p.getPreferredSize().height));
+        p.setAlignmentX(CENTER_ALIGNMENT);
+        return p;
+    }
+
+    /** One entry of the column: its picture with a name below; the one shown has a gold frame. */
+    private JComponent upeEntry(JLabel picture, String name, String tip, int charId, boolean faded) {
+        boolean shown = upeChar == charId;
+        JPanel p = new JPanel();
+        p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS));
+        p.setOpaque(shown);
+        p.setBackground(Palette.mix(Section.color("LootGobbler.gold", Palette.GOLD), Section.color("LootGobbler.paper", Color.DARK_GRAY), 0.25));
+        p.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(shown ? Section.color("LootGobbler.gold", Palette.GOLD) : new Color(0, 0, 0, 0), 2),
+                new EmptyBorder(4, 6, 4, 6)));
+        picture.setAlignmentX(CENTER_ALIGNMENT);
+        JLabel label = new JLabel(name);
+        label.putClientProperty("FlatLaf.styleClass", "small");
+        label.setAlignmentX(CENTER_ALIGNMENT);
+        if (faded) {
+            label.setForeground(Palette.MUTED);
+            picture.setEnabled(false);
+        }
+        p.add(picture);
+        p.add(label);
+        p.setAlignmentX(CENTER_ALIGNMENT);
+        p.setMaximumSize(new Dimension(96, p.getPreferredSize().height));
+        p.setToolTipText(tip);
+        p.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Clicks.onClick(p, () -> {
+            upeChar = charId;
+            historyItem = null;
+            refresh();
+        });
+        JPanel holder = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 3));
+        holder.setOpaque(false);
+        holder.add(p);
+        holder.setMaximumSize(new Dimension(110, holder.getPreferredSize().height));
+        return holder;
+    }
+
+    /**
+     * What a UPE run gathered, as collection entries: per item the copies it got (drops, things made cleanly), when
+     * and where, newest last.
+     */
+    private static Map<Integer, CollectionStore.Entry> gathered(lootgobbler.Upe.Run run) {
+        Map<Integer, CollectionStore.Entry> out = new java.util.HashMap<>();
+        if (run == null) return out;
+        for (lootgobbler.Upe.Gathered g : run.gathered) {
+            ItemDb.Item item = ItemDb.get().item(g.item);
+            if (item == null || !item.isCollectible()) continue;
+            String time = java.time.LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(g.at), java.time.ZoneId.systemDefault())
+                    .withNano(0).toString();
+            CollectionStore.Entry e = out.computeIfAbsent(g.item, k -> new CollectionStore.Entry());
+            if (e.first == null) e.first = time;
+            e.last = time;
+            e.count++;
+            List<Integer> ench = g.enchants == null ? null : java.util.Arrays.stream(g.enchants).boxed().toList();
+            CollectionStore.Find f = ench != null
+                    ? CollectionStore.Find.of(lootgobbler.Upe.CRAFTED.equals(g.how) ? CollectionStore.FORGED : CollectionStore.DROP, ench, g.where, "")
+                    : CollectionStore.Find.of(lootgobbler.Upe.CRAFTED.equals(g.how) ? CollectionStore.FORGED : CollectionStore.DROP, -1, g.where, "");
+            f.time = time;
+            f.at = g.at;
+            if (e.history == null) e.history = new ArrayList<>();
+            e.history.add(f);
+        }
+        return out;
+    }
+
     private void refresh() {
         if (!loaded) return;
+        List<lootgobbler.Upe.Run> runs = lootgobbler.Upe.get().markedRuns();
+        lootgobbler.Upe.Run run = runs.stream().filter(r -> r.charId == upeChar).findFirst().orElse(null);
+        if (run == null) upeChar = 0;   // shown no more (the mark taken off)
+        if (upeScroll.isVisible()) renderUpeColumn(runs);
+        upeItems = gathered(run);
+        if (upeChar != 0) {
+            Map<Integer, CollectionStore.Entry> mine = upeItems;
+            grid.counts(id -> mine.containsKey(id) ? mine.get(id).count : 0, id -> mine.containsKey(id) ? mine.get(id).maxEnchants() : 0);
+            stView.counts(id -> mine.containsKey(id) ? mine.get(id).maxEnchants() : 0);
+            lootgobbler.CharacterStore.Char c = lootgobbler.CharacterStore.get().all().stream().filter(x -> x.charId == upeChar).findFirst().orElse(null);
+            if (mainSection != null) mainSection.setTitle("Collection · " + (c == null ? "UPE" : c.className + " (UPE)"));
+        } else {
+            grid.counts(null, null);
+            stView.counts(null);
+            if (mainSection != null) mainSection.setTitle("Collection");
+        }
+        if (clearButton != null) {
+            clearButton.setEnabled(upeChar == 0);
+            clearButton.setToolTipText(upeChar == 0 ? null : "Shows a UPE character's finds: switch to All to clear the collection");
+        }
         Map<Integer, CollectionStore.Entry> owned = collected();
         List<ItemDb.Item> g = matching(filter(gridFilter), owned);
         grid.setData(g, owned);
@@ -158,7 +342,8 @@ public class CollectionPanel extends JPanel {
 
         recent.removeAll();
         if (historyItem != null) {
-            renderHistory(historyItem, CollectionStore.get().snapshot().get(historyItem.id));   // also when all are gone
+            renderHistory(historyItem, upeChar != 0 ? upeItems.get(historyItem.id)
+                    : CollectionStore.get().snapshot().get(historyItem.id));   // also when all are gone
         } else {
             sideSection.setTitle("Recent");
             backToRecent.setVisible(false);
@@ -181,6 +366,20 @@ public class CollectionPanel extends JPanel {
         for (Map.Entry<Integer, CollectionStore.Entry> e : byLast) {
             logModel.addRow(new Object[]{e.getValue().firstDate(), e.getKey(), name(e.getKey()), e.getValue().count});
         }
+    }
+
+    /** Shows a UPE character's own finds (from the Game Modes tab): the column open with it picked. */
+    public void showUpe(int charId) {
+        upeChar = charId;
+        historyItem = null;
+        if (!upeScroll.isVisible()) {
+            upeScroll.setVisible(true);
+            PropertiesManager.setProperties(UPE_COLUMN, "true");
+        }
+        viewPicker.select(0);
+        cards.show(views, VIEWS[0]);
+        refresh();
+        revalidate();
     }
 
     /**
@@ -367,7 +566,7 @@ public class CollectionPanel extends JPanel {
      * The top of the history: the item big, its kind (UT / ST / tier, slot, shiny), how often you found it,
      * the dungeon it drops in (when the game data says) and where you found it yourself.
      */
-    private static JComponent itemHeader(ItemDb.Item item, CollectionStore.Entry entry) {
+    private JComponent itemHeader(ItemDb.Item item, CollectionStore.Entry entry) {
         JLabel icon = new JLabel(CharactersView.sprite(item.id, 72));
         icon.setVerticalAlignment(SwingConstants.TOP);
 
@@ -389,7 +588,8 @@ public class CollectionPanel extends JPanel {
         text.add(leftAligned(kind));
         text.add(Box.createVerticalStrut(6));
 
-        int held = CollectionStore.get().held(item.id);   // the copies you have now, wherever they are
+        int held = upeChar != 0 ? (upeItems.containsKey(item.id) ? upeItems.get(item.id).count : 0)   // the UPE's own
+                : CollectionStore.get().held(item.id);   // the copies you have now, wherever they are
         JLabel count = new JLabel("Count: " + held);
         count.setFont(count.getFont().deriveFont(20f));   // smaller, the pixel font draws a 6 that looks like an 8
         count.setForeground(held == 0 ? Palette.MUTED : new Color(0xF5C542));
@@ -679,7 +879,8 @@ public class CollectionPanel extends JPanel {
         p.setBorder(new EmptyBorder(10, 10, 10, 10));
         p.add(button("Copy as text", null, this::copyText));
         p.add(button("Copy as image", null, this::copyImage));
-        p.add(button("Clear collection", "danger", this::clearCollection));
+        clearButton = button("Clear collection", "danger", this::clearCollection);
+        p.add(clearButton);
         return p;
     }
 
@@ -687,7 +888,8 @@ public class CollectionPanel extends JPanel {
      * The collection without entries that are not collectible gear (e.g. consumables recorded by older versions).
      */
     /** The collectible items you hold a copy of (all forged or fed away = not collected). */
-    private static Map<Integer, CollectionStore.Entry> collected() {
+    private Map<Integer, CollectionStore.Entry> collected() {
+        if (upeChar != 0) return new java.util.HashMap<>(upeItems);   // a UPE character's own finds
         Map<Integer, CollectionStore.Entry> all = CollectionStore.get().snapshot();
         all.entrySet().removeIf(e -> {
             ItemDb.Item item = ItemDb.get().item(e.getKey());

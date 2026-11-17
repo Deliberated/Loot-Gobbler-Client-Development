@@ -26,6 +26,15 @@ public class CollectionGrid extends JComponent implements Scrollable {
 
     private List<ItemDb.Item> items = List.of();
     private Map<Integer, CollectionStore.Entry> owned = Map.of();
+    /** Copies you have and the most enchantments on one, per item: the collection's, or a UPE run's. */
+    private java.util.function.IntUnaryOperator heldOf = id -> CollectionStore.get().held(id);
+    private java.util.function.IntUnaryOperator bestOf = id -> CollectionStore.get().bestEnchants(id);
+
+    /** Where the counts and enchantment badges come from (null: the collection's). */
+    public void counts(java.util.function.IntUnaryOperator held, java.util.function.IntUnaryOperator best) {
+        heldOf = held != null ? held : id -> CollectionStore.get().held(id);
+        bestOf = best != null ? best : id -> CollectionStore.get().bestEnchants(id);
+    }
     private int lastWidth = -1;
     private int hover = -1;   // index of the cell under the mouse
     private static final int PULSE_MS = 2000, CLICK_PULSE_MS = 1000, PULSE_GROW = 14;
@@ -330,8 +339,8 @@ public class CollectionGrid extends JComponent implements Scrollable {
                 }
                 if (have) {
                     CollectionStore.Entry entry = owned.get(item.id);
-                    EnchantBadge.draw(g, x + CELL - 3, y + CELL - 3, CollectionStore.get().bestEnchants(item.id), 5);   // best copy you have
-                    drawCount(g, x + 2, y + CELL - 3, CollectionStore.get().held(item.id));   // copies you have
+                    EnchantBadge.draw(g, x + CELL - 3, y + CELL - 3, bestOf.applyAsInt(item.id), 5);   // best copy you have
+                    drawCount(g, x + 2, y + CELL - 3, heldOf.applyAsInt(item.id));   // copies you have
                 }
             }
         }
@@ -425,7 +434,7 @@ public class CollectionGrid extends JComponent implements Scrollable {
         ItemDb.Item item = items.get(tipIndex);
         CollectionStore.Entry entry = owned.get(item.id);
         String name = item.name + (item.isShiny() && !item.name.contains("Shiny") ? " (Shiny)" : "");
-        String sub = entry == null ? "Not found yet" : "Count: " + CollectionStore.get().held(item.id);
+        String sub = entry == null ? "Not found yet" : "Count: " + heldOf.applyAsInt(item.id);
         Font base = UIManager.getFont("Label.font");
         if (base == null) base = getFont();
         FontMetrics fm = g.getFontMetrics(base);

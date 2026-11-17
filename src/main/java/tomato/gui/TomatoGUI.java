@@ -99,6 +99,13 @@ public class TomatoGUI {
             inventory.showItem(id);
         });
         tabbedPane.addTab("Characters", characters);
+        tabbedPane.addTab("Game Modes", new lootgobbler.ui.GameModesView(id -> {   // UPE and the modes to come
+            characters.showCharacter(id);
+            tabbedPane.show("Characters");
+        }, id -> {
+            inventory.showUpe(id);   // a run's own finds
+            tabbedPane.show("Inventory");
+        }));
 
         dpsPanel = new DpsGUI(data);   // Tomato's original view: not shown any more, but its packet handlers still run
         tabbedPane.addTab("Battles", dps);   // Dungeons | DPS (was "DPS Logger")
@@ -132,6 +139,7 @@ public class TomatoGUI {
         DpsDisplayOptions.loadProfileFilter();
         lootgobbler.PacketDebug.install();
         lootgobbler.ItemUse.install();   // forged and fed items leave the collection
+        lootgobbler.GuildUpe.get().resume();   // gUPE trades still waiting for the partner's report
         lootgobbler.CharacterStore.install();
         lootgobbler.PlayerProfile.get().trackStSets();   // the guild sees the ST sets you completed lately
         lootgobbler.PlayerProfile.get().trackExalts();   // ... and every exaltation you earned   // your death moves the character to the graveyard at once
@@ -165,7 +173,7 @@ public class TomatoGUI {
         if (savedOrder != null && savedOrder.contains("DPS Logger")) {
             util.PropertiesManager.setProperties("tabOrder", savedOrder.replace("DPS Logger", "Battles"));
         }
-        tabbedPane.restoreOrder("Profile", "Inventory", "Characters", "Battles", "Social", "Guild", "Server", "Settings");
+        tabbedPane.restoreOrder("Profile", "Inventory", "Characters", "Game Modes", "Battles", "Social", "Guild", "Server", "Settings");
         lootgobbler.ui.NavigationButtons.install();   // the mouse's back and forward buttons go through the views
         makeFrame();
         lootgobbler.ui.NewcomerGuide.install(frame, new lootgobbler.ui.NewcomerGuide.Nav() {

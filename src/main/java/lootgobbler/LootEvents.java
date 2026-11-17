@@ -36,6 +36,7 @@ public final class LootEvents {
     private static long lastInventoryScan;
 
     public static void bagDropped(MapInfoPacket map, Entity bag, Entity player) {
+        if (bag != null) lootBags.add(bag.id);   // items taken out of it are drops (UPE runs)
         try {
             List<Drop> drops = readBag(bag);
             if (drops.isEmpty()) return;
@@ -163,6 +164,7 @@ public final class LootEvents {
     /** A move you made between two slots (the swap packet you send): followed when it involves the vault. */
     public static void invSwap(packets.outgoing.InvSwapPacket p, Entity player) {
         if (p.slotFrom == null || p.slotTo == null) return;
+        lastSwap = p;   // a potion drunk from the storage is answered as "used up": the request says which
         try {
             int playerId = player == null ? 0 : player.id, charId = player == null ? 0 : player.charId();
             Holdings.get().swap(playerId, charId, p.slotFrom.objectId, p.slotFrom.slotId, p.slotFrom.objectType,
@@ -173,7 +175,7 @@ public final class LootEvents {
     }
 
     /** The game's answer to a move. */
-    public static void invResult(packets.incoming.InvResultPacket p) {
+    public static void invResult(packets.incoming.InvResultPacket p, tomato.backend.data.TomatoData data) {
         if (p.slotFrom == null || p.slotTo == null) return;
         try {
             Holdings.get().swapResult(p.result, p.resultType, p.slotFrom.objectId, p.slotFrom.slotId, p.slotFrom.objectType,
@@ -181,6 +183,78 @@ public final class LootEvents {
         } catch (Exception e) {
             e.printStackTrace();
         }
+        try {   // where items of your character came from, for UPE runs
+            Entity me = data == null ? null : data.player;
+            if (!p.result || me == null) return;
+            if (p.resultType == 1) {   // used up: a potion drunk straight from a vault container (the potion storage)
+                packets.outgoing.InvSwapPacket asked = lastSwap;
+                for (packets.data.SlotObjectData s : new packets.data.SlotObjectData[]{p.slotFrom, p.slotTo}) {
+                    String sec = Holdings.get().section(s.objectId);
+                    if (sec == null || asked == null) continue;
+                    packets.data.SlotObjectData was = asked.slotFrom.objectId == s.objectId && asked.slotFrom.slotId == s.slotId
+                            ? asked.slotFrom : asked.slotTo.objectId == s.objectId && asked.slotTo.slotId == s.slotId ? asked.slotTo : null;
+                    if (was != null) Upe.get().used(me.charId(), -1, was.objectType, sec);
+                }
+                return;
+            }
+            int a = p.slotFrom.objectId, b = p.slotTo.objectId;
+            Upe.get().moved(me.charId(), me.id, a, p.slotFrom.slotId, p.slotFrom.objectType, b, p.slotTo.slotId, p.slotTo.objectType,
+                    Holdings.get().section(a), isLootBag(data, a), Holdings.get().section(b), isLootBag(data, b));
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private static volatile packets.outgoing.InvSwapPacket lastSwap;
+    private static final java.util.Set<Integer> lootBags = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
+
+    /** Whether the object is a loot bag (seen as one, or still on the map as one). */
+    static boolean isLootBag(tomato.backend.data.TomatoData data, int objectId) {
+        if (lootBags.contains(objectId)) return true;
+        Entity e = data.entityList.get(objectId);
+        return e != null && tomato.realmshark.enums.LootBags.lootBagName(e.objectType) != null;
+    }
+
+    /** An item used: a stat potion drunk from your inventory or straight from a vault container (UPE runs). */
+    public static void itemUsed(packets.outgoing.UseItemPacket p, tomato.backend.data.TomatoData data) {
+        try {
+            Entity me = data == null ? null : data.player;
+            if (me == null || p.slotObject == null) return;
+            int obj = p.slotObject.objectId;
+            Upe.get().used(me.charId(), p.slotObject.slotId, p.slotObject.objectType, obj == me.id ? null : Holdings.get().section(obj));
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    /** A trade window opened: both sides' slots with their enchantments, and the partner's name (UPE runs). */
+    public static void tradeStart(packets.incoming.TradeStartPacket p) {
+        Upe.get().tradeStart(p.partnerName, tradeItems(p.clientItems), tradeEnchants(p.clientItems),
+                tradeItems(p.partnerItems), tradeEnchants(p.partnerItems));
+    }
+
+    private static int[] tradeItems(packets.data.TradeItemData[] items) {
+        if (items == null) return new int[0];
+        int[] out = new int[items.length];
+        for (int i = 0; i < items.length; i++) out[i] = items[i] == null ? -1 : items[i].item;
+        return out;
+    }
+
+    private static int[][] tradeEnchants(packets.data.TradeItemData[] items) {
+        if (items == null) return new int[0][];
+        int[][] out = new int[items.length][];
+        for (int i = 0; i < items.length; i++) {
+            List<Integer> ids = items[i] == null || items[i].uniqueData == null ? null : enchantIds(items[i].uniqueData);
+            out[i] = ids == null ? new int[0] : ids.stream().mapToInt(Integer::intValue).toArray();
+        }
+        return out;
+    }
+
+    /** A trade that went through (UPE runs). */
+    public static void tradeDone(packets.incoming.TradeDonePacket p, tomato.backend.data.TomatoData data) {
+        AppLog.log("game", "Trade done: " + p.code + (p.description == null ? "" : " (" + p.description + ")"));
+        if (p.code != packets.data.enums.TradeResult.Successful || data == null || data.player == null) return;
+        Upe.get().traded(data.player.charId(), data.player.name());
     }
 
     /** What any object's status carries: for the vault's containers, the items of the page they show. */
@@ -464,7 +538,7 @@ public final class LootEvents {
         return n.startsWith("B.") ? "Boosted " + n.substring(2) : n;
     }
 
-    static String mapName(MapInfoPacket map) {
+    public static String mapName(MapInfoPacket map) {
         if (map == null) return "Unknown";
         return map.displayName != null && !map.displayName.isEmpty() && !map.displayName.startsWith("{") ? map.displayName : map.name;
     }

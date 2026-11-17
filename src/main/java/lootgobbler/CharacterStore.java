@@ -98,6 +98,11 @@ public final class CharacterStore implements Syncable {
     private static final long DAY_MS = 24 * 3_600_000L;
 
     private final Map<Integer, Char> chars = new LinkedHashMap<>();
+    private final Set<Integer> neverSeen = new HashSet<>();   // characters first seen in this run of the app
+    private int[] upeSlots;          // the slots just read, handed to the UPE rules outside the lock
+    private int[][] upeEnchants;
+    private int[] upeBase;
+    private boolean upeFirst;
     private volatile int currentCharId;      // character you are playing (or last played this run), 0 = none yet
     private volatile String playerName = PropertiesManager.getProperty(KEY_PLAYER_NAME);
     private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
@@ -136,8 +141,10 @@ public final class CharacterStore implements Syncable {
         if (list == null) return;
         if (!list.isEmpty() && fetchedToken != null) listToken = fetchedToken;   // this login has its list
         writeTagsOnce(list);
+        Map<Integer, Boolean> pets = new java.util.HashMap<>();   // for the no-pet rule, told outside the lock
         synchronized (this) {
             for (RealmCharacter r : list) {
+                pets.put(r.charId, r.petSkin > 0 || r.petType > 0);
                 Char c = chars.computeIfAbsent(r.charId, k -> new Char());
                 c.charId = r.charId;
                 c.classType = r.classNum;
@@ -188,6 +195,11 @@ public final class CharacterStore implements Syncable {
             save();
         }
         fire();
+        try {
+            Upe.get().pets(pets);
+        } catch (Exception e) {
+            AppLog.log("upe", "Pet check failed: " + e);
+        }
     }
 
     /**
@@ -327,6 +339,13 @@ public final class CharacterStore implements Syncable {
                 }
                 if (seen) c.quickslots = quick;
                 if (readSlots(p, c, pack == null ? -1 : pack.statValue)) lastSave = 0;   // save the new packs soon
+                if (c.lastPlayed == 0) neverSeen.add(id);   // first seen now: a level 1 character was just created
+                if (c.slots != null) {
+                    upeSlots = c.slots.clone();
+                    upeEnchants = c.slotEnchantIds;
+                    upeFirst = neverSeen.contains(id);
+                    upeBase = p.baseStats;
+                }
                 c.alive = true;
                 c.diedBy = null;
                 c.lastPlayed = now;
@@ -344,6 +363,28 @@ public final class CharacterStore implements Syncable {
                 changed = sampled || !before.equals(shown(c));
             }
             if (changed) fire();   // every 5 s during play: only tell the pages when something they show changed
+            int[] slots;
+            int[][] ench;
+            int[] base;
+            boolean first;
+            int level;
+            synchronized (this) {
+                slots = upeSlots;
+                ench = upeEnchants;
+                base = upeBase;
+                first = upeFirst;
+                upeSlots = null;
+                Char c = chars.get(id);
+                level = c == null ? 0 : c.level;
+            }
+            if (slots != null) {
+                try {
+                    Upe.get().seen(id, level, slots, ench, base, first);   // the UPE rules
+                } catch (Exception e) {   // not swallowed with the rest: a bug here would quietly stop the checks
+                    AppLog.log("upe", "Check failed: " + e);
+                    e.printStackTrace();
+                }
+            }
         } catch (Exception e) {
             // stats can change while being read; try again next tick
         }

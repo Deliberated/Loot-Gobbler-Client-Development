@@ -95,6 +95,7 @@ public class VaultData {
      * @param realmchar Character data.
      */
     public void updateCharInventory(RealmCharacter realmchar) {
+        if (realmchar.equipment == null) return;   // [Loot Gobbler patch] a character just created has no Equipment yet
         List<Integer> list = Arrays.stream(realmchar.equipment).boxed().collect(Collectors.toList());
         addPot(list, potsCharacterInventoryVault);
     }

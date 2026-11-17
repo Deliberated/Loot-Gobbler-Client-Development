@@ -75,7 +75,7 @@ public class CharacterListGUI extends JPanel {
         panelEquip.setBorder(BorderFactory.createLineBorder(Color.GRAY));
         panelEquip.setPreferredSize(new Dimension(90, 30));
         for (int i = 0; i < 4; i++) {
-            int eq = c.equipment[i];
+            int eq = c.equipment != null && i < c.equipment.length ? c.equipment[i] : -1;   // none yet on a new character
             panelEquip.add(new JLabel(ImageBuffer.getOutlinedIcon(eq, 15)));
         }
         panel.add(panelEquip);
@@ -115,7 +115,7 @@ public class CharacterListGUI extends JPanel {
         panel.add(botRow);
 
         for (int i = 4 + b; i < 12 + b; i++) {
-            int eq = c.equipment[i];
+            int eq = c.equipment != null && i < c.equipment.length ? c.equipment[i] : -1;   // none yet on a new character
             if (i < 8 + b) {
                 topRow.add(new JLabel(ImageBuffer.getOutlinedIcon(eq, 12)));
             } else {

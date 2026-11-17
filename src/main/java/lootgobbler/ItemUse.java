@@ -35,10 +35,44 @@ public final class ItemUse {
         Register.INSTANCE.register(PacketType.FORGE_RESULT, p -> forgeResult((ForgeResultPacket) p));
         Register.INSTANCE.register(PacketType.PETUPGRADEREQUEST, p -> petUpgrade((PetUpgradeRequestPacket) p));
         Register.INSTANCE.register(PacketType.INVDROP, p -> dropped((packets.outgoing.InvDropPacket) p));
+        // things the game sells or gives (no drops), and Tinkerer quest hand-ins: for UPE runs
+        Register.INSTANCE.register(PacketType.BUYRESULT, p -> {
+            packets.incoming.BuyResultPacket b = (packets.incoming.BuyResultPacket) p;
+            if (b.result == 0) Upe.get().rewarded("shop purchase");
+        });
+        Register.INSTANCE.register(PacketType.LOGIN_REWARD_MSG, p -> Upe.get().rewarded("daily login reward"));
+        Register.INSTANCE.register(PacketType.CHEST_REWARD_RESULT, p -> Upe.get().rewarded("reward chest"));
+        Register.INSTANCE.register(PacketType.CLAIM_BATTLE_PASS, p -> Upe.get().rewarded("battle pass claim"));
+        Register.INSTANCE.register(PacketType.CLAIM_BP_MILESTONE_RESULT, p -> Upe.get().rewarded("battle pass milestone"));
+        Register.INSTANCE.register(PacketType.REDEEM_EXALTATION_REWARD, p -> Upe.get().rewarded("exaltation reward"));
+        // trades, for gUPE runs: the window, then what each side offers in the accepts
+        Register.INSTANCE.register(PacketType.TRADESTART, p -> LootEvents.tradeStart((packets.incoming.TradeStartPacket) p));
+        Register.INSTANCE.register(PacketType.ACCEPTTRADE, p -> {
+            packets.outgoing.AcceptTradePacket a = (packets.outgoing.AcceptTradePacket) p;
+            Upe.get().tradeOffers(a.clientOffer, a.partnerOffer);
+        });
+        Register.INSTANCE.register(PacketType.TRADEACCEPTED, p -> {
+            packets.incoming.TradeAcceptedPacket a = (packets.incoming.TradeAcceptedPacket) p;
+            Upe.get().tradeOffers(a.clientOffer, a.partnerOffer);
+        });
+        Register.INSTANCE.register(PacketType.QUEST_REDEEM, p -> {
+            packets.outgoing.QuestRedeemPacket q = (packets.outgoing.QuestRedeemPacket) p;
+            int[] slots = q.slots == null ? new int[0] : java.util.Arrays.stream(q.slots).mapToInt(s -> s.slotId).toArray();
+            TinkererQuests.Quest quest = TinkererQuests.get().quests().stream()
+                    .filter(x -> x.id.equals(q.questIdString)).findFirst().orElse(null);
+            Upe.get().questHandIn(playingId(), q.questIdInt, slots, quest == null ? null : quest.rewards,
+                    quest != null && quest.itemOfChoice);
+        });
+        Register.INSTANCE.register(PacketType.QUEST_REDEEM_RESPONSE,
+                p -> Upe.get().questAnswer(((packets.incoming.QuestRedeemResponsePacket) p).ok));
     }
 
     private static synchronized void forgeRequest(ForgeRequestPacket p) {
         forging = used(p.dismantledItems);
+        if (p.dismantledItems != null) {   // what goes in decides whether what comes out is clean (UPE runs)
+            int[] slots = java.util.Arrays.stream(p.dismantledItems).mapToInt(s -> s.slotId).toArray();
+            Upe.get().forgeRequest(playingId(), slots);
+        }
         AppLog.log("items", "Forge request: " + slots(p.dismantledItems) + " -> " + name(p.resultItemType)
                 + "; collectible: " + names(forging));
     }
@@ -47,6 +81,12 @@ public final class ItemUse {
         List<Used> used = forging;
         forging = List.of();
         AppLog.log("items", "Forge result: " + (p.success ? "success" : "failed") + ", " + slots(p.results));
+        if (p.results != null) {
+            Upe.get().forgeResult(playingId(), p.success, java.util.Arrays.stream(p.results).mapToInt(s -> s.slotId).toArray(),
+                    java.util.Arrays.stream(p.results).mapToInt(s -> s.objectType).toArray());
+        } else {
+            Upe.get().forgeResult(playingId(), p.success, null, null);
+        }
         if (!p.success) {
             AppLog.log("items", "Forge failed, nothing taken off");
             return;
@@ -80,14 +120,17 @@ public final class ItemUse {
             b.position(5);
             if (type == USE_REQUEST) {
                 int count = b.get() & 0xFF;
+                int[] upeSlots = new int[count];
                 for (int i = 0; i < count && b.remaining() >= 12; i++) {
                     b.getInt();
                     int slot = b.getInt(), item = b.getInt();
+                    upeSlots[i] = slot;
                     ItemDb.Item it = ItemDb.get().item(item);
                     AppLog.log("items", "Use request: slot " + slot + ": " + name(item) + " (" + item + ")");
                     ItemCooldowns.used(item, "use request, slot " + slot);
                     if (it != null && it.isCollectible()) using.put(slot, new Used(item, LootEvents.copyInSlot(slot, item)));
                 }
+                Upe.get().forgeRequest(playingId(), upeSlots);   // forging or feeding: what goes in (UPE runs)
             } else {
                 boolean ok = b.get() == 1;
                 int count = b.get() & 0xFF;
@@ -100,11 +143,18 @@ public final class ItemUse {
                             + (now == -1 ? "empty" : name(now)));
                     if (ok && u != null && now != u.id()) gone.add(u);
                 }
+                Upe.get().forgeResult(playingId(), ok, null, null);   // what turns up now was made from it
                 remove(gone, CollectionStore.CONSUMED, "Forge or pet");
             }
         } catch (Exception e) {
             AppLog.log("items", "Could not read packet " + type + ": " + e);
         }
+    }
+
+    /** The character you are playing, 0 if none. */
+    private static int playingId() {
+        CharacterStore.Char c = CharacterStore.get().playing();
+        return c == null ? 0 : c.charId;
     }
 
     private static void dropped(packets.outgoing.InvDropPacket p) {

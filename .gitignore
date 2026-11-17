@@ -66,3 +66,4 @@ season-art/
 # --- Held while Loot Gobbler runs (one instance per data folder) ---
 lootgobbler.lock
 chat-spam-keywords.json
+upe.json

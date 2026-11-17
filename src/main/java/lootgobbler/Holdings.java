@@ -529,6 +529,11 @@ public final class Holdings implements Syncable {
         if (changed) changed();
     }
 
+    /** The vault section (Vault chest, Gift chest, Potions...) an object of the vault map is, or null. */
+    public synchronized String section(int objectId) {
+        return chestSections.get(objectId);
+    }
+
     /** Whether the object is a container of the vault you are in. */
     public boolean isVaultObject(int objectId) {
         if (inVault == null) return false;
@@ -950,6 +955,9 @@ public final class Holdings implements Syncable {
     /** Replaces a place whole, journaling what came and went. True if anything changed. */
     private boolean replace(String key, Place before, Place now, String why) {
         state.places.put(key, now);
+        if (before != null && (VAULT.equals(key) || SEASONAL_VAULT.equals(key))) {   // what left it, for UPE runs
+            Upe.get().vaultChanged(key, before.seenAt, held(before), now.seenAt, held(now));
+        }
         Map<Integer, Integer> was = collectibles(before), is = collectibles(now);
         List<String> parts = new ArrayList<>();
         Set<Integer> ids = new HashSet<>(was.keySet());
@@ -967,6 +975,15 @@ public final class Holdings implements Syncable {
         journal.line(key, why + ": " + total + " copies (" + (before == null ? "new" : "+" + gained + " / -" + lost) + ")"
                 + (parts.isEmpty() ? "" : "  " + String.join(", ", parts)));
         return true;
+    }
+
+    /** Every item of a place with its enchantments (for the UPE vault records). */
+    private static List<Upe.Held> held(Place p) {
+        List<Upe.Held> out = new ArrayList<>();
+        for (List<Slot> slots : p.sections.values()) {
+            for (Slot s : slots) if (!s.empty()) out.add(new Upe.Held(s.item, s.enchantIds));
+        }
+        return out;
     }
 
     /** Copies of collectibles in a place, by item. */

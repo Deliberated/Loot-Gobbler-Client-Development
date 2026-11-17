@@ -91,8 +91,21 @@ public class CharactersView extends JPanel {
         }, "Alive", "Graveyard");
         list.setBorder(new EmptyBorder(8, 8, 8, 8));
         panel.setBorder(new EmptyBorder(0, 0, 0, 0));   // the boxes sit right at the divider, as on the Classes page
+        upeHint.putClientProperty("FlatLaf.styleClass", "small");
+        upeHint.setForeground(UPE_BG.brighter());
+        upeHint.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        upeHint.setVisible(false);
+        upeHint.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent e) {
+                List<Integer> ids = potentialUpes();
+                if (ids.isEmpty()) return;
+                int at = ids.indexOf(selected);   // each click: the next one
+                showCharacter(ids.get((at + 1) % ids.size()));
+            }
+        });
         Section left = GuideTargets.mark("characters.list", new Section("Characters", Palette.GOLD, wrap(scroll(list))))
-                .actions(played, rangePicker, (JComponent) Box.createHorizontalStrut(24), alivePicker);
+                .actions(upeHint, (JComponent) Box.createHorizontalStrut(18), played, rangePicker, (JComponent) Box.createHorizontalStrut(24), alivePicker);
         JComponent right = GuideTargets.mark("characters.detail", scroll(panel));   // a column of boxes (character, loadout, ..., fame gain)
         // about half and half; a new name, so earlier saved widths of the narrow panel do not apply
         SideSplit characters = new SideSplit(left, right, "characterDetail", 760, 300);   // drag the gap to resize
@@ -104,6 +117,7 @@ public class CharactersView extends JPanel {
         add(views, BorderLayout.CENTER);
 
         CharacterStore.get().onChange(ViewRefresh.of(this, this::refresh));   // only while it can be seen
+        lootgobbler.Upe.get().onChange(ViewRefresh.of(this, this::refresh));
         refresh();
     }
 
@@ -154,7 +168,25 @@ public class CharactersView extends JPanel {
         visitedCharacter(charId);
     }
 
+    /** "1 POTENTIAL UPE" in the header: characters seen from their creation that could still be a UPE. */
+    private final JLabel upeHint = new JLabel();
+
+    /** The living characters that could be a UPE but are not marked, newest first. */
+    static List<Integer> potentialUpes() {
+        Set<Integer> alive = new HashSet<>();
+        for (Char c : CharacterStore.get().all()) if (c.alive) alive.add(c.charId);
+        List<Integer> out = new ArrayList<>(lootgobbler.Upe.get().potential().stream().filter(alive::contains).toList());
+        out.sort(Comparator.reverseOrder());
+        return out;
+    }
+
     private void refresh() {
+        List<Integer> upes = potentialUpes();
+        upeHint.setVisible(!upes.isEmpty());
+        upeHint.setText(upes.size() + " POTENTIAL RUN" + (upes.size() == 1 ? "" : "S"));
+        upeHint.setToolTipText("<html>" + (upes.size() == 1 ? "A character" : upes.size() + " characters")
+                + " the sniffer saw from creation, upgrades disabled, that can still start a game mode (PPE, UPE and its variants, with or without a pet).<br>"
+                + "Click to show " + (upes.size() == 1 ? "it" : "them one after another") + "; start it on its banner or in the Game Modes tab.</html>");
         long now = System.currentTimeMillis(), window = RANGES[range];
         List<Char> all = CharacterStore.get().all();
         List<Char> alive = all.stream().filter(c -> c.alive != graveyard).toList();   // graveyard: dead ones
@@ -391,6 +423,8 @@ public class CharactersView extends JPanel {
         banners.setOpaque(false);
         banners.add(new Banner("Seasonal", SEASONAL_BG, c.seasonal));
         banners.add(new Banner("Crucible", CRUCIBLE_BG, c.crucible));
+        JComponent upeBanner = c.alive ? upeBanner(c) : null;
+        if (upeBanner != null) banners.add(upeBanner, 0);   // first, left of Seasonal
 
         OutlinedText stats = new OutlinedText(c.statsMaxed + "/8", c.statsMaxed == 8 ? STATS_MAXED : STATS_OPEN, 34f);
         stats.setToolTipText(c.statsMaxed + " of 8 stats maxed");
@@ -401,6 +435,7 @@ public class CharactersView extends JPanel {
             pet.setToolTipText(c.petName == null || c.petName.isBlank() ? "Pet" : "Pet: " + c.petName);
             toggles.add(pet);
         }
+        toggles.add(lootBonus(c));   // in the row of the pet and the stats
         toggles.add(stats);
         toggles.add(toggleIcon(GRAVE, !c.alive, c.alive ? "Mark as dead" : "Mark as alive", () -> toggle(c, CharacterStore.Flag.DEAD)));
         toggles.add(toggleIcon(c.favorite ? STAR_ON : STAR_OFF, true, c.favorite ? "Favourite" : "Mark as favourite",
@@ -417,7 +452,6 @@ public class CharactersView extends JPanel {
         middle.setOpaque(false);
         middle.add(loadout(c), BorderLayout.WEST);
         middle.add(textHolder, BorderLayout.CENTER);
-        middle.add(lootBonus(c), BorderLayout.EAST);
         return selectableCard(c.charId, sprite, middle, right);
     }
 
@@ -429,20 +463,10 @@ public class CharactersView extends JPanel {
         List<lootgobbler.LootBonus.Part> parts = lootgobbler.LootBonus.parts(c, System.currentTimeMillis());
         double total = lootgobbler.LootBonus.total(parts);
         boolean unknown = parts.stream().anyMatch(p -> !p.known());
-        OutlinedText value = new OutlinedText("+" + PERCENT.format(total) + "%" + (unknown ? "?" : ""),
-                total > 0 ? LOOT_ON : STATS_OPEN, 34f);
-        JLabel caption = muted("LOOT BONUS");
-        caption.setFont(caption.getFont().deriveFont(Font.BOLD, 13f));
-        caption.setHorizontalAlignment(SwingConstants.CENTER);
-        JPanel box = new JPanel(new BorderLayout(0, 0));
-        box.setOpaque(false);
-        JPanel valueRow = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 0));
-        valueRow.setOpaque(false);
-        valueRow.add(value);
-        box.add(valueRow, BorderLayout.CENTER);
-        box.add(caption, BorderLayout.SOUTH);
+        // just "+2.5%", as big as the x/8 beside it; that it is the loot bonus, and its sources, on hover
+        OutlinedText box = new OutlinedText("+" + PERCENT.format(total) + "%", total > 0 ? LOOT_ON : STATS_OPEN, 34f);
 
-        StringBuilder tip = new StringBuilder("<html><b>Loot bonus: +" + PERCENT.format(total) + "%</b>");
+        StringBuilder tip = new StringBuilder("<html><b>Loot bonus (LB): +" + PERCENT.format(total) + "%</b>");
         if (parts.isEmpty()) tip.append("<br>No enchantment, crucible, blood ritual or loot drop boost adds to loot.");
         for (lootgobbler.LootBonus.Part p : parts) {
             tip.append("<br>").append(p.source()).append(": ")
@@ -451,8 +475,6 @@ public class CharactersView extends JPanel {
         if (c.lootTierUntil > System.currentTimeMillis()) tip.append("<br>Loot tier boost running (better drops, not more)");
         if (unknown) tip.append("<br><i>Log in with this character to read its crucible / ritual settings.</i>");
         tip.append("</html>");
-        value.setToolTipText(tip.toString());
-        caption.setToolTipText(tip.toString());
         box.setToolTipText(tip.toString());
 
         JPanel holder = new JPanel(new GridBagLayout());   // vertically centered
@@ -981,6 +1003,34 @@ public class CharactersView extends JPanel {
 
     private static final Color SEASONAL_BG = new Color(0x15DCA6), SEASONAL_TEXT = new Color(0x2BD8B0);
     private static final Color CRUCIBLE_BG = new Color(0xD8302C);
+    private static final Color UPE_BG = new Color(0x9B59D0), UPE_LOST_BG = new Color(0x6E6E6E);
+
+    /**
+     * The UPE banner: bright when the character is played as a UPE, half faded when it could be one (seen from its
+     * creation, nothing against it); grey "UPE LOST" once a rule was broken. Clicking marks the character as a UPE
+     * or takes the mark off. Null for a character that is not eligible: it gets no banner.
+     */
+    private JComponent upeBanner(Char c) {
+        lootgobbler.Upe.Run run = lootgobbler.Upe.get().run(c.charId);
+        String tip = lootgobbler.Upe.describe(run);
+        if (run != null && !run.notes.isEmpty()) tip += "\n\nNot proof, but worth a look:\n- " + String.join("\n- ", run.notes);
+        Banner b;
+        if (run != null && run.broken != null) {
+            if (!run.marked) return null;   // only a run you played as a UPE shows that it was lost
+            b = new Banner(lootgobbler.Upe.label(run.mode) + (run.noPet ? " · no pet" : "") + " lost", UPE_LOST_BG, 1f, tip, null);   // the reason on hover
+        } else if (run != null && run.marked) {
+            b = new Banner(lootgobbler.Upe.label(run.mode) + (run.noPet ? " · no pet" : ""), UPE_BG, 1f, tip + "\n\nClick to end the run (or turn the guild version on or off in the Game Modes tab)",
+                    () -> lootgobbler.Upe.get().mark(c.charId, false));
+        } else if (run != null && run.potential()) {
+            String m = lootgobbler.Upe.label(run.mode);
+            b = new Banner(m, UPE_BG, 0.55f, tip + "\n\nClick to start a " + m + " run with it (" + lootgobbler.Upe.info(run.mode).name() + ")."
+                    + "\nPick another mode (PPE, UPE and its variants, guild versions, without a pet) in the Game Modes tab.",
+                    () -> lootgobbler.Upe.get().mark(c.charId, true));
+        } else {
+            return null;   // not eligible (not seen from its creation): no banner at all
+        }
+        return b;
+    }
 
     private void toggle(Char c, CharacterStore.Flag flag) {
         CharacterStore.get().toggle(c.charId, flag);
@@ -992,16 +1042,34 @@ public class CharactersView extends JPanel {
     private static class Banner extends JComponent {
         private final String text;
         private final Color bg;
-        private final boolean active;
+        private final float alpha;
 
         /**
          * Shows a flag from the game data; it can not be changed by hand.
          */
         Banner(String text, Color bg, boolean active) {
+            this(text, bg, active ? 1f : 0.22f, active ? text + " character" : "Not " + text.toLowerCase(Locale.ROOT), null);
+        }
+
+        /** A banner drawn at this opacity, with its tooltip (lines split at \n), doing something when clicked. */
+        Banner(String text, Color bg, float alpha, String tip, Runnable onClick) {
             this.text = text.toUpperCase(Locale.ROOT);
             this.bg = bg;
-            this.active = active;
-            setToolTipText(active ? text + " character" : "Not " + text.toLowerCase(Locale.ROOT));
+            this.alpha = alpha;
+            setToolTipText(tip == null ? null : "<html>" + escape(tip).replace("\n", "<br>") + "</html>");
+            if (onClick != null) {
+                setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+                addMouseListener(new java.awt.event.MouseAdapter() {
+                    @Override
+                    public void mouseClicked(java.awt.event.MouseEvent e) {
+                        if (SwingUtilities.isLeftMouseButton(e)) onClick.run();
+                    }
+                });
+            }
+        }
+
+        private static String escape(String s) {
+            return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
         }
 
         private static final Font FONT = new Font(Themes.HEAD_FONT, Font.PLAIN, 24);
@@ -1054,7 +1122,7 @@ public class CharactersView extends JPanel {
             g2.drawString(text, tx, ty);
             g2.dispose();
             Graphics2D out = (Graphics2D) g.create();
-            if (!active) out.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.22f));
+            if (alpha < 1f) out.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
             out.drawImage(img, 0, 0, null);
             out.dispose();
         }

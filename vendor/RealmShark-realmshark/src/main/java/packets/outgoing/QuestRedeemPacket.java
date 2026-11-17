@@ -14,7 +14,7 @@ public class QuestRedeemPacket extends Packet {
     /**
      * ID of the quest
      */
-    String questIdString;
+    public String questIdString;
     /**
      * > Unknown int
      */

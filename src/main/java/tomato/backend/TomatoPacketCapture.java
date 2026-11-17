@@ -110,10 +110,13 @@ public class TomatoPacketCapture implements Controller {
         } else if (packet instanceof UnknownPacket165) {   // mission progress steps
             lootgobbler.Missions.get().progressPacket(((UnknownPacket165) packet).unknownString);
         } else if (packet instanceof ClaimMissionPacket) {   // a mission claimed: ask for the new state
+            ClaimMissionPacket c = (ClaimMissionPacket) packet;
+            lootgobbler.Missions.get().claimedMission(c.seasonId, c.missionPositionalIdx);   // its reward, for UPE runs
             lootgobbler.Missions.get().claimed();
         } else if (packet instanceof UseItemPacket) {
             data.usedItem((UseItemPacket) packet);   // started mid-map: your ability names your character
             lootgobbler.DungeonVisits.get().itemUsed(data, (UseItemPacket) packet);   // quick slot consumables
+            lootgobbler.LootEvents.itemUsed((UseItemPacket) packet, data);   // a stat potion drunk, for UPE runs
         } else if (packet instanceof NotificationPacket) {
             NotificationPacket p = (NotificationPacket) packet;
             data.notification(p);
@@ -123,7 +126,9 @@ public class TomatoPacketCapture implements Controller {
         } else if (packet instanceof InvSwapPacket) {
             lootgobbler.LootEvents.invSwap((InvSwapPacket) packet, data.player);   // a move, e.g. into the vault
         } else if (packet instanceof InvResultPacket) {
-            lootgobbler.LootEvents.invResult((InvResultPacket) packet);
+            lootgobbler.LootEvents.invResult((InvResultPacket) packet, data);
+        } else if (packet instanceof packets.incoming.TradeDonePacket p) {
+            lootgobbler.LootEvents.tradeDone(p, data);   // trading ends a UPE run
         } else if (packet instanceof HelloPacket) {
             HelloPacket p = (HelloPacket) packet;
             data.updateToken(p.accessToken);

@@ -92,6 +92,7 @@ public class ProfileView extends SubTabs {
         ExaltStore.get().onChange(later);
         PetStore.get().onChange(later);
         lootgobbler.AmuletSaves.get().onChange(later);
+        lootgobbler.Upe.get().onChange(later);
         DungeonStatsPanel.onUpdate(later);
         new javax.swing.Timer(60_000, e -> later.run()).start();   // "x min ago" and the 24 hour window move on by themselves
 
@@ -203,6 +204,7 @@ public class ProfileView extends SubTabs {
         for (CharacterClass cls : CharacterClass.CHAR_CLASS_LIST)
             parts.add(java.util.Arrays.toString(ExaltStore.get().progress(cls.getId())));   // every point, for the exaltations
         parts.add(amuletSaves());
+        parts.add(CharactersView.potentialUpes());
         parts.add(lootgobbler.AmuletSaves.get().wornRecently());
         String state = parts.hashCode() + "";
         if (state.equals(shown)) return;
@@ -211,6 +213,11 @@ public class ProfileView extends SubTabs {
         body.removeAll();
         body.add(row(2, playerCard(name, store, most, chars, since), guildCard()));
         body.add(Box.createVerticalStrut(20));
+        JComponent upes = potentialUpes(chars);
+        if (upes != null) {
+            body.add(upes);
+            body.add(Box.createVerticalStrut(20));
+        }
         body.add(left(heading("Last 24 hours")));
         body.add(Box.createVerticalStrut(8));
         body.add(todayTiles(store, chars, runs, allDrops, since));
@@ -297,6 +304,44 @@ public class ProfileView extends SubTabs {
         clickable(block, () -> openCharacter.accept(id));
         GuideTargets.mark("profile.character", block);
         return block;
+    }
+
+    /**
+     * Characters that could be a UPE (Untiered Player Experience) and are not marked as one: seen by the sniffer
+     * from their creation, nothing against the rules yet. Each opens in the Characters tab, where its UPE banner
+     * marks it. Null when there are none.
+     */
+    private JComponent potentialUpes(List<Char> chars) {
+        List<Integer> ids = CharactersView.potentialUpes();
+        if (ids.isEmpty()) return null;
+        JPanel p = column();
+        p.add(left(heading("Potential runs")));
+        p.add(Box.createVerticalStrut(2));
+        p.add(left(soft("New characters (upgrades disabled) that can still start a game mode: PPE, UPE and its variants, with or without a pet. Open one and click its banner, or pick a mode in the Game Modes tab.")));
+        p.add(Box.createVerticalStrut(10));
+        JPanel line = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        line.setOpaque(false);
+        for (int id : ids) {
+            Char c = chars.stream().filter(x -> x.charId == id).findFirst().orElse(null);
+            if (c == null) continue;
+            JLabel sprite = new JLabel(CharactersView.skin(c, 56));
+            JPanel about = column();
+            JLabel cls = new JLabel(c.className);
+            cls.setFont(cls.getFont().deriveFont(22f));
+            about.add(left(cls));
+            about.add(left(soft((c.seasonal ? "Seasonal, " : "") + "level " + Math.max(1, c.level)
+                    + (c.lastPlayed == 0 ? ", not played yet" : ", played " + CharactersView.ago(c.lastPlayed)))));
+            JPanel block = new JPanel(new BorderLayout(10, 0));
+            block.setOpaque(false);
+            block.setBorder(new EmptyBorder(0, 0, 0, 28));
+            block.add(sprite, BorderLayout.WEST);
+            block.add(about, BorderLayout.CENTER);
+            block.setToolTipText("Open in Characters");
+            clickable(block, () -> openCharacter.accept(id));
+            line.add(block);
+        }
+        p.add(left(line));
+        return left(card(p));
     }
 
     private static final long EXALT_DAYS = 7;   // as far back as the exaltation changes are kept

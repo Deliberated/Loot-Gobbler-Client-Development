@@ -302,6 +302,7 @@ public class Tomato {
             packCap::packetCapture
         );
         Register.INSTANCE.register(PacketType.HELLO, packCap::packetCapture);
+        Register.INSTANCE.register(PacketType.TRADEDONE, packCap::packetCapture);   // a trade ends a UPE run
         Register.INSTANCE.register(
             PacketType.TRADEREQUESTED,
             packCap::packetCapture

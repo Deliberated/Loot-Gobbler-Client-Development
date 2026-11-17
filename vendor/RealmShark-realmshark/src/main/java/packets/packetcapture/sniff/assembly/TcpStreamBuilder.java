@@ -45,7 +45,26 @@ public class TcpStreamBuilder {
             idNumber = packet.getIp4Packet().getIdentification();
         }
 
-        packetMap.put(packet.getSequenceNumber(), packet);
+        // [Loot Gobbler patch] nothing to add from an empty segment (a plain ACK), and data already passed on (a
+        // retransmission, a duplicate) must not wait in the map forever: such leftovers made every later packet
+        // look like a gap. A segment reaching over the expected position gives only its new part.
+        if (packet.getPayloadSize() <= 0) return;
+        long behind = after(sequenseNumber, packet.getSequenceNumber());
+        if (behind > 0) {
+            if (behind >= packet.getPayloadSize()) return;
+            byte[] payload = packet.getPayload();
+            if (payload == null) return;
+            try {
+                byte[] fresh = Arrays.copyOfRange(payload, (int) behind, payload.length);
+                sequenseNumber = (sequenseNumber + fresh.length) & 0xFFFFFFFFL;
+                idNumber = packet.getIp4Packet().getIdentification();
+                packetStream.stream(fresh, packet.getIp4Packet().getSrcAddr());
+            } catch (Exception e) {
+                TcpStreamErrorHandler.INSTANCE.dumpData("Logging errors caused (by TCP stream builder). \n " + Arrays.toString(e.getStackTrace()));
+            }
+        } else {
+            packetMap.put(packet.getSequenceNumber(), packet);
+        }
 
         TcpStreamErrorHandler.INSTANCE.errorChecker(this);
 
@@ -53,14 +72,22 @@ public class TcpStreamBuilder {
             while (packetMap.containsKey(sequenseNumber)) {
                 TcpPacket packetSeqed = packetMap.remove(sequenseNumber);
                 idNumber = packetSeqed.getIp4Packet().getIdentification();
-                if (packet.getPayload() != null) {
-                    sequenseNumber += packetSeqed.getPayloadSize();
+                if (packetSeqed.getPayload() != null) {
+                    sequenseNumber = (sequenseNumber + packetSeqed.getPayloadSize()) & 0xFFFFFFFFL;
                     packetStream.stream(packetSeqed.getPayload(), packetSeqed.getIp4Packet().getSrcAddr());
                 }
             }
         } catch (Exception e) {
             TcpStreamErrorHandler.INSTANCE.dumpData("Logging errors caused (by TCP stream builder). \n " + Arrays.toString(e.getStackTrace()));
         }
+    }
+
+    /**
+     * How far {@code seq} lies before {@code expected} in the 32-bit sequence space (with wrap-around); 0 or less
+     * when it is at or after it.
+     */
+    static long after(long expected, long seq) {
+        return (int) (expected - seq);
     }
 
     /**

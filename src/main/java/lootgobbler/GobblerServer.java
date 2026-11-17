@@ -689,6 +689,22 @@ public final class GobblerServer {
         return call("GET", "/guild/facts?days=" + days, null, Facts.class);
     }
 
+    /** A guild mate's gUPE trades as their client reported them (see Upe.Trade). */
+    public static final class GuildUpeMember {
+        public long userId;
+        public String ign = "";
+        public List<Upe.Trade> trades = List.of();
+    }
+
+    public static final class GuildUpe {
+        public List<GuildUpeMember> members = List.of();
+    }
+
+    /** The gUPE trades of the guild mates since then (epoch ms). */
+    public CompletableFuture<GuildUpe> guildUpe(long since) {
+        return call("GET", "/guild/upe?since=" + since, null, GuildUpe.class);
+    }
+
     /** Looks of guildmates who may have been in this dungeon between from and to (epoch ms). */
     public CompletableFuture<RunLooks> runLooks(String dungeon, long from, long to) {
         return call("GET", "/guild/looks?dungeon=" + java.net.URLEncoder.encode(dungeon, java.nio.charset.StandardCharsets.UTF_8)

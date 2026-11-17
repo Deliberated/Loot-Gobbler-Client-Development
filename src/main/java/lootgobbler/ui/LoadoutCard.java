@@ -16,7 +16,8 @@ import java.util.List;
  * A character's loadout as a picture to share: a box tinted with the theme's accent, its top-right corner cut off
  * (transparent), the character with its class and fame, the reusable quick-slot items and the backpack in the top
  * right, and the four gear slots below like the game's inventory (enchantment marker bottom right). In the colors of
- * the theme picked. Copied to the clipboard from the Loadout box.
+ * the theme picked. A character playing a game mode gets its badge under the fame. Copied to the clipboard from the
+ * Loadout box.
  */
 final class LoadoutCard {
     private static final int SCALE = 2;   // drawn at twice the size, so it stays sharp when shared
@@ -68,6 +69,16 @@ final class LoadoutCard {
 
     /** The card as an image; the cut corner is transparent. */
     static BufferedImage render(Char c) {
+        lootgobbler.Upe.Run run = lootgobbler.Upe.get().run(c.charId);   // its game mode, while the run stands
+        boolean playing = run != null && run.marked && run.broken == null;
+        return render(c, playing ? run.mode : null, playing && run.noPet);
+    }
+
+    /**
+     * The card with the plate of the game mode the character plays (null: none) under its fame; noPet: played
+     * without a pet (a crossed-out paw beside the plate).
+     */
+    static BufferedImage render(Char c, String mode, boolean noPet) {
         Colors col = Colors.now();
         Font nameFont = new Font(lootgobbler.Themes.HEAD_FONT, Font.PLAIN, 30);
         Font fameFont = new Font(lootgobbler.Themes.BODY_FONT, Font.PLAIN, 20);
@@ -83,10 +94,11 @@ final class LoadoutCard {
         // the header (character left, quick slots right; always as tall as three quick slots) and below it the
         // gear slots with the backpack beside them; as wide as the wider of the two needs
         int quickH = QUICK_ROWS * QUICK + (QUICK_ROWS - 1) * QUICK_GAP;
-        int headerH = Math.max(SKIN, quickH);
         nameFont = fit(nameFont, name, TEXT_W);
         fameFont = fit(fameFont, fame, TEXT_W);
         FontMetrics nameFm = m.getFontMetrics(nameFont), fameFm = m.getFontMetrics(fameFont);
+        int badgeH = mode == null ? 0 : ModeBadge.H + 8;   // the mode's plate under the fame, a little apart
+        int headerH = Math.max(Math.max(SKIN, quickH), nameFm.getHeight() + fameFm.getHeight() + badgeH);
         int quickW = 0;
         for (int id : quick) {
             String label = CharactersView.itemName(id);
@@ -109,7 +121,7 @@ final class LoadoutCard {
         int sx = EDGE + Math.round(charPx * leftPx) - shownLeft;      // where the icon is drawn
         int charRight = sx + shownRight + Math.round(charPx * 2.5f);  // where the texts (and a 16x16 skin's gear row) start
         int rowX = big ? charRight : sx + shownLeft;                  // the gear row: under the 8x8 character, aligned with it
-        int textW = Math.max(nameFm.stringWidth(name), fameFm.stringWidth(fame));
+        int textW = Math.max(Math.max(nameFm.stringWidth(name), fameFm.stringWidth(fame)), mode == null ? 0 : ModeBadge.width(mode, noPet) + 6);
         int headerRight = charRight + textW + (quickW > 0 ? 32 + quickW : 0);
         int rowRight = rowX + 4 * TILE + 3 * TILE_GAP + (bag > 0 ? BAG_GAP + BAG : 0);
         int w = Math.max(headerRight, rowRight) + PAD + CUT / 2, h = PAD * 2 + headerH + 14 + TILE;
@@ -140,10 +152,11 @@ final class LoadoutCard {
             shadow(g, col, skin, sx, sy0, big ? 5 : 4);
             skin.paintIcon(null, g, sx, sy0);
         }
-        int tx = charRight, textH = nameFm.getHeight() + fameFm.getHeight();
+        int tx = charRight, textH = nameFm.getHeight() + fameFm.getHeight() + badgeH;
         int ty = y + Math.max(0, (headerH - textH) / 2);
         text(g, col, name, nameFont, col.ink, tx, ty + nameFm.getAscent());
         text(g, col, fame, fameFont, col.gold, tx, ty + nameFm.getHeight() + fameFm.getAscent());
+        if (mode != null) ModeBadge.draw(g, tx + 2, ty + nameFm.getHeight() + fameFm.getHeight() + 6, mode, noPet);
 
         // top right: the reusable quick-slot items from the top down
         int rx = w - PAD - CUT / 2 - quickW;
