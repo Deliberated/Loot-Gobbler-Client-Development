@@ -4,19 +4,19 @@ version = 4
 
 [[package]]
 name = "lg-capture"
-version = "0.1.0"
+version = "0.0.1"
 
 [[package]]
 name = "lg-gamedata"
-version = "0.1.0"
+version = "0.0.1"
 
 [[package]]
 name = "lg-protocol"
-version = "0.1.0"
+version = "0.0.1"
 
 [[package]]
 name = "lg-replay"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "lg-capture",
  "lg-gamedata",
@@ -26,7 +26,7 @@ dependencies = [
 
 [[package]]
 name = "lg-world"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "lg-gamedata",
  "lg-protocol",

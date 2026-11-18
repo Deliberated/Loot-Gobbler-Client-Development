@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/lg-capture", "crates/lg-gamedata", "crates/lg-protocol", "crates/lg-replay", "crates/lg-world"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.0.1"
 edition = "2024"
 license = "MIT"
 publish = false
