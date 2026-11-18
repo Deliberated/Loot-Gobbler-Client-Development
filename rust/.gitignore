@@ -1,0 +1,5 @@
+/target
+# Recorded game sessions: the HELLO packet in them carries your login token. Never commit them.
+/recordings
+*.pcap
+*.pcapng

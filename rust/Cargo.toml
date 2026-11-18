@@ -1,0 +1,9 @@
+[workspace]
+resolver = "2"
+members = ["crates/lg-capture", "crates/lg-protocol", "crates/lg-replay"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false

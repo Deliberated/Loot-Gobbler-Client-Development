@@ -1,0 +1,7 @@
+[package]
+name = "lg-capture"
+description = "Captured network traffic to ordered TCP byte streams: pcap files, link layers, IPv4, TCP reassembly"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true

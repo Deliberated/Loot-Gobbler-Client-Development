@@ -1,0 +1,49 @@
+name: Rust
+
+# The Rust rebuild (branch "rust"): tests on Linux and Windows, then the comparison with the Java client's sniffer on
+# made-up sessions. Never publishes anything.
+on:
+  push:
+    branches: [rust]
+    paths: ["rust/**", "vendor/**", ".github/workflows/rust.yml"]
+  pull_request:
+    paths: ["rust/**"]
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: rust
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install stable --profile minimal --component clippy,rustfmt
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+
+  same-as-java:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: rustup toolchain install stable --profile minimal
+      - name: Build the Java client
+        working-directory: .
+        run: ./gradlew -q shadowJar
+      - name: Rust and Java decode the same packets
+        run: |
+          cargo build -q --release -p lg-replay
+          for seed in 1 2 3 4 5 6 7 8; do
+            ./target/release/lg-replay synth "$RUNNER_TEMP/synth$seed.pcap" "$seed"
+            oracle/compare.sh "$RUNNER_TEMP/synth$seed.pcap"
+          done

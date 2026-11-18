@@ -1,0 +1,11 @@
+[package]
+name = "lg-replay"
+description = "Replays a recorded game session (pcap) and prints the game packets in it"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+lg-capture = { path = "../lg-capture" }
+lg-protocol = { path = "../lg-protocol" }
