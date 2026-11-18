@@ -63,6 +63,7 @@ final class WorldOracle {
         tomato.gui.security.ParsePanelGUI.editFont(new java.awt.Font("Monospaced", java.awt.Font.PLAIN, 12));   // as TomatoGUI
         data.bootload();
         waitForGameFileEnemies();
+        tomato.backend.data.AbilityScalingManager.getInstance().initialize();   // the app does it at startup
     }
 
     /** The app reads the dungeons' enemies on a thread of its own; wait for it, so the result does not hang on timing. */
@@ -124,7 +125,23 @@ final class WorldOracle {
             b.append("dropped ").append(ids(((Map<?, ?>) get(data, "dropList")).keySet())).append('\n');
             b.append("crystals ").append(ids((Collection<?>) get(data, "crystalTracker"))).append('\n');
             b.append("bags ").append(ids((Collection<?>) get(data, "lootBags"))).append('\n');
-            for (Entity e : new TreeMap<>(data.entityList).values()) b.append(entity(e)).append('\n');
+            Object rng = get(data, "rng");
+            Class<?> crucible = tomato.backend.data.CrucibleBonusManager.class;
+            List<String> mult = new ArrayList<>();
+            for (Map.Entry<?, ?> e : ((Map<?, ?>) staticField(crucible, "crucibleDamageMultipliers")).entrySet()) {
+                mult.add(quote((String) e.getKey()) + ":" + String.format("%016x", Double.doubleToRawLongBits((Double) e.getValue())));
+            }
+            java.util.Collections.sort(mult);
+            String id128 = (String) staticField(crucible, "currentPlayerCrucibleId128");
+            String id155 = (String) staticField(crucible, "currentPlayerCrucibleId155");
+            b.append("rng ").append(rng == null ? "null" : String.valueOf(get(rng, "seed"))).append(" crucible ")
+                    .append(id128 == null ? "null" : quote(id128)).append(' ').append(id155 == null ? "null" : quote(id155))
+                    .append(" [").append(String.join(",", mult)).append("]\n");
+            for (Entity e : new TreeMap<>(data.entityList).values()) {
+                b.append(entity(e)).append('\n');
+                String fights = fights(e);
+                if (fights != null) b.append(fights).append('\n');
+            }
             return b.toString();
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException(e);
@@ -147,6 +164,55 @@ final class WorldOracle {
             first = false;
         }
         return b.toString();
+    }
+
+    /** Its name and the damage it took, as lg-world's dump writes them; null when there is nothing to tell. */
+    private static String fights(Entity e) throws ReflectiveOperationException {
+        String name = (String) get(e, "name");
+        boolean fought = (long) get(e, "firstDamageTaken") != -1;
+        java.util.List<?> damage = (java.util.List<?>) get(e, "damageList");
+        if (name == null && !fought && !e.dammahCountered && damage.isEmpty() && e.playerDropped.isEmpty()) return null;
+        List<String> records = new ArrayList<>();
+        for (Object d : damage) records.add(record((tomato.backend.data.Damage) d));
+        List<String> sums = new ArrayList<>();
+        for (Map.Entry<?, ?> s : new TreeMap<>((Map<Integer, ?>) get(e, "damagePlayer")).entrySet()) {
+            sums.add(s.getKey() + ":" + record((tomato.backend.data.Damage) s.getValue()));
+        }
+        List<String> dropped = new ArrayList<>();
+        for (Map.Entry<Integer, tomato.backend.data.PlayerRemoved> d : new TreeMap<>(e.playerDropped).entrySet()) {
+            dropped.add(d.getKey() + ":" + d.getValue().hp + "/" + d.getValue().max + "/"
+                    + (d.getValue().name == null ? "null" : quote(d.getValue().name)));
+        }
+        return "  name=" + (name == null ? "null" : quote(name)) + " fought=" + fought + " dammah=" + e.dammahCountered
+                + " damage=[" + String.join(",", records) + "] byplayer=[" + String.join(",", sums) + "] dropped=["
+                + String.join(",", dropped) + "]";
+    }
+
+    private static String record(tomato.backend.data.Damage d) {
+        StringBuilder b = new StringBuilder("{o=").append(d.owner == null ? "null" : String.valueOf(d.owner.id))
+                .append(",src=").append(d.sourceType).append(",t=").append(d.ownerObjectType)
+                .append(",n=").append(d.ownerObjectName == null ? "null" : quote(d.ownerObjectName)).append(",inv=");
+        if (d.ownerInvntory == null) b.append("null");
+        else b.append(java.util.Arrays.toString(d.ownerInvntory).replace(" ", ""));
+        b.append(",ench=");
+        if (d.ownerEnchants == null) b.append("null");
+        else {
+            List<String> q = new ArrayList<>();
+            for (String c : d.ownerEnchants) q.add(quote(c));
+            b.append('[').append(String.join(",", q)).append(']');
+        }
+        b.append(",ss=").append(d.ownerScalingStatType == null ? "null" : String.valueOf(d.ownerScalingStatType.get()))
+                .append(",sv=").append(d.ownerScalingStatValue).append(",d=").append(d.damage)
+                .append(",cd=").append(d.counterDmg).append(",ch=").append(d.counterHits)
+                .append(",f=").append(d.oryx3GuardDmg ? 1 : 0).append(d.chancellorDammahDmg ? 1 : 0)
+                .append(d.walledGardenReflectors ? 1 : 0).append('}');
+        return b.toString();
+    }
+
+    private static Object staticField(Class<?> c, String name) throws ReflectiveOperationException {
+        Field f = c.getDeclaredField(name);
+        f.setAccessible(true);
+        return f.get(null);
     }
 
     private static String pos(WorldPosData p) {

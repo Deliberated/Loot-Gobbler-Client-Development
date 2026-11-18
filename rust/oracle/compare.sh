@@ -20,7 +20,7 @@ jar=$(ls -t "$repo"/build/libs/LootGobbler-*.jar 2>/dev/null | head -1 || true)
 cargo=$(command -v cargo || echo "$HOME/.cargo/bin/cargo")
 
 work=$(mktemp -d)
-trap 'rm -rf "${work:?}"' EXIT
+if [ -n "${LG_KEEP:-}" ]; then echo "keeping $work" >&2; else trap 'rm -rf "${work:?}"' EXIT; fi
 javac -nowarn -cp "$jar" -d "$work" "$here/ReplayOracle.java" "$here/WorldOracle.java"
 (cd "$here/.." && "$cargo" build -q --release -p lg-replay)
 replay="$here/../target/release/lg-replay"

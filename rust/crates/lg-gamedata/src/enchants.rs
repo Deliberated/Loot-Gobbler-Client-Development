@@ -266,6 +266,41 @@ pub fn totals(enchants: &HashMap<i16, Enchant>, code: &str) -> Result<Totals, Ma
     Ok(t)
 }
 
+/// Whether Java's `ParseEnchants.parse` reads this code without throwing: it stops at the end marker, a locked or
+/// empty slot, but throws on a malformed code or a dangling byte.
+pub fn parse_ok(code: &str) -> bool {
+    if code.is_empty() {
+        return true;
+    }
+    let Ok(mut b) = six_bit_bytes(code) else { return false };
+    b.truncate(11);
+    if b.is_empty() {
+        return true;
+    }
+    let mut at = 1;
+    let short = |at: &mut usize| -> Option<i16> {
+        let v = b.get(*at..*at + 2)?;
+        *at += 2;
+        Some(i16::from_le_bytes([v[0], v[1]]))
+    };
+    if at == b.len() {
+        return true;
+    }
+    match short(&mut at) {
+        None => return false,
+        Some(1026) => {}
+        Some(_) => return true,
+    }
+    while at < b.len() {
+        match short(&mut at) {
+            None => return false,
+            Some(-3..=-1) => return true,
+            Some(_) => {}
+        }
+    }
+    true
+}
+
 /// Java `getEnchantStrings`: the enchant codes of the four equipped items, from the `UNIQUE_DATA_STRING` stat.
 pub fn slot_codes(unique_data: Option<&str>) -> [String; 4] {
     let mut out: [String; 4] = Default::default();

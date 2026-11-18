@@ -1,5 +1,6 @@
 //! Replays a recorded game session: pcap file -> TCP streams -> decrypted game packets.
 
+pub mod fight;
 pub mod synth;
 
 use lg_capture::{Flow, Splitter, StreamEvent, pcap};

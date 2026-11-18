@@ -46,4 +46,6 @@ jobs:
           for seed in 1 2 3 4 5 6 7 8; do
             ./target/release/lg-replay synth "$RUNNER_TEMP/synth$seed.pcap" "$seed"
             oracle/compare.sh "$RUNNER_TEMP/synth$seed.pcap"
+            ./target/release/lg-replay synth-fight "$RUNNER_TEMP/fight$seed.pcap" "$seed"
+            oracle/compare.sh "$RUNNER_TEMP/fight$seed.pcap"
           done

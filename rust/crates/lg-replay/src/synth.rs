@@ -49,17 +49,17 @@ pub struct Session {
 }
 
 /// A small deterministic random number generator (xorshift).
-struct Rng(u64);
+pub(crate) struct Rng(pub(crate) u64);
 
 impl Rng {
-    fn next(&mut self) -> u64 {
+    pub(crate) fn next(&mut self) -> u64 {
         self.0 ^= self.0 << 13;
         self.0 ^= self.0 >> 7;
         self.0 ^= self.0 << 17;
         self.0
     }
 
-    fn below(&mut self, n: usize) -> usize {
+    pub(crate) fn below(&mut self, n: usize) -> usize {
         (self.next() % n as u64) as usize
     }
 
@@ -250,7 +250,7 @@ fn disorder(rng: &mut Rng, segs: &mut Vec<(usize, usize)>) {
     *segs = out;
 }
 
-fn frame(src: [u8; 4], dst: [u8; 4], id: u16, tcp: &[u8]) -> Vec<u8> {
+pub(crate) fn frame(src: [u8; 4], dst: [u8; 4], id: u16, tcp: &[u8]) -> Vec<u8> {
     let mut f = vec![0u8; 12];
     f.extend([0x08, 0x00]);
     f.extend([0x45, 0]);
@@ -315,7 +315,7 @@ pub fn session(opts: &Options) -> Session {
     Session { pcap: w.bytes, incoming, outgoing }
 }
 
-fn endpoints(direction: Direction) -> ([u8; 4], [u8; 4], u16, u16) {
+pub(crate) fn endpoints(direction: Direction) -> ([u8; 4], [u8; 4], u16, u16) {
     match direction {
         Direction::Incoming => (SERVER, CLIENT, lg_capture::GAME_PORT, CLIENT_PORT),
         Direction::Outgoing => (CLIENT, SERVER, CLIENT_PORT, lg_capture::GAME_PORT),

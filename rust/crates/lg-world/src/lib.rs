@@ -10,6 +10,8 @@
 //! by the stats only your own character gets, by standing where your client said it moved, or by using your ability;
 //! the map by the enemies coming into view.
 
+pub mod damage;
+mod json;
 pub mod stats;
 
 use lg_gamedata::GameData;
@@ -51,6 +53,18 @@ pub struct Entity {
     pub char_id: i32,
     /// Life, mana, attack, defense, speed, dexterity, vitality, wisdom without boosts: for players.
     pub base_stats: Option<[i32; 8]>,
+    /// The object type's name, when it came into view.
+    pub name: Option<String>,
+    /// Every hit it took.
+    pub damage_list: Vec<damage::DamageRecord>,
+    /// Its damage taken, summed per player.
+    pub damage_player: BTreeMap<i32, damage::DamageRecord>,
+    /// Its hp when a player who hit it left the view, by that player.
+    pub player_dropped: BTreeMap<i32, damage::Dropped>,
+    /// It was hit at least once.
+    pub fought: bool,
+    /// Chancellor Dammah was countered (its damage counts again).
+    pub dammah_countered: bool,
 }
 
 impl Entity {
@@ -64,6 +78,12 @@ impl Entity {
             is_player: false,
             char_id: 0,
             base_stats: None,
+            name: None,
+            damage_list: Vec::new(),
+            damage_player: BTreeMap::new(),
+            player_dropped: BTreeMap::new(),
+            fought: false,
+            dammah_countered: false,
         }
     }
 
@@ -191,6 +211,10 @@ pub struct World {
     guess_votes: BTreeMap<String, BTreeSet<i32>>,
     /// The character statistics string last decoded (kept across maps).
     character_stats: Option<String>,
+    /// Shots, the damage roll, crucible bonuses.
+    pub damage: damage::DamageState,
+    /// The players on Java's security panel (`ParsePanelGUI`): showing them reads stats that throw when missing.
+    panel: BTreeSet<i32>,
     data: GameData,
 }
 
@@ -222,6 +246,8 @@ impl World {
             enemy_dungeons,
             guess_votes: BTreeMap::new(),
             character_stats: None,
+            damage: damage::DamageState::new(),
+            panel: BTreeSet::new(),
             data,
         }
     }
@@ -244,8 +270,14 @@ impl World {
     pub fn packet(&mut self, p: &Decoded) -> Result<(), Abort> {
         match p {
             Decoded::Move(m) => self.moved(m),
-            Decoded::NewTick(t) => self.new_tick(t)?,
-            Decoded::Update(u) => self.update(u)?,
+            Decoded::NewTick(t) => {
+                self.new_tick(t)?;
+                self.crucible_update();
+            }
+            Decoded::Update(u) => {
+                self.update(u)?;
+                self.crucible_update();
+            }
             Decoded::MapInfo(m) => self.new_map(m),
             Decoded::CreateSuccess(c) => {
                 self.world_player_id = c.object_id;
@@ -267,33 +299,23 @@ impl World {
                 }
             }
             Decoded::UseItem(u) => self.used_item(u),
-            // a hit object not seen yet comes into being; the damage itself is not ported yet
-            Decoded::EnemyHit(h) => {
-                self.entity(h.target_id);
-                self.entity_hit_list.insert(h.target_id);
-            }
-            // damage you take (not ported yet), from an area: Java reads your position, throwing without one
-            Decoded::Aoe(_) => {
-                if self.me().is_some_and(|me| me.pos.is_none()) {
-                    return Err(Abort("area damage before your position is known"));
-                }
-            }
-            // ... or from the tile you stand on: Java looks it up in the map array, throwing outside it
-            Decoded::GroundDamage(g) => {
-                if self.player.is_some() {
-                    let inside = |v: f32| (0..MAP_SIZE as i32).contains(&(v as i32)); // Java's (int): NaN is 0
-                    if !inside(g.position.x) || !inside(g.position.y) {
-                        return Err(Abort("ground damage outside the map array"));
-                    }
-                }
-            }
-            Decoded::Damage(d) => {
-                self.entity(d.target_id);
-                if d.damage_amount > 0 {
-                    self.entity_hit_list.insert(d.target_id);
-                }
-            }
             Decoded::VaultContent(v) => self.vault(v)?,
+            Decoded::PlayerShoot(p) => self.player_shoot(p)?,
+            Decoded::ServerPlayerShoot(p) => self.server_player_shoot(p),
+            Decoded::EnemyHit(h) => self.enemy_hit(h)?,
+            Decoded::Damage(d) => self.damage_packet(d)?,
+            Decoded::PlayerHit(h) => self.player_hit(h),
+            Decoded::EnemyShoot(e) => self.enemy_shoot(e),
+            Decoded::Aoe(a) => self.aoe(a)?,
+            Decoded::GroundDamage(g) => self.ground(g)?,
+            Decoded::Text(t) => {
+                if t.text == damage::DAMMAH_COUNTERED
+                    && let Some(e) = self.entities.get_mut(&t.object_id)
+                {
+                    e.dammah_countered = true;
+                }
+            }
+            Decoded::CrucibleResponse(c) => self.crucible_response(&c.crucible_jsons),
             _ => {}
         }
         Ok(())
@@ -329,6 +351,8 @@ impl World {
         self.entity_hit_list.clear();
         self.tiles.fill(0);
         self.petyard = false;
+        self.damage.new_map(m.fp);
+        self.panel.clear();
         // petYardCheck
         if m.display_name == "Pet Yard" {
             self.petyard = true;
@@ -356,6 +380,7 @@ impl World {
         for status in &t.status {
             let id = status.object_id;
             self.entity(id).update_stats(status)?;
+            self.panel_update(id)?;
             if self.world_player_id <= 0 && self.map_unknown() && (only_yours(status) || self.stands_where_you_are(id, status)) {
                 self.found_yourself(id);
             }
@@ -382,10 +407,15 @@ impl World {
         for &id in &u.drops {
             self.crystals.remove(&id);
             self.dropped.insert(id);
+            self.damage.minion_owner.remove(&id);
+            if self.entities.get(&id).is_some_and(|e| self.data.is_player_class(e.object_type)) {
+                self.player_left(id)?;
+            }
             if self.entity_hit_list.contains(&id) {
                 self.killed.push(id);
             }
             self.player_list_updated.remove(&id);
+            self.panel.remove(&id);
         }
         Ok(())
     }
@@ -396,7 +426,13 @@ impl World {
         let new = !self.entities.contains_key(&id);
         let e = self.entity(id);
         e.update_stats(status)?;
+        self.panel_update(id)?;
+        let e = self.entity(id);
         e.object_type = object_type;
+        if object_type != -1 {
+            let name = self.data.object_name(object_type).map(str::to_string);
+            self.entity(id).name = name;
+        }
         if new && self.map_unknown() && !self.map_guess_failed {
             self.guess_map(object_type);
         }
@@ -418,6 +454,38 @@ impl World {
                 self.player = Some(id);
             } else {
                 e.set_player()?;
+            }
+            self.panel_add(id)?;
+        }
+        Ok(())
+    }
+
+    /// Java `ParsePanelGUI.addPlayer`: the player's box reads the equipment, the enchant codes, the level, the name
+    /// and the skin; a missing one (or an enchant code Java cannot read) throws.
+    fn panel_add(&mut self, id: i32) -> Result<(), Abort> {
+        let missing = Abort("a player shown without all their stats");
+        let e = &self.entities[&id];
+        for t in stats::INVENTORY_0..stats::INVENTORY_0 + 4 {
+            e.value(t).ok_or(missing)?;
+        }
+        for code in lg_gamedata::enchants::slot_codes(e.text(stats::UNIQUE_DATA)) {
+            if !lg_gamedata::enchants::parse_ok(&code) {
+                return Err(Abort("an enchant code Java cannot read"));
+            }
+        }
+        e.value(stats::LEVEL).ok_or(missing)?;
+        self.display_name(e)?;
+        e.value(stats::SKIN_ID).ok_or(missing)?;
+        self.panel.insert(id);
+        Ok(())
+    }
+
+    /// Java `ParsePanelGUI.update`: a shown player's stats changed; the box reads the equipment again.
+    fn panel_update(&self, id: i32) -> Result<(), Abort> {
+        if self.panel.contains(&id) {
+            let e = &self.entities[&id];
+            for t in stats::INVENTORY_0..stats::INVENTORY_0 + 4 {
+                e.value(t).ok_or(Abort("a shown player without their equipment"))?;
             }
         }
         Ok(())
@@ -510,6 +578,18 @@ impl World {
         let _ = writeln!(b, "dropped {}", ids(&self.dropped));
         let _ = writeln!(b, "crystals {}", ids(&self.crystals));
         let _ = writeln!(b, "bags {}", ids(&self.loot_bags));
+        let c = &self.damage.crucible;
+        let mut mult: Vec<_> = c.damage.iter().map(|(k, v)| format!("{}:{:016x}", quote(k), v.to_bits())).collect();
+        mult.sort();
+        let opt = |s: &Option<String>| s.as_deref().map_or("null".into(), quote);
+        let _ = writeln!(
+            b,
+            "rng {} crucible {} {} [{}]",
+            self.damage.rng.map_or("null".into(), |r| r.seed.to_string()),
+            opt(&c.id128),
+            opt(&c.id155),
+            mult.join(",")
+        );
         let mut all: Vec<&Entity> = self.entities.values().collect();
         all.sort_by_key(|e| e.id);
         for e in all {
@@ -534,6 +614,22 @@ impl World {
                 e.char_id,
                 stats.join(",")
             );
+            if e.name.is_some() || e.fought || e.dammah_countered || !e.damage_list.is_empty() || !e.player_dropped.is_empty() {
+                let records: Vec<String> = e.damage_list.iter().map(record).collect();
+                let sums: Vec<String> = e.damage_player.iter().map(|(k, r)| format!("{k}:{}", record(r))).collect();
+                let dropped: Vec<String> =
+                    e.player_dropped.iter().map(|(k, d)| format!("{k}:{}/{}/{}", d.hp, d.max, opt(&d.name))).collect();
+                let _ = writeln!(
+                    b,
+                    "  name={} fought={} dammah={} damage=[{}] byplayer=[{}] dropped=[{}]",
+                    opt(&e.name),
+                    e.fought,
+                    e.dammah_countered,
+                    records.join(","),
+                    sums.join(","),
+                    dropped.join(",")
+                );
+            }
         }
         b
     }
@@ -549,48 +645,33 @@ fn only_yours(status: &ObjectStatus) -> bool {
     })
 }
 
-/// Java `PcStatsDecoder.sixBitStringToBytes`, with its errors: the game's base64 variant (`-` and `_`, `=` padding),
-/// counted in UTF-16 units as Java's `charAt` does.
+/// Java `PcStatsDecoder.sixBitStringToBytes`.
 fn six_bit_bytes(s: &str) -> Result<Vec<u8>, Abort> {
-    let c: Vec<u16> = s.encode_utf16().collect();
-    let bad = Abort("character statistics malformed");
-    let len = c.len();
-    let padding = c.iter().position(|&x| x == u16::from(b'=')).map_or(0, |i| len - i);
-    let size = (len / 4 * 3).checked_sub(padding).ok_or(bad)?;
-    let mut out = vec![0u8; size];
-    let value = |x: u16| -> i32 {
-        let x = i32::from(x);
-        match x {
-            48..=57 => x + 4,
-            65..=90 => x - 65,
-            97..=122 => x - 71,
-            45 => 62,
-            95 => 63,
-            61 => 0,
-            _ => x,
-        }
-    };
-    let mut o = 0;
-    let mut i = 0;
-    while i < len {
-        let at = |k: usize| c.get(i + k).copied().ok_or(bad);
-        let (v1, v2, c3, c4) = (value(at(0)?), value(at(1)?), at(2)?, at(3)?);
-        let (v3, v4) = (value(c3), value(c4));
-        let mut put = |k: usize, b: i32| -> Result<(), Abort> {
-            *out.get_mut(o + k).ok_or(bad)? = b as u8;
-            Ok(())
-        };
-        put(0, v1 << 2 | v2 >> 4)?;
-        if c3 != u16::from(b'=') {
-            put(1, (v2 & 0b1111) << 4 | v3 >> 2)?;
-            if c4 != u16::from(b'=') {
-                put(2, (v3 & 0b11) << 6 | v4)?;
-            }
-        }
-        o += 3;
-        i += 4;
-    }
-    Ok(out)
+    lg_gamedata::enchants::six_bit_bytes(s).map_err(|_| Abort("character statistics malformed"))
+}
+
+/// One damage record, as `oracle/WorldOracle.java` writes Java's.
+fn record(r: &damage::DamageRecord) -> String {
+    let opt = |s: &Option<String>| s.as_deref().map_or("null".into(), quote);
+    let num = |v: Option<i32>| v.map_or("null".into(), |v| v.to_string());
+    let list = |v: &[String]| format!("[{}]", v.join(","));
+    format!(
+        "{{o={},src={},t={},n={},inv={},ench={},ss={},sv={},d={},cd={},ch={},f={}{}{}}}",
+        num(r.owner),
+        r.source_type,
+        r.owner_object_type,
+        opt(&r.owner_name),
+        r.owner_inventory.map_or("null".into(), |i| list(&i.map(|v| v.to_string()))),
+        r.owner_enchants.as_ref().map_or("null".into(), |e| list(&e.clone().map(|c| quote(&c)))),
+        num(r.owner_scaling_stat.map(i32::from)),
+        num(r.owner_scaling_value),
+        r.damage,
+        r.counter_damage,
+        r.counter_hits,
+        u8::from(r.oryx_guard),
+        u8::from(r.chancellor_dammah),
+        u8::from(r.walled_garden_reflectors)
+    )
 }
 
 fn quote(s: &str) -> String {

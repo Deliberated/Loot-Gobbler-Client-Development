@@ -1,0 +1,432 @@
+//! A made-up fight, for comparing the damage logic with Java without a real recording: a map with its seed, you (a
+//! Rogue with its starting gear), other players, their pets, enemies (Oryx, Chancellor Dammah, the Forgotten King
+//! among them), and tick by tick your shots and hits, the server's shots, damage, enemy shots hitting you, area and
+//! ground damage, conditions coming and going, a crucible, a player leaving mid-fight, a second map.
+//!
+//! Packets go out in timeline order, one TCP segment each, so a shot comes before its hit.
+
+use crate::synth::{Plain, Rng, Session, endpoints, frame};
+use lg_capture::{link, pcap, tcp};
+use lg_protocol::Direction;
+use lg_protocol::rc4::{INCOMING_KEY, OUTGOING_KEY, Rc4};
+
+/// A packet body, field by field (big-endian, as the game).
+#[derive(Default)]
+struct B(Vec<u8>);
+
+impl B {
+    fn i8(mut self, v: i8) -> Self {
+        self.0.push(v as u8);
+        self
+    }
+    fn u8(mut self, v: u8) -> Self {
+        self.0.push(v);
+        self
+    }
+    fn bool(self, v: bool) -> Self {
+        self.u8(u8::from(v))
+    }
+    fn i16(mut self, v: i16) -> Self {
+        self.0.extend(v.to_be_bytes());
+        self
+    }
+    fn u16(mut self, v: u16) -> Self {
+        self.0.extend(v.to_be_bytes());
+        self
+    }
+    fn i32(mut self, v: i32) -> Self {
+        self.0.extend(v.to_be_bytes());
+        self
+    }
+    fn f32(mut self, v: f32) -> Self {
+        self.0.extend(v.to_be_bytes());
+        self
+    }
+    fn pos(self, (x, y): (f32, f32)) -> Self {
+        self.f32(x).f32(y)
+    }
+    fn str(mut self, s: &str) -> Self {
+        self.0.extend((s.len() as i16).to_be_bytes());
+        self.0.extend(s.as_bytes());
+        self
+    }
+    fn ci(mut self, v: i32) -> Self {
+        self.0.extend(lg_protocol::packets::data::compressed(v));
+        self
+    }
+    fn raw(mut self, b: &[u8]) -> Self {
+        self.0.extend(b);
+        self
+    }
+}
+
+/// A stat: a number, or a string for the string stats.
+#[derive(Clone)]
+enum S {
+    N(u8, i32),
+    T(u8, String),
+}
+
+fn stats(list: &[S]) -> Vec<u8> {
+    let mut b = B::default().ci(list.len() as i32);
+    for s in list {
+        b = match s {
+            S::N(t, v) => b.u8(*t).ci(*v).ci(-1),
+            S::T(t, v) => b.u8(*t).str(v).ci(-1),
+        };
+    }
+    b.0
+}
+
+fn status(id: i32, pos: (f32, f32), list: &[S]) -> Vec<u8> {
+    B::default().ci(id).pos(pos).raw(&stats(list)).0
+}
+
+const ME: i32 = 1000;
+const ROGUE: u16 = 0x0300;
+const ARCHER: u16 = 0x0307;
+const DAGGER: u16 = 0x0a14;
+const CLOAK: u16 = 0x0a56;
+const ARMOR: u16 = 0x0a78;
+const ENEMY_TYPES: [u16; 6] = [45363, 9635, 29039, 33656, 0x0600, 0x0650];
+const ORYX_ANIMATIONS: [i32; 3] = [-935_464_302, -918_686_683, 0];
+/// The game's base64 variant, for enchant codes.
+fn six_bit(b: &[u8]) -> String {
+    const A: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut s = String::new();
+    for chunk in b.chunks(3) {
+        let n = (u32::from(chunk[0]) << 16) | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8) | u32::from(*chunk.get(2).unwrap_or(&0));
+        for k in 0..4 {
+            s.push(if k <= chunk.len() { A[(n >> (18 - 6 * k) & 63) as usize] as char } else { '=' });
+        }
+    }
+    s
+}
+
+struct Fight {
+    rng: Rng,
+    out: Vec<(Direction, Plain)>,
+    tick: i32,
+    bullet: i16,
+    my_pos: (f32, f32),
+    players: Vec<i32>,
+    enemies: Vec<i32>,
+    minions: Vec<i32>,
+    enemy_bullets: Vec<(i32, i16)>,
+}
+
+impl Fight {
+    fn send(&mut self, d: Direction, id: u8, b: B) {
+        self.out.push((d, Plain { id, body: b.0 }));
+    }
+    fn pick<T: Copy>(&mut self, v: &[T]) -> T {
+        v[self.rng.below(v.len())]
+    }
+    fn chance(&mut self, percent: usize) -> bool {
+        self.rng.below(100) < percent
+    }
+    fn small(&mut self, n: usize) -> i32 {
+        self.rng.below(n) as i32
+    }
+
+    /// NEWTICK and MOVE: the ticks that keep the cipher in step, with some stat changes.
+    fn tick(&mut self, changes: Vec<Vec<u8>>) {
+        self.tick += 1;
+        let mut b = B::default().i32(self.tick).i32(self.tick * 200).i32(70_000_000 + self.tick * 200).u16(30).i16(changes.len() as i16);
+        for c in &changes {
+            b = b.raw(c);
+        }
+        self.send(Direction::Incoming, 10, b);
+        let records = B::default().i16(1).i32(self.tick * 200).pos(self.my_pos);
+        self.send(Direction::Outgoing, 62, B::default().i32(self.tick).i32(self.tick * 200).raw(&records.0));
+    }
+
+    fn map(&mut self, name: &str, seed: i32) {
+        let b = B::default()
+            .i32(64)
+            .i32(64)
+            .str(name)
+            .str(name)
+            .str("")
+            .i32(seed)
+            .i32(0)
+            .f32(1.0)
+            .bool(true)
+            .bool(false)
+            .bool(true)
+            .i16(1)
+            .i32(0)
+            .str("7.2")
+            .i16(0)
+            .i16(15)
+            .bool(false)
+            .i32(0)
+            .str("")
+            .i16(0);
+        self.send(Direction::Incoming, 92, b);
+        self.send(Direction::Incoming, 101, B::default().i32(ME).i32(42).str("AAAAAAAA"));
+    }
+
+    fn player_stats(&mut self, name: &str, gear: [i32; 4]) -> Vec<S> {
+        let mut v = vec![
+            S::N(0, 700),
+            S::N(1, 650),
+            S::N(3, 300),
+            S::N(4, 200),
+            S::N(7, 20),
+            S::T(6, "123456".into()),
+            S::T(31, name.into()),
+            S::N(20, 50 + self.small(25)),
+            S::N(21, self.small(30)),
+            S::N(22, 50),
+            S::N(26, 40),
+            S::N(27, 30 + self.small(50)),
+            S::N(28, 50),
+            S::N(24, 0),
+            S::N(113, if self.chance(50) { 1000 } else { 1050 }),
+            S::N(25, 0),
+        ];
+        for (k, t) in [46u8, 47, 48, 49, 50, 51, 52, 53].iter().enumerate() {
+            v.push(S::N(*t, k as i32));
+        }
+        for (k, g) in gear.iter().enumerate() {
+            v.push(S::N(8 + k as u8, *g));
+        }
+        // enchant codes: none, or a weapon/ability code (header, 1026, an enchant id, end)
+        let code = six_bit(&[0, 0x02, 0x04, self.small(255) as u8, 0x01, 0xfd, 0xff]);
+        let codes = match self.small(3) {
+            0 => String::new(),
+            1 => format!("{code},{code},,"),
+            _ => format!(",{code}"),
+        };
+        v.push(S::T(80, codes));
+        v
+    }
+
+    fn setup(&mut self) {
+        let mut objects = Vec::new();
+        let mut me = self.player_stats("Tester", [i32::from(DAGGER), i32::from(CLOAK), i32::from(ARMOR), -1]);
+        me.push(S::N(35, 100)); // gold: yours only
+        if self.chance(50) {
+            me.push(S::T(128, "A".into()));
+            me.push(S::T(155, "B".into()));
+        }
+        objects.push(B::default().u16(ROGUE).raw(&status(ME, self.my_pos, &me)).0);
+        for k in 0..3 {
+            let id = 2000 + k;
+            self.players.push(id);
+            let gear = [i32::from(DAGGER), i32::from(CLOAK) + k, i32::from(ARMOR), 2639];
+            let st = self.player_stats(&format!("Friend{k},guild"), gear);
+            objects.push(B::default().u16(if k == 0 { ARCHER } else { ROGUE }).raw(&status(id, (10.0 + k as f32, 10.0), &st)).0);
+        }
+        for k in 0..6 {
+            let id = 3000 + k;
+            self.enemies.push(id);
+            let t = ENEMY_TYPES[k as usize];
+            let anim = self.pick(&ORYX_ANIMATIONS);
+            let anim = if t == 29039 { -123_818_367 } else { anim };
+            let st = vec![S::N(0, 5000), S::N(1, 5000), S::N(21, self.small(40)), S::N(29, 0), S::N(69, 0), S::N(125, anim)];
+            objects.push(B::default().u16(t).raw(&status(id, (12.0, 14.0 + k as f32), &st)).0);
+        }
+        for k in 0..2 {
+            let id = 4000 + k;
+            self.minions.push(id);
+            objects.push(B::default().u16(0x0700 + k as u16).raw(&status(id, (11.0, 11.0), &[])).0);
+        }
+        let mut tiles = B::default().ci(25);
+        for x in 0..5 {
+            for y in 0..5 {
+                tiles = tiles.i16(8 + x).i16(8 + y).u16(self.small(300) as u16);
+            }
+        }
+        let mut b = B::default().pos(self.my_pos).i8(0).raw(&tiles.0).ci(objects.len() as i32);
+        for o in &objects {
+            b = b.raw(o);
+        }
+        self.send(Direction::Incoming, 42, b.ci(0));
+    }
+
+    fn crucible(&mut self) {
+        let json = r#"{"array":[{"id":"A","bonuses":[{"type":5,"amount":1.1},{"type":1,"amount":0.3}]},{"id":"B","x":{"bonuses":[{"type":5,"amount":"1.25"}]}}]}"#;
+        self.send(Direction::Incoming, 183, B::default().i16(1).i32(1).i16(1).str(json));
+    }
+
+    fn round(&mut self) {
+        // conditions and stats change
+        let mut changes = Vec::new();
+        if self.chance(40) {
+            let e = self.pick(&self.enemies.clone());
+            let cond = self.pick(&[0, 0x200_0000, 0x400_0000, 0x100_0000]);
+            let newc = self.pick(&[0, 0x2_0000, 0x8, 0x40, 0x48]);
+            changes.push(status(e, (12.0, 14.0), &[S::N(29, cond), S::N(69, newc), S::N(21, self.small(60))]));
+        }
+        if self.chance(30) {
+            let cond = self.pick(&[0, 0x4, 0x4_0000, 0x100_0000, 0x200_0000, 0x2_0000, 0x40]);
+            let attack = 40 + self.small(40);
+            let ability = self.pick(&[i32::from(CLOAK), i32::from(CLOAK) + 1, 0x0a5a]);
+            changes.push(status(ME, self.my_pos, &[S::N(29, cond), S::N(20, attack), S::N(9, ability), S::N(27, 20 + self.small(70))]));
+        }
+        self.tick(changes);
+        // your shots, and their hits
+        for _ in 0..self.small(4) {
+            self.bullet = self.bullet.wrapping_add(1);
+            let weapon = self.pick(&[DAGGER, DAGGER, DAGGER, CLOAK, 0x0a5a, 0x7fff]);
+            let pid = self.pick(&[0i8, 0, 0, 1, -1, 7]);
+            let b =
+                B::default().i32(0).i16(self.bullet).u16(weapon).i8(pid).pos(self.my_pos).f32(0.5).bool(false).i8(0).i8(0).pos(self.my_pos);
+            self.send(Direction::Outgoing, 30, b);
+            if self.chance(80) {
+                let target = self.pick(&self.enemies.clone());
+                self.send(Direction::Outgoing, 25, B::default().i32(0).i16(self.bullet).i32(ME).i32(target).bool(false).i32(target));
+            }
+        }
+        // the server's shots for other players and pets, and hits on them
+        for _ in 0..self.small(3) {
+            let owner = if self.chance(70) { self.pick(&self.players.clone()) } else { self.pick(&self.minions.clone()) };
+            let summoner = if self.minions.contains(&owner) || self.chance(30) { self.pick(&self.players.clone()) } else { 0 };
+            let options = [self.small(200), 256 + self.small(255), 600];
+            let bullet = self.pick(&options) as i16;
+            let count = self.pick(&[1i8, 1, 3]);
+            let container = self.pick(&[i32::from(CLOAK), 0x0a5a, i32::from(DAGGER), -1]);
+            let b = B::default()
+                .i16(bullet)
+                .i32(owner)
+                .i32(container)
+                .pos((10.0, 10.0))
+                .f32(0.0)
+                .i16(50 + self.small(200) as i16)
+                .i32(summoner)
+                .i8(0)
+                .i8(count)
+                .f32(0.1);
+            self.send(Direction::Incoming, 12, b);
+            if self.chance(70) {
+                let target = self.pick(&self.enemies.clone());
+                self.send(Direction::Outgoing, 25, B::default().i32(0).i16(bullet).i32(owner).i32(target).bool(false).i32(target));
+            }
+        }
+        // damage the server tells
+        for _ in 0..self.small(3) {
+            let target = self.pick(&self.enemies.clone());
+            let by = self.pick(&[self.players[0], self.players[1], self.minions[0], self.minions[1], 99_999]);
+            let b = B::default().i32(target).u8(0).u16(self.small(400) as u16).bool(false).u16(1).i32(by);
+            self.send(Direction::Incoming, 75, b);
+        }
+        // enemies shoot, sometimes hitting you
+        if self.chance(60) {
+            let owner = self.pick(&self.enemies.clone());
+            let bullet = self.small(30000) as i16;
+            let b = B::default().i16(bullet).i32(owner).u8(self.small(3) as u8).pos((12.0, 14.0)).f32(0.0).i16(30 + self.small(200) as i16);
+            let b = if self.chance(50) { b.u8(1 + self.small(4) as u8).f32(0.2) } else { b };
+            self.send(Direction::Incoming, 35, b);
+            self.enemy_bullets.push((owner, bullet));
+        }
+        if self.chance(40) && !self.enemy_bullets.is_empty() {
+            let (owner, bullet) = self.pick(&self.enemy_bullets.clone());
+            let bullet = bullet.wrapping_add(self.small(2) as i16);
+            self.send(Direction::Outgoing, 90, B::default().i16(bullet).i32(owner));
+        }
+        if self.chance(25) {
+            let near = if self.chance(60) { (self.my_pos.0 + 0.5, self.my_pos.1) } else { (40.0, 40.0) };
+            let b =
+                B::default().pos(near).f32(2.0).u16(100 + self.small(100) as u16).u8(0).f32(1.0).u16(0x0600).i32(0).bool(self.chance(30));
+            self.send(Direction::Incoming, 64, b);
+        }
+        if self.chance(15) {
+            self.send(Direction::Outgoing, 103, B::default().i32(0).pos(self.my_pos));
+        }
+        if self.chance(5) {
+            let dammah = self.enemies[1];
+            let text = lg_protocol::packets::Text {
+                name: "Chancellor Dammah".into(),
+                object_id: dammah,
+                num_stars: -1,
+                bubble_time: 5,
+                recipient: String::new(),
+                text: "I SAID DO NOT INTERRUPT ME! For this I shall hasten your end!".into(),
+                clean_text: String::new(),
+                is_supporter: false,
+                star_background: 0,
+            };
+            self.out.push((Direction::Incoming, Plain { id: 44, body: text.encode() }));
+        }
+        self.my_pos.0 += 0.25;
+    }
+
+    fn leave(&mut self) {
+        let gone = self.players.remove(0);
+        self.send(Direction::Incoming, 42, B::default().pos(self.my_pos).i8(0).ci(0).ci(0).ci(1).ci(gone));
+    }
+}
+
+/// The fight as a pcap session (seed: which made-up fight).
+pub fn fight(seed: u64) -> Session {
+    let mut f = Fight {
+        rng: Rng(seed.max(1).wrapping_mul(0x9E37_79B9_7F4A_7C15)),
+        out: Vec::new(),
+        tick: 0,
+        bullet: 0,
+        my_pos: (10.5, 10.5),
+        players: Vec::new(),
+        enemies: Vec::new(),
+        minions: Vec::new(),
+        enemy_bullets: Vec::new(),
+    };
+    for _ in 0..3 {
+        f.tick(Vec::new());
+    }
+    let seed1 = f.rng.next() as i32;
+    f.map("Made-up Dungeon", seed1);
+    f.setup();
+    f.crucible();
+    for r in 0..120 {
+        f.round();
+        if r == 60 {
+            f.leave();
+        }
+        if r == 80 {
+            let seed2 = f.rng.next() as i32;
+            f.map("Second Room", seed2);
+            f.players.clear();
+            f.enemies.clear();
+            f.minions.clear();
+            f.enemy_bullets.clear();
+            f.setup();
+        }
+    }
+    write(&mut f.rng, &f.out)
+}
+
+/// The packets encrypted, each in a TCP segment of its own, in order.
+fn write(rng: &mut Rng, packets: &[(Direction, Plain)]) -> Session {
+    let mut w = pcap::Writer::new(link::DLT_EN10MB);
+    let mut micros = 1_763_000_000_000_000u64;
+    let mut ip_id = 1u16;
+    let isn = [rng.next() as u32, rng.next() as u32];
+    let mut seq = [0u32; 2];
+    let mut rc4 = [Rc4::new(&INCOMING_KEY), Rc4::new(&OUTGOING_KEY)];
+    for (k, d) in [Direction::Incoming, Direction::Outgoing].iter().enumerate() {
+        let (src, dst, sp, dp) = endpoints(*d);
+        let syn = tcp::Segment::build(sp, dp, isn[k].wrapping_sub(1), tcp::FLAG_SYN, &[]);
+        w.frame(micros, &frame(src, dst, ip_id, &syn));
+        micros += 1000;
+        ip_id = ip_id.wrapping_add(1);
+    }
+    let (mut incoming, mut outgoing) = (Vec::new(), Vec::new());
+    for (d, p) in packets {
+        let k = usize::from(*d == Direction::Outgoing);
+        let mut bytes = ((p.body.len() + 5) as i32).to_be_bytes().to_vec();
+        bytes.push(p.id);
+        let mut body = p.body.clone();
+        rc4[k].apply(&mut body);
+        bytes.extend(body);
+        let (src, dst, sp, dp) = endpoints(*d);
+        let seg = tcp::Segment::build(sp, dp, isn[k].wrapping_add(seq[k]), tcp::FLAG_ACK | tcp::FLAG_PSH, &bytes);
+        seq[k] = seq[k].wrapping_add(bytes.len() as u32);
+        w.frame(micros, &frame(src, dst, ip_id, &seg));
+        micros += 3000;
+        ip_id = ip_id.wrapping_add(1);
+        if k == 0 { incoming.push(p.clone()) } else { outgoing.push(p.clone()) }
+    }
+    Session { pcap: w.bytes, incoming, outgoing }
+}

@@ -12,9 +12,9 @@ work with the current Loot Gobbler server and its data as they are.
 | Crate | What it does | Java it replaces |
 |---|---|---|
 | `lg-capture` | pcap files, link layers (Ethernet, VLAN, Linux "any", VPN raw IP, loopback), IPv4, TCP segments in order | `Sniffer`, `LinkLayer`, `Ip4Packet`, `TcpPacket`, `TcpStreamBuilder`, `TcpStreamErrorHandler` |
-| `lg-protocol` | RC4, cutting the stream into packets, finding the cipher's position from tick packets, the packet type table, decoders for the 44 packet types the app reads | `PacketConstructor`, `ROTMGPacketConstructor`, `RC4`, `TickAligner`, `RC4Aligner`, `PacketType`, `BufferReader`, `packets.incoming.*`, `packets.outgoing.*`, `packets.data.*` |
-| `lg-gamedata` | the game data the app extracts from the game: objects, tiles, character classes, loot bags | `IdToAsset`, `CharacterClass`, `LootBags` |
-| `lg-world` | the world as the packets tell it: the map, every object in view and its stats, which one is you (also when the sniffer starts inside a map), players, loot bags | the core of `TomatoData` and `Entity` |
+| `lg-protocol` | RC4, cutting the stream into packets, finding the cipher's position from tick packets, the packet type table, decoders for the 45 packet types the app reads | `PacketConstructor`, `ROTMGPacketConstructor`, `RC4`, `TickAligner`, `RC4Aligner`, `PacketType`, `BufferReader`, `packets.incoming.*`, `packets.outgoing.*`, `packets.data.*` |
+| `lg-gamedata` | the game data the app extracts from the game: objects, tiles, character classes, loot bags, abilities scaling with a stat, enchantments | `IdToAsset`, `CharacterClass`, `LootBags`, `AbilityScalingManager`, `ParseEnchants` |
+| `lg-world` | the world as the packets tell it: the map, every object in view and its stats, which one is you (also when the sniffer starts inside a map), players, loot bags; damage: your shots rolled with the map's seed, hits, damage per player, damage you take, boss phases, crucible bonuses | the core of `TomatoData` and `Entity`, `Projectile`, `Damage`, `RNG`, `CrucibleBonusManager` |
 | `lg-replay` | the command-line tool below, and made-up sessions for tests | - |
 
 Where it differs from Java on purpose (each one is a bug in Java):
@@ -56,8 +56,14 @@ The third comparison is the world: Java's own `TomatoData` (`oracle/WorldOracle.
 feeds it, and after each one the whole state (map, you, every object with its stats, players, bags) must be the same
 in Rust, down to where Java throws partway through a packet. Java runs in an empty temporary folder (the app writes
 its files next to itself), is never handed HELLO (it would log in to the game's servers with your token), and its
-network goes to a closed local port. The damage and loot parts of `TomatoData` are not ported yet: they don't change
-the compared state.
+network goes to a closed local port. Damage is part of the compared state: every hit an object took, the sums per
+player, the damage roll's position, the crucible bonuses. Loot attribution is not ported yet.
+
+`lg-replay synth-fight <out.pcap> [seed]` writes a made-up fight for this comparison: a map with its seed, you with a
+class's starting gear, other players and their pets, enemies (Oryx, Chancellor Dammah, the Forgotten King among
+them), and tick by tick shots, hits, the server's shots, damage, enemy shots hitting you, area and ground damage,
+conditions coming and going, a crucible, a player leaving mid-fight, a second map. With the app's assets folder its
+weapons, abilities and enchantments are real ones.
 
 The assets folder is the one the app extracts the game data into, next to its other files. It is only read, and the
 game's files never go into the repository.
@@ -99,11 +105,13 @@ here, and the tests use made-up sessions only.
   sent, and a session with lost bytes must find its feet again. The made-up sessions also carry packets of every
   decoded type with made-up content (mostly small numbers, so counts and lengths stay plausible and decoding gets
   far), for the field comparison with Java.
-- CI (`.github/workflows/rust.yml`): all of the above on Linux and Windows, plus both comparisons with Java on 8
-  sessions (about 650 decoded packets each).
+- CI (`.github/workflows/rust.yml`): all of the above on Linux and Windows, plus the comparisons with Java on 8
+  made-up sessions and 8 made-up fights.
 - `lg-world`: entering maps, finding you and the other players, objects leaving the view, finding you when starting
   inside a map (by your own stats, where you moved, your ability), guessing the map by its enemies, the places
   where Java throws.
+- Made-up fights (12 seeds, with the real game data): the same world as Java's after every packet, damage
+  included.
 - A real 46-second recording (not in the repository): Rust and Java agree on all 1391 packets, the fields of all 946
   decoded ones, and the world state after each of the 935 packets the world is fed. The game data read from a real
   assets folder is the same too (36858 objects, 10399 tiles, 19 classes).

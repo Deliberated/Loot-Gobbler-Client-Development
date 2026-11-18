@@ -102,6 +102,14 @@ record! {
 }
 
 record! {
+    /// PLAYERHIT (90): an enemy's shot hit the player.
+    PlayerHit(r) {
+        bullet_id: i16 = r.i16()?,
+        object_id: i32 = r.i32()?,
+    }
+}
+
+record! {
     /// INVSWAP (55): the player moves an item.
     InvSwap(r) {
         time: i32 = r.i32()?,

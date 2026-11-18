@@ -63,3 +63,24 @@ fn finds_its_feet_again_after_lost_bytes() {
     // the other direction lost nothing
     assert_eq!(got(&packets, Direction::Outgoing), expected(&s.outgoing));
 }
+
+#[test]
+fn a_made_up_fight_comes_out_as_sent() {
+    for seed in 1..=4 {
+        let s = lg_replay::fight::fight(seed);
+        let r = replay(&s.pcap).unwrap();
+        let packets: Vec<&Packet> = r.packets().collect();
+        assert_eq!(got(&packets, Direction::Incoming), expected(&s.incoming), "incoming, seed {seed}");
+        assert_eq!(got(&packets, Direction::Outgoing), expected(&s.outgoing), "outgoing, seed {seed}");
+        // and the world gets its fight: the map, you, damage on the enemies
+        let mut w = lg_world::World::new(lg_gamedata::GameData::default(), std::collections::HashMap::new());
+        for p in &packets {
+            if let Some(Ok(d)) = lg_protocol::packets::decode(p.id, &p.body) {
+                let _ = w.packet(&d.packet);
+            }
+        }
+        assert_eq!(w.map.as_ref().map(|m| m.name.as_str()), Some("Second Room"));
+        assert!(w.damage.rng.is_some());
+        assert!(w.entities.values().any(|e| !e.damage_list.is_empty()), "seed {seed}");
+    }
+}

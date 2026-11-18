@@ -65,6 +65,7 @@ packets! {
     75 => Damage,
     86 => TradeStart,
     88 => TradeRequested,
+    90 => PlayerHit,
     92 => MapInfo,
     93 => ClaimDailyRewardResponse,
     95 => InvResult,
