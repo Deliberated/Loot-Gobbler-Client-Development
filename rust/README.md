@@ -62,6 +62,19 @@ the compared state.
 The assets folder is the one the app extracts the game data into, next to its other files. It is only read, and the
 game's files never go into the repository.
 
+## Watching live
+
+There is no capture of its own yet: `tcpdump` captures, and `lg-replay live` reads what it writes as it comes.
+
+```sh
+cd rust && cargo build --release -p lg-replay
+sudo tcpdump -i any -U -w - 'tcp port 2050' 2>/dev/null | ./target/release/lg-replay live --world ~/LootGobbler/assets
+```
+
+It prints the game's packets as they happen (`--all` adds the many sent every tick), and with `--world` and the
+app's assets folder also where you are, who you are and how many players are in view. Start it before entering the
+game or changing servers. Ctrl+C ends it. Only `tcpdump` needs root; nothing is saved.
+
 ## Recording a real session
 
 On Linux, while playing for a few minutes:

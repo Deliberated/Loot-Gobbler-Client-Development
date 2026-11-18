@@ -35,35 +35,63 @@ fn direction(flow: Flow) -> Direction {
     }
 }
 
-/// Replays a whole pcap file.
-pub fn replay(file: &[u8]) -> Result<Replay, pcap::Error> {
-    let mut reader = pcap::Reader::new(file)?;
-    let link_type = reader.link_type;
-    let mut splitter = Splitter::new();
-    let mut incoming = Decoder::new(Direction::Incoming);
-    let mut outgoing = Decoder::new(Direction::Outgoing);
-    let (mut events, mut packets, mut notes, mut items) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-    let mut frames = 0;
-    while let Some(frame) = reader.next_frame() {
-        let frame = frame?;
-        frames += 1;
-        splitter.frame(link_type, frame.data, &mut events);
-        for event in events.drain(..) {
-            let (flow, micros) = match &event {
-                StreamEvent::Data { flow, .. } | StreamEvent::Reset { flow } | StreamEvent::Gap { flow, .. } => (*flow, frame.micros),
+/// The pipeline from captured frames to game packets, fed one frame at a time (a file, or a live capture).
+pub struct Session {
+    link_type: u32,
+    splitter: Splitter,
+    incoming: Decoder,
+    outgoing: Decoder,
+    events: Vec<StreamEvent>,
+    packets: Vec<Packet>,
+    notes: Vec<Note>,
+}
+
+impl Session {
+    pub fn new(link_type: u32) -> Session {
+        Session {
+            link_type,
+            splitter: Splitter::new(),
+            incoming: Decoder::new(Direction::Incoming),
+            outgoing: Decoder::new(Direction::Outgoing),
+            events: Vec::new(),
+            packets: Vec::new(),
+            notes: Vec::new(),
+        }
+    }
+
+    /// One captured frame; what it completed goes to `items`.
+    pub fn frame(&mut self, micros: u64, data: &[u8], items: &mut Vec<Item>) {
+        self.splitter.frame(self.link_type, data, &mut self.events);
+        for event in self.events.drain(..) {
+            let flow = match &event {
+                StreamEvent::Data { flow, .. } | StreamEvent::Reset { flow } | StreamEvent::Gap { flow, .. } => *flow,
             };
-            let decoder = if flow == Flow::Incoming { &mut incoming } else { &mut outgoing };
+            let decoder = if flow == Flow::Incoming { &mut self.incoming } else { &mut self.outgoing };
             match event {
-                StreamEvent::Data { bytes, .. } => decoder.bytes(&bytes, &mut packets, &mut notes),
+                StreamEvent::Data { bytes, .. } => decoder.bytes(&bytes, &mut self.packets, &mut self.notes),
                 StreamEvent::Reset { .. } => decoder.reset(),
                 StreamEvent::Gap { skipped, .. } => {
                     decoder.gap();
                     items.push(Item::Gap { micros, direction: direction(flow), skipped });
                 }
             }
-            items.extend(notes.drain(..).map(|note| Item::Note { micros, direction: direction(flow), note }));
-            items.extend(packets.drain(..).map(|packet| Item::Packet { micros, packet }));
+            items.extend(self.notes.drain(..).map(|note| Item::Note { micros, direction: direction(flow), note }));
+            items.extend(self.packets.drain(..).map(|packet| Item::Packet { micros, packet }));
         }
+    }
+}
+
+/// Replays a whole pcap file.
+pub fn replay(file: &[u8]) -> Result<Replay, pcap::Error> {
+    let mut reader = pcap::Reader::new(file)?;
+    let link_type = reader.link_type;
+    let mut session = Session::new(link_type);
+    let mut items = Vec::new();
+    let mut frames = 0;
+    while let Some(frame) = reader.next_frame() {
+        let frame = frame?;
+        frames += 1;
+        session.frame(frame.micros, frame.data, &mut items);
     }
     Ok(Replay { frames, link_type, items })
 }

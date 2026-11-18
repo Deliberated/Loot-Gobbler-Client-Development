@@ -6,6 +6,7 @@ pub const MAX_MP: u8 = 3;
 pub const MP: u8 = 4;
 pub const NEXT_LEVEL_EXP: u8 = 5;
 pub const EXP: u8 = 6;
+pub const LEVEL: u8 = 7;
 pub const INVENTORY_0: u8 = 8;
 pub const INVENTORY_4: u8 = 12;
 pub const INVENTORY_11: u8 = 19;

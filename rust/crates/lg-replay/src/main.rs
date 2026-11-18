@@ -9,6 +9,10 @@
 //!   lg-replay <session.pcap> --world <assets>   the world state after each packet the world is fed, to compare
 //!                                       with Java (oracle/compare.sh): a checksum, the whole state on map changes
 //!   lg-replay synth <out.pcap> [seed]   writes a made-up session, for testing without a recording
+//!   lg-replay live [--all] [--world <assets>]
+//!                                       the game packets of a live capture piped in, as they happen:
+//!                                       sudo tcpdump -i any -U -w - 'tcp port 2050' | lg-replay live
+//!                                       (--all: also the many per-tick packets; --world: also who and where you are)
 
 use lg_protocol::aligner::AlignNote;
 use lg_protocol::{Note, packets};
@@ -31,6 +35,11 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         [cmd, dir] if cmd == "gamedata" => gamedata(std::path::Path::new(dir)),
+        [cmd, rest @ ..] if cmd == "live" => {
+            let all = rest.iter().any(|f| f == "--all");
+            let assets = rest.iter().position(|f| f == "--world").and_then(|i| rest.get(i + 1));
+            live(all, assets.map(std::path::Path::new))
+        }
         [cmd] if cmd == "decoded-ids" => {
             println!("{}", packets::DECODED_IDS.iter().map(u8::to_string).collect::<Vec<_>>().join(","));
             ExitCode::SUCCESS
@@ -149,6 +158,133 @@ fn run(file: &str, mode: Mode) -> ExitCode {
         }
     }
     ExitCode::SUCCESS
+}
+
+/// Packets that come many times a second: shown in `live` only with `--all`.
+const BUSY: &[&str] = &[
+    "NEWTICK",
+    "MOVE",
+    "UPDATE",
+    "UPDATEACK",
+    "PING",
+    "PONG",
+    "PLAYERSHOOT",
+    "SERVERPLAYERSHOOT",
+    "ALLYSHOOT",
+    "SHOOT_ACK",
+    "ENEMYSHOOT",
+    "ENEMYHIT",
+    "OTHERHIT",
+    "PLAYERHIT",
+    "SQUAREHIT",
+    "DAMAGE",
+    "AOE",
+    "AOEACK",
+    "GROUNDDAMAGE",
+    "GOTO",
+    "GOTOACK",
+    "SHOWEFFECT",
+];
+
+/// A live capture piped in (pcap from `tcpdump -U -w -`): packets as they come, and with game data what the world
+/// says about you.
+fn live(all: bool, assets: Option<&std::path::Path>) -> ExitCode {
+    let mut input = match lg_capture::pcap::StreamReader::new(std::io::stdin().lock()) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("no capture on standard input ({e}). Pipe one in:\n  sudo tcpdump -i any -U -w - 'tcp port 2050' | lg-replay live");
+            return ExitCode::FAILURE;
+        }
+    };
+    let mut world = assets.map(|a| {
+        let game = lg_gamedata::GameData::load(a);
+        if game.objects.is_empty() {
+            eprintln!("no game data in {} (expected ObjectID.list, xml/players.xml)", a.display());
+        }
+        lg_world::World::new(game, std::collections::HashMap::new())
+    });
+    eprintln!("listening (link type {}); start or change servers in the game to see everything. Ctrl+C ends.", input.link_type);
+    let mut session = lg_replay::Session::new(input.link_type);
+    let mut items = Vec::new();
+    let mut first = None;
+    let mut last_summary = String::new();
+    let mut out = std::io::stdout().lock();
+    while let Some(frame) = input.next_frame() {
+        let (micros, data) = match frame {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("capture stream broken: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+        session.frame(micros, &data, &mut items);
+        for item in items.drain(..) {
+            let at = item_micros(&item);
+            let t = time(at - *first.get_or_insert(at));
+            match &item {
+                Item::Packet { packet, .. } => {
+                    if all || !BUSY.contains(&packet.name()) {
+                        let about = packets::describe(packet.id, &packet.body).unwrap_or_default();
+                        line(
+                            &mut out,
+                            format_args!(
+                                "{t:>10}  {:<3} {:<24} {:>6} B  {}",
+                                packet.direction.short(),
+                                packet.name(),
+                                packet.size(),
+                                about
+                            ),
+                        );
+                    }
+                    if let Some(w) = world.as_mut()
+                        && lg_world::FED.contains(&packet.id)
+                        && let Some(Ok(d)) = packets::decode(packet.id, &packet.body)
+                    {
+                        let _ = w.packet(&d.packet);
+                        let summary = summary(w);
+                        if summary != last_summary {
+                            line(&mut out, format_args!("{t:>10}  ==  {summary}"));
+                            last_summary = summary;
+                        }
+                    }
+                }
+                Item::Note { direction, note, .. } => {
+                    line(&mut out, format_args!("{t:>10}  {:<3} -- {}", direction.short(), describe_note(note)))
+                }
+                Item::Gap { direction, skipped, .. } => {
+                    line(&mut out, format_args!("{t:>10}  {:<3} -- packets missing: skipped {skipped} bytes", direction.short()))
+                }
+            }
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+/// Where you are and who you are, in one line.
+fn summary(w: &lg_world::World) -> String {
+    let map = w.map.as_ref().map_or("an unknown map".to_string(), |m| {
+        let name = if m.display_name.starts_with('{') { &m.name } else { &m.display_name };
+        if w.map_guessed { format!("{name} (guessed)") } else { name.clone() }
+    });
+    let you = match w.me() {
+        Some(me) => {
+            let name = me.text(lg_world::stats::NAME).map(|n| n.split(',').next().unwrap_or(n).to_string());
+            let class = w.data().class(me.object_type).map(|c| c.name.clone());
+            let level = me.value(lg_world::stats::LEVEL);
+            let mut s = name.unwrap_or_else(|| format!("object {}", me.id));
+            if let Some(c) = class {
+                s.push_str(&format!(", {c}"));
+            }
+            if let Some(l) = level {
+                s.push_str(&format!(" level {l}"));
+            }
+            s
+        }
+        None if w.world_player_id > 0 => format!("object {} (not in view yet)", w.world_player_id),
+        None => "not known yet".into(),
+    };
+    let others = w.player_list_updated.iter().filter(|id| Some(**id) != w.player).count();
+    format!("in {map}; you: {you}; {others} other players in view")
 }
 
 /// The world state after each packet it is fed, as `oracle/WorldOracle.java` prints Java's.

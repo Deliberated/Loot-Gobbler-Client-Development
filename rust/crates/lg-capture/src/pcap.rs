@@ -86,6 +86,49 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// The largest frame believed in a stream: anything bigger means the stream is not pcap or out of step.
+const MAX_FRAME: usize = 1 << 20;
+
+/// A pcap stream as it is written, e.g. `tcpdump -U -w -` piped in: frames are read as they come.
+pub struct StreamReader<R> {
+    input: R,
+    big_endian: bool,
+    nanos: bool,
+    pub link_type: u32,
+}
+
+impl<R: std::io::Read> StreamReader<R> {
+    /// Reads the stream's header (waiting for it).
+    pub fn new(mut input: R) -> Result<Self, Error> {
+        let mut header = [0u8; 24];
+        input.read_exact(&mut header).map_err(|_| Error::TooShort)?;
+        let r = Reader::new(&header)?;
+        Ok(StreamReader { input, big_endian: r.big_endian, nanos: r.nanos, link_type: r.link_type })
+    }
+
+    /// The next frame (waiting for it): its time in microseconds and its bytes. None when the stream ended.
+    pub fn next_frame(&mut self) -> Option<Result<(u64, Vec<u8>), Error>> {
+        let mut h = [0u8; 16];
+        if self.input.read_exact(&mut h).is_err() {
+            return None;
+        }
+        let u32_at = |i: usize| {
+            let b = [h[i], h[i + 1], h[i + 2], h[i + 3]];
+            if self.big_endian { u32::from_be_bytes(b) } else { u32::from_le_bytes(b) }
+        };
+        let (secs, frac, len) = (u64::from(u32_at(0)), u64::from(u32_at(4)), u32_at(8) as usize);
+        if len > MAX_FRAME {
+            return Some(Err(Error::Truncated { at: 0 }));
+        }
+        let mut data = vec![0u8; len];
+        if self.input.read_exact(&mut data).is_err() {
+            return Some(Err(Error::Truncated { at: 0 }));
+        }
+        let micros = secs * 1_000_000 + if self.nanos { frac / 1000 } else { frac };
+        Some(Ok((micros, data)))
+    }
+}
+
 /// Writes a pcap file (microsecond timestamps, little-endian).
 pub struct Writer {
     pub bytes: Vec<u8>,
@@ -126,6 +169,18 @@ mod tests {
         assert_eq!(r.link_type, 1);
         assert_eq!(r.next_frame(), Some(Ok(Frame { micros: 1_700_000_000_123_456, data: b"one" })));
         assert_eq!(r.next_frame().unwrap().unwrap().data, b"two!");
+        assert_eq!(r.next_frame(), None);
+    }
+
+    #[test]
+    fn reads_a_stream() {
+        let mut w = Writer::new(276);
+        w.frame(5_000_001, b"one");
+        w.frame(6_000_000, b"two!");
+        let mut r = StreamReader::new(&w.bytes[..]).unwrap();
+        assert_eq!(r.link_type, 276);
+        assert_eq!(r.next_frame(), Some(Ok((5_000_001, b"one".to_vec()))));
+        assert_eq!(r.next_frame().unwrap().unwrap().1, b"two!");
         assert_eq!(r.next_frame(), None);
     }
 
