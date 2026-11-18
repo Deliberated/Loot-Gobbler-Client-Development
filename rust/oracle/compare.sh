@@ -2,32 +2,47 @@
 # Compares the Rust replay with the Java client on one recording, twice:
 #   packets: the same packets, in the same order, with the same content (Java's sniffer classes)
 #   fields:  every packet that has a Rust decoder decodes to the same fields (Java's packet classes)
-# Usage: rust/oracle/compare.sh <session.pcap>
+#   world:   the same world state after each packet the app's TomatoData is fed (Java's TomatoData itself)
+# Usage: rust/oracle/compare.sh <session.pcap> [assets folder]
+# With the app's assets folder (the game data it extracts; only read, never changed) the world knows the game's
+# classes and objects; without, both sides run without game data.
+# For the world, Java runs in an empty temporary folder (the app writes its files next to itself), is never handed
+# HELLO (it would log in to the game's servers), and its network goes to a closed local port.
 # Needs the Java client built first (./gradlew shadowJar in the repository).
 # Login tokens and keys only ever appear as checksums, so the output can be shown.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../.." && pwd)
-pcap=$(realpath "${1:?usage: compare.sh <session.pcap>}")
+pcap=$(realpath "${1:?usage: compare.sh <session.pcap> [assets folder]}")
+assets=${2:+$(realpath "$2")}
 jar=$(ls -t "$repo"/build/libs/LootGobbler-*.jar 2>/dev/null | head -1 || true)
 [ -n "$jar" ] || { echo "Build the Java client first: ./gradlew shadowJar (in $repo)" >&2; exit 2; }
 cargo=$(command -v cargo || echo "$HOME/.cargo/bin/cargo")
 
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
-javac -nowarn -cp "$jar" -d "$work" "$here/ReplayOracle.java"
+trap 'rm -rf "${work:?}"' EXIT
+javac -nowarn -cp "$jar" -d "$work" "$here/ReplayOracle.java" "$here/WorldOracle.java"
 (cd "$here/.." && "$cargo" build -q --release -p lg-replay)
 replay="$here/../target/release/lg-replay"
 ids=$("$replay" decoded-ids)
 
 status=0
-check() { # name, java args..., then rust flag last
+check() { # name, rust flag, then java args
     local what=$1 flag=$2
     shift 2
-    java -cp "$jar:$work" oracle.ReplayOracle "$pcap" "$@" > "$work/java.txt" 2> "$work/java.log"
-    "$replay" "$pcap" "$flag" > "$work/rust.txt" 2> "$work/rust.log"
+    if [ "$what" = world ]; then
+        mkdir -p "$work/run/assets"
+        if [ -n "$assets" ]; then cp -r "$assets/ObjectID.list" "$assets/TileID.list" "$assets/xml" "$work/run/assets/"; fi
+        (cd "$work/run" && java -Djava.awt.headless=true -Djava.net.useSystemProxies=false \
+            -Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=9 -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=9 \
+            -cp "$jar:$work" oracle.ReplayOracle "$pcap" "$@") > "$work/java.txt" 2> "$work/java.log"
+        "$replay" "$pcap" "$flag" "$work/run/assets" > "$work/rust.txt" 2> "$work/rust.log"
+    else
+        java -cp "$jar:$work" oracle.ReplayOracle "$pcap" "$@" > "$work/java.txt" 2> "$work/java.log"
+        "$replay" "$pcap" "$flag" > "$work/rust.txt" 2> "$work/rust.log"
+    fi
     if cmp -s "$work/java.txt" "$work/rust.txt"; then
-        echo "same $what: $(wc -l < "$work/rust.txt") packets ($(basename "$pcap"))"
+        echo "same $what: $(grep -vc '^ \|^state' "$work/rust.txt") packets ($(basename "$pcap"))"
     else
         echo "DIFFERENT $what ($(basename "$pcap")): Java $(wc -l < "$work/java.txt") packets, Rust $(wc -l < "$work/rust.txt")"
         diff "$work/java.txt" "$work/rust.txt" | cut -c1-400 | head -40
@@ -36,4 +51,5 @@ check() { # name, java args..., then rust flag last
 }
 check packets --oracle
 check fields --fields --fields "$ids"
+check world --world --world
 exit $status

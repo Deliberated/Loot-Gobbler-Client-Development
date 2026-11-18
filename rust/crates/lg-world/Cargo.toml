@@ -1,0 +1,11 @@
+[package]
+name = "lg-world"
+description = "The game world as the packets tell it: the map, the objects in view and their stats, which one is you"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+lg-gamedata = { path = "../lg-gamedata" }
+lg-protocol = { path = "../lg-protocol" }

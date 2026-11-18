@@ -6,6 +6,8 @@
 //!   lg-replay decoded-ids               the ids of the packets that have a decoder, for oracle/compare.sh
 //!   lg-replay gamedata <assets>         the game data read from an assets folder, to compare with Java
 //!   lg-replay <session.pcap> --stats    only the summary
+//!   lg-replay <session.pcap> --world <assets>   the world state after each packet the world is fed, to compare
+//!                                       with Java (oracle/compare.sh): a checksum, the whole state on map changes
 //!   lg-replay synth <out.pcap> [seed]   writes a made-up session, for testing without a recording
 
 use lg_protocol::aligner::AlignNote;
@@ -35,6 +37,11 @@ fn main() -> ExitCode {
         }
         [file, flags @ ..] if !file.starts_with('-') => {
             let has = |f: &str| flags.iter().any(|x| x == f);
+            if let [flag, assets] = flags
+                && flag == "--world"
+            {
+                return world(file, std::path::Path::new(assets));
+            }
             let mode = if has("--oracle") {
                 Mode::Oracle
             } else if has("--fields") {
@@ -141,6 +148,71 @@ fn run(file: &str, mode: Mode) -> ExitCode {
             eprintln!("  {n:>7}  {dir:<3} {name}");
         }
     }
+    ExitCode::SUCCESS
+}
+
+/// The world state after each packet it is fed, as `oracle/WorldOracle.java` prints Java's.
+fn world(file: &str, assets: &std::path::Path) -> ExitCode {
+    let data = match std::fs::read(file) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("cannot read {file}: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let r = match replay(&data) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("{file}: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let game = lg_gamedata::GameData::load(assets);
+    for p in &game.problems {
+        eprintln!("{p}");
+    }
+    let mut w = lg_world::World::new(game, std::collections::HashMap::new());
+    let mut out = BufWriter::new(std::io::stdout().lock());
+    let full = |out: &mut BufWriter<_>, when: &str, state: &str| {
+        line(out, format_args!("state {when}"));
+        for l in state.lines() {
+            line(out, format_args!("  {l}"));
+        }
+    };
+    for item in &r.items {
+        let Item::Packet { packet, .. } = item else { continue };
+        if !lg_world::FED.contains(&packet.id) {
+            continue;
+        }
+        let Some(Ok(d)) = packets::decode(packet.id, &packet.body) else { continue }; // the app drops it
+        let is_map = matches!(d.packet, packets::Decoded::MapInfo(_));
+        if is_map {
+            full(&mut out, &format!("before {}", packet.name()), &w.dump());
+        }
+        let problem = match w.packet(&d.packet) {
+            Ok(()) => "",
+            Err(e) => {
+                eprintln!("world: {}: {}", packet.name(), e.0);
+                " exception"
+            }
+        };
+        let state = w.dump();
+        line(
+            &mut out,
+            format_args!(
+                "{} {} {} {:08x}{problem}",
+                packet.direction.short(),
+                packet.id,
+                packet.name(),
+                lg_protocol::dump::crc32(state.as_bytes())
+            ),
+        );
+        if is_map {
+            full(&mut out, &format!("after {}", packet.name()), &state);
+        }
+    }
+    full(&mut out, "end", &w.dump());
+    let _ = out.flush();
     ExitCode::SUCCESS
 }
 

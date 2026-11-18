@@ -101,7 +101,7 @@ pub fn is_loot_drop_bag(object_type: i32) -> bool {
 }
 
 /// Everything read from an `assets` folder. Missing files leave their part empty, as in Java.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct GameData {
     pub objects: HashMap<i32, Object>,
     pub tiles: HashMap<i32, Tile>,

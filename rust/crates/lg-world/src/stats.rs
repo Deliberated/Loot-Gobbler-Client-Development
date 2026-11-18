@@ -1,0 +1,30 @@
+//! Stat type numbers (Java: `StatType`), the ones the world uses.
+
+pub const MAX_HP: u8 = 0;
+pub const HP: u8 = 1;
+pub const MAX_MP: u8 = 3;
+pub const MP: u8 = 4;
+pub const NEXT_LEVEL_EXP: u8 = 5;
+pub const EXP: u8 = 6;
+pub const INVENTORY_0: u8 = 8;
+pub const INVENTORY_4: u8 = 12;
+pub const INVENTORY_11: u8 = 19;
+pub const ATTACK: u8 = 20;
+pub const DEFENSE: u8 = 21;
+pub const SPEED: u8 = 22;
+pub const SEASONAL: u8 = 24;
+pub const VITALITY: u8 = 26;
+pub const WISDOM: u8 = 27;
+pub const DEXTERITY: u8 = 28;
+pub const NAME: u8 = 31;
+pub const CREDITS: u8 = 35;
+pub const MAX_HP_BOOST: u8 = 46;
+pub const MAX_MP_BOOST: u8 = 47;
+pub const ATTACK_BOOST: u8 = 48;
+pub const DEFENSE_BOOST: u8 = 49;
+pub const SPEED_BOOST: u8 = 50;
+pub const VITALITY_BOOST: u8 = 51;
+pub const WISDOM_BOOST: u8 = 52;
+pub const DEXTERITY_BOOST: u8 = 53;
+pub const GUILD_NAME: u8 = 62;
+pub const POTION_ONE_TYPE: u8 = 116;

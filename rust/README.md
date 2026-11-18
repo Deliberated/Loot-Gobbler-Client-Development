@@ -13,6 +13,8 @@ work with the current Loot Gobbler server and its data as they are.
 |---|---|---|
 | `lg-capture` | pcap files, link layers (Ethernet, VLAN, Linux "any", VPN raw IP, loopback), IPv4, TCP segments in order | `Sniffer`, `LinkLayer`, `Ip4Packet`, `TcpPacket`, `TcpStreamBuilder`, `TcpStreamErrorHandler` |
 | `lg-protocol` | RC4, cutting the stream into packets, finding the cipher's position from tick packets, the packet type table, decoders for the 44 packet types the app reads | `PacketConstructor`, `ROTMGPacketConstructor`, `RC4`, `TickAligner`, `RC4Aligner`, `PacketType`, `BufferReader`, `packets.incoming.*`, `packets.outgoing.*`, `packets.data.*` |
+| `lg-gamedata` | the game data the app extracts from the game: objects, tiles, character classes, loot bags | `IdToAsset`, `CharacterClass`, `LootBags` |
+| `lg-world` | the world as the packets tell it: the map, every object in view and its stats, which one is you (also when the sniffer starts inside a map), players, loot bags | the core of `TomatoData` and `Entity` |
 | `lg-replay` | the command-line tool below, and made-up sessions for tests | - |
 
 Where it differs from Java on purpose (each one is a bug in Java):
@@ -21,6 +23,8 @@ Where it differs from Java on purpose (each one is a bug in Java):
 - **An impossible packet size** (stream out of step) drops the rest of that segment and starts over at the next one.
   Java stops decoding until the next connection.
 - **After lost bytes**, the next bytes are read as the start of a packet, so the cipher's position can be found again.
+- **Stat types 200 and up** don't fit Java's stat array: Java stops handling that packet. Rust does the same for
+  now, so the two stay comparable.
 - **A garbled count** (an UPDATE claiming millions of tiles) makes Java allocate a huge array and run out of memory,
   which `PacketProcessor` doesn't catch, so its sniffer thread dies. Rust drops that one packet.
 
@@ -37,7 +41,9 @@ cargo run --release -p lg-replay -- session.pcap    # every packet in a recordin
 cargo run --release -p lg-replay -- session.pcap --stats
 cargo run --release -p lg-replay -- synth /tmp/s.pcap 7   # a made-up session (seed 7)
 cargo run --release -p lg-replay -- session.pcap --fields   # every field of the decoded packets
-oracle/compare.sh /tmp/s.pcap                       # Rust and Java must agree on packets and fields
+oracle/compare.sh /tmp/s.pcap                       # Rust and Java must agree on packets, fields and world
+oracle/compare.sh session.pcap ~/LootGobbler/assets # the same, the world knowing the game data
+oracle/compare-gamedata.sh ~/LootGobbler/assets     # Rust and Java must read the game data the same
 ```
 
 `oracle/compare.sh` runs the Java client's own classes (`oracle/ReplayOracle.java`) on the same file and compares two
@@ -45,6 +51,16 @@ outputs with Rust's, line by line: the packets (sniffer classes: same packets, o
 (packet classes: every field of every packet that has a Rust decoder, read by reflection). It needs the Java client
 built first (`./gradlew shadowJar` in the repository). Login tokens and keys only ever appear as checksums in either
 output.
+
+The third comparison is the world: Java's own `TomatoData` (`oracle/WorldOracle.java`) is fed the same packets the app
+feeds it, and after each one the whole state (map, you, every object with its stats, players, bags) must be the same
+in Rust, down to where Java throws partway through a packet. Java runs in an empty temporary folder (the app writes
+its files next to itself), is never handed HELLO (it would log in to the game's servers with your token), and its
+network goes to a closed local port. The damage and loot parts of `TomatoData` are not ported yet: they don't change
+the compared state.
+
+The assets folder is the one the app extracts the game data into, next to its other files. It is only read, and the
+game's files never go into the repository.
 
 ## Recording a real session
 
@@ -72,5 +88,9 @@ here, and the tests use made-up sessions only.
   far), for the field comparison with Java.
 - CI (`.github/workflows/rust.yml`): all of the above on Linux and Windows, plus both comparisons with Java on 8
   sessions (about 650 decoded packets each).
-- A real 46-second recording (not in the repository): Rust and Java agree on all 1391 packets and the fields of all
-  943 decoded ones.
+- `lg-world`: entering maps, finding you and the other players, objects leaving the view, finding you when starting
+  inside a map (by your own stats, where you moved, your ability), guessing the map by its enemies, the places
+  where Java throws.
+- A real 46-second recording (not in the repository): Rust and Java agree on all 1391 packets, the fields of all 946
+  decoded ones, and the world state after each of the 935 packets the world is fed. The game data read from a real
+  assets folder is the same too (36858 objects, 10399 tiles, 19 classes).

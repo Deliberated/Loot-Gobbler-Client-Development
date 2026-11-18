@@ -46,6 +46,8 @@ public final class ReplayOracle {
     private static PrintStream out;
     /** Packet ids to decode and print field by field; null to print one checksum line per packet. */
     private static Set<Integer> fieldIds;
+    /** With --world: the app's world state, fed the decoded packets. */
+    private static WorldOracle world;
     /** Fields Java works out from others, which the Rust port leaves out. */
     private static final Set<String> DERIVED = Set.of("StatData.statType", "MapInfoPacket.seed");
 
@@ -63,6 +65,18 @@ public final class ReplayOracle {
             CRC32 crc = new CRC32();
             crc.update(a, 5, a.length - 5);
             String name = PacketType.containsKey(type) ? PacketType.byOrdinal(type).name() : "UNKNOWN";
+            if (world != null) {
+                if (!WorldOracle.fed(type)) return;
+                Packet packet = PacketType.getPacket(type).factory();   // as PacketProcessor.processPackets
+                packet.setData(data.array());
+                try {
+                    packet.deserialize(new BufferReader(data));
+                } catch (Exception | OutOfMemoryError e) {
+                    return;   // dropped
+                }
+                world.packet(direction, type, packet);
+                return;
+            }
             if (fieldIds == null) {
                 out.printf("%s %d %s %d %08x%n", direction, type, name, size, crc.getValue());
                 return;
@@ -152,15 +166,19 @@ public final class ReplayOracle {
     }
 
     public static void main(String[] args) throws Exception {
-        if (args.length == 3 && args[1].equals("--fields")) {
+        boolean worldMode = args.length == 2 && args[1].equals("--world");
+        if (worldMode) {
+            // set up below, once System.out points to the log
+        } else if (args.length == 3 && args[1].equals("--fields")) {
             fieldIds = new HashSet<>();
             for (String id : args[2].split(",")) fieldIds.add(Integer.parseInt(id.trim()));
         } else if (args.length != 1) {
-            System.err.println("usage: ReplayOracle <session.pcap> [--fields <id,id,...>]");
+            System.err.println("usage: ReplayOracle <session.pcap> [--fields <id,id,...> | --world]");
             System.exit(2);
         }
         out = System.out;
         System.setOut(System.err);   // the sniffer's own messages ("Synced. offset...") go beside the packet lines
+        if (worldMode) world = new WorldOracle(out);
 
         ByteBuffer f = ByteBuffer.wrap(Files.readAllBytes(Path.of(args[0])));
         int magic = f.order(ByteOrder.LITTLE_ENDIAN).getInt(0);
@@ -206,6 +224,7 @@ public final class ReplayOracle {
                 System.err.println("frame " + frames + ": " + e);
             }
         }
+        if (world != null) world.end();
         out.flush();
         System.err.println(frames + " frames");
     }

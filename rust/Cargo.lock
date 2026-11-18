@@ -21,4 +21,13 @@ dependencies = [
  "lg-capture",
  "lg-gamedata",
  "lg-protocol",
+ "lg-world",
+]
+
+[[package]]
+name = "lg-world"
+version = "0.1.0"
+dependencies = [
+ "lg-gamedata",
+ "lg-protocol",
 ]

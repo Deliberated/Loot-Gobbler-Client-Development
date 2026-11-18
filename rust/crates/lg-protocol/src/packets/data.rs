@@ -62,6 +62,7 @@ macro_rules! code_enum {
 
 record! {
     /// A position in the world, in tiles (Java: `WorldPosData`).
+    #[derive(Copy)]
     WorldPos(r) {
         x: f32 = r.f32()?,
         y: f32 = r.f32()?,

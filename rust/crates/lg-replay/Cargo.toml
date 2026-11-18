@@ -10,3 +10,4 @@ publish.workspace = true
 lg-capture = { path = "../lg-capture" }
 lg-protocol = { path = "../lg-protocol" }
 lg-gamedata = { path = "../lg-gamedata" }
+lg-world = { path = "../lg-world" }
