@@ -12,6 +12,7 @@
 pub mod abilities;
 pub mod dungeons;
 pub mod enchants;
+pub mod items;
 mod xml;
 
 use std::collections::{BTreeMap, HashMap};
@@ -115,6 +116,8 @@ pub struct GameData {
     pub abilities: abilities::Abilities,
     pub enchants: HashMap<i16, enchants::Enchant>,
     pub dungeons: dungeons::Dungeons,
+    /// The items as Loot Gobbler knows them (Java: `ItemDb`).
+    pub items: items::Items,
     /// What went wrong while reading, for the log.
     pub problems: Vec<String>,
 }
@@ -142,6 +145,9 @@ impl GameData {
             d.abilities = a;
             d.problems.extend(problem);
         }
+        let (items, problems) = items::Items::load(&assets.join("xml"));
+        d.items = items;
+        d.problems.extend(problems);
         let (dungeons, problems) = dungeons::Dungeons::load(&assets.join("xml"));
         d.dungeons = dungeons;
         d.problems.extend(problems);

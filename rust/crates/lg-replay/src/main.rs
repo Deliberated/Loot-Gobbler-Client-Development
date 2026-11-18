@@ -443,6 +443,79 @@ fn gamedata(dir: &std::path::Path) -> ExitCode {
     for (k, v) in en {
         line(&mut out, format_args!("enemy {k}|{v}"));
     }
+    let q = |s: &str| lg_protocol::dump::to_string(&s.to_string());
+    let f = |v: f64| format!("{:016x}", v.to_bits());
+    let mut ids: Vec<_> = d.items.items.keys().copied().collect();
+    ids.sort_unstable();
+    for id in ids {
+        let i = &d.items.items[&id];
+        let mut b = format!(
+            "item {}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|",
+            i.id,
+            q(&i.name),
+            i.slot_type,
+            q(&i.tier),
+            q(&i.description),
+            i.min_damage,
+            i.max_damage,
+            i.mp_cost,
+            i.feed_power,
+            i.soulbound,
+            i.chest,
+            i.quickslot_only,
+            i.loot_boost
+        );
+        for st in &i.on_equip {
+            b.push_str(&format!("{}:{};", st.stat, st.amount));
+        }
+        b.push('|');
+        b.push_str(&i.labels.iter().cloned().collect::<Vec<_>>().join(","));
+        b.push('|');
+        if let Some(e) = &i.enchant_slots {
+            b.push_str(&format!("{};", q(&e.pool)));
+            for v in &e.slot_chance {
+                b.push_str(&format!("{},", f(*v)));
+            }
+            b.push_str(&format!(";{};{};{};", f(e.seasonal_mod), f(e.forge_mod), e.dust.as_deref().map_or("null".into(), q)));
+            for v in &e.dust_amounts {
+                b.push_str(&format!("{v},"));
+            }
+        }
+        b.push_str(&format!("|{}|", q(&i.key)));
+        if let Some(w) = &i.weapon {
+            b.push_str(&format!("{};{};", f(w.rate_of_fire), w.num_projectiles));
+            for (k, s) in &w.shots {
+                b.push_str(&format!("{k}={}/{}/{},", f(s.min), f(s.max), s.armor_piercing));
+            }
+            b.push(';');
+            for v in &w.volleys {
+                b.push_str(&format!(
+                    "{}/{}/{}/{}/{}/{},",
+                    v.projectile,
+                    v.count,
+                    f(v.rate_of_fire),
+                    v.burst,
+                    f(v.burst_delay),
+                    f(v.burst_min_delay)
+                ));
+            }
+        }
+        b.push_str(&format!(
+            "|{}|{}|{}|{}|{}",
+            i.second_chance,
+            i.collection_icon,
+            i.named,
+            i.is_collectible(),
+            i.origin().map_or("null".into(), q)
+        ));
+        line(&mut out, format_args!("{b}"));
+    }
+    let c: Vec<String> = d.items.collectible.iter().map(i32::to_string).collect();
+    let c = if c.is_empty() { "collectible".to_string() } else { format!("collectible {}", c.join(" ")) };
+    line(&mut out, format_args!("{c}"));
+    let mut ts: Vec<_> = d.items.transform_skins.iter().copied().collect();
+    ts.sort_unstable();
+    line(&mut out, format_args!("transform [{}]", ts.iter().map(i32::to_string).collect::<Vec<_>>().join(", ")));
     if out.flush().is_err() {
         return ExitCode::SUCCESS;
     }

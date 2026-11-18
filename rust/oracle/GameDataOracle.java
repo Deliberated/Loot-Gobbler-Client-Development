@@ -47,6 +47,64 @@ public final class GameDataOracle {
         }
         abilitiesAndEnchants();
         dungeons();
+        items();
+    }
+
+    private static String q(String s) {
+        if (s == null) return "null";
+        StringBuilder o = new StringBuilder("\"");
+        s.codePoints().forEach(c -> {
+            if (c == '\\' || c == '"') o.append('\\').appendCodePoint(c);
+            else if (c >= ' ' && c <= '~') o.appendCodePoint(c);
+            else o.append("\\u{").append(Integer.toHexString(c)).append('}');
+        });
+        return o.append('"').toString();
+    }
+
+    private static String d(double v) {
+        return String.format("%016x", Double.doubleToRawLongBits(v));
+    }
+
+    /** Loot Gobbler's item database (ItemDb), every field. */
+    @SuppressWarnings("unchecked")
+    private static void items() throws Exception {
+        lootgobbler.ItemDb db = lootgobbler.ItemDb.get();
+        Map<Integer, lootgobbler.ItemDb.Item> items = new TreeMap<>((Map<Integer, lootgobbler.ItemDb.Item>) get(db, "items"));
+        for (lootgobbler.ItemDb.Item i : items.values()) {
+            StringBuilder b = new StringBuilder("item " + i.id + "|" + q(i.name) + "|" + i.slotType + "|" + q(i.tier) + "|"
+                    + q(i.description) + "|" + i.minDamage + "|" + i.maxDamage + "|" + i.mpCost + "|" + i.feedPower + "|"
+                    + i.soulbound + "|" + i.chest + "|" + i.quickslotOnly + "|" + i.lootBoost + "|");
+            for (lootgobbler.ItemDb.Stat st : i.onEquip) b.append(st.stat()).append(':').append(st.amount()).append(';');
+            b.append('|').append(String.join(",", new java.util.TreeSet<>(i.labels))).append('|');
+            if (i.enchantSlots != null) {
+                lootgobbler.ItemDb.EnchantSlots e = i.enchantSlots;
+                b.append(q(e.pool())).append(';');
+                for (double v : e.slotChance()) b.append(d(v)).append(',');
+                b.append(';').append(d(e.seasonalMod())).append(';').append(d(e.forgeMod())).append(';').append(q(e.dust())).append(';');
+                for (int v : e.dustAmounts()) b.append(v).append(',');
+            }
+            b.append('|').append(q(i.key)).append('|');
+            if (i.weapon != null) {
+                lootgobbler.ItemDb.Weapon w = i.weapon;
+                b.append(d(w.rateOfFire)).append(';').append(w.numProjectiles).append(';');
+                for (Map.Entry<Integer, lootgobbler.ItemDb.Shot> s : w.shots.entrySet()) {
+                    b.append(s.getKey()).append('=').append(d(s.getValue().min())).append('/').append(d(s.getValue().max()))
+                            .append('/').append(s.getValue().armorPiercing()).append(',');
+                }
+                b.append(';');
+                for (lootgobbler.ItemDb.Volley v : w.volleys) {
+                    b.append(v.projectile()).append('/').append(v.count()).append('/').append(d(v.rateOfFire())).append('/')
+                            .append(v.burst()).append('/').append(d(v.burstDelay())).append('/').append(d(v.burstMinDelay())).append(',');
+                }
+            }
+            b.append('|').append(i.secondChance).append('|').append(i.collectionIcon).append('|').append(get(i, "named"))
+                    .append('|').append(i.isCollectible()).append('|').append(q(i.origin()));
+            OUT.println(b);
+        }
+        StringBuilder c = new StringBuilder("collectible");
+        for (lootgobbler.ItemDb.Item i : db.collectible()) c.append(' ').append(i.id);
+        OUT.println(c);
+        OUT.println("transform " + new java.util.TreeSet<>((java.util.Set<Integer>) get(db, "transformSkins")));
     }
 
     /** Dungeon portals and modifiers (ParseDungeon), and the enemies of one dungeon (GameFileEnemies). */
