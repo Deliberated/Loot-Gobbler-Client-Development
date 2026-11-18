@@ -40,18 +40,18 @@ public class GameModesView extends JPanel {
 
         modeList.setLayout(new BoxLayout(modeList, BoxLayout.Y_AXIS));
         modeList.setBorder(new EmptyBorder(8, 8, 8, 8));
-        JButton plus = GameModeWizard.plusButton(() -> GameModeWizard.open(this, openCharacter));
+        JButton plus = GuideTargets.mark("gamemodes.plus", GameModeWizard.plusButton(() -> GameModeWizard.open(this, openCharacter)));
         Section modes = new Section("Game Modes", Palette.GOLD, FitWidthPanel.scroll(modeList, 16)).actions(plus);
         // as tall as the header strip (its actions sit at the top): the plus, drawn centered, is then in its middle
         int strip = modes.getComponent(0).getPreferredSize().height - 4;   // less the actions' 2 px above and below
         plus.setPreferredSize(new Dimension(26, Math.max(26, strip)));
         modes.setPreferredSize(new Dimension(290, 10));
-        add(modes, BorderLayout.WEST);
+        add(GuideTargets.mark("gamemodes.list", modes), BorderLayout.WEST);
 
         detail.setLayout(new BoxLayout(detail, BoxLayout.Y_AXIS));
         detail.setBorder(new EmptyBorder(12, 16, 16, 16));
         detailSection = new Section(Upe.UPE, Palette.PURPLE, FitWidthPanel.scroll(detail, 16));
-        add(detailSection, BorderLayout.CENTER);
+        add(GuideTargets.mark("gamemodes.detail", detailSection), BorderLayout.CENTER);
 
         Runnable later = ViewRefresh.of(this, this::refresh);   // only while it can be seen
         Upe.get().onChange(later);
@@ -252,7 +252,9 @@ public class GameModesView extends JPanel {
 
     private void group(String title, List<Upe.Run> runs, Map<Integer, Char> chars, String empty) {
         detail.add(Box.createVerticalStrut(18));
-        detail.add(left(heading(title + (runs.isEmpty() ? "" : "  (" + runs.size() + ")"))));
+        JComponent head = left(heading(title + (runs.isEmpty() ? "" : "  (" + runs.size() + ")")));
+        if ("Could start".equals(title)) GuideTargets.mark("gamemodes.could", head);   // for the What's New tour
+        detail.add(head);
         detail.add(Box.createVerticalStrut(6));
         if (runs.isEmpty() && empty != null) detail.add(left(text(empty, 15f, Palette.MUTED)));
         for (Upe.Run r : runs) {

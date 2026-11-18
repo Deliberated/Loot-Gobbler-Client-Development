@@ -1026,6 +1026,7 @@ public class CharactersView extends JPanel {
             b = new Banner(m, UPE_BG, 0.55f, tip + "\n\nClick to start a " + m + " run with it (" + lootgobbler.Upe.info(run.mode).name() + ")."
                     + "\nPick another mode (PPE, UPE and its variants, guild versions, without a pet) in the Game Modes tab.",
                     () -> lootgobbler.Upe.get().mark(c.charId, true));
+            GuideTargets.mark("characters.upeBanner", b);   // for the What's New tour
         } else {
             return null;   // not eligible (not seen from its creation): no banner at all
         }

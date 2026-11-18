@@ -194,14 +194,26 @@ public class TomatoGUI {
             }
         });
 
+        lootgobbler.ui.FeatureTour.install(frame, new lootgobbler.ui.FeatureTour.Nav() {
+            public void tab(String title) {
+                tabbedPane.show(title);
+            }
+
+            public void character(int charId) {
+                characters.showCharacter(charId);
+            }
+        });
+
         frame.setVisible(true);
         lootgobbler.ui.Overlay.restoreAll();   // the overlays that were on when the app was closed
         lootgobbler.StartupSound.playSaved();
         // after an update the release notes; once they are closed (or there are none) the greeting on the first
-        // start, then the Newcomer's Guide
+        // start, then the Newcomer's Guide; or, after an update, the tour of what is new
         lootgobbler.ui.WhatsNewDialog.showAfterUpdate(frame, () -> {
             boolean first = lootgobbler.ui.WelcomeDialog.showOnFirstStart(frame);
+            if (first) lootgobbler.ui.FeatureTour.firstStart();   // new to the app: nothing is new to them
             lootgobbler.ui.NewcomerGuide.afterStart(first);
+            lootgobbler.ui.FeatureTour.afterStart();   // not while the Newcomer's Guide runs
         });
         lootgobbler.Updater.start();   // first check a few seconds after start, then every hour
         lootgobbler.ServerSync.get().start();          // syncs player data whenever logged in to a server

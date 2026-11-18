@@ -81,7 +81,7 @@ public class TabBar extends JPanel {
      * Same signature as JTabbedPane.addTab, so it can replace it.
      */
     public void addTab(String title, Component component) {
-        Tab tab = new Tab(title);
+        Tab tab = GuideTargets.mark("tab." + title, new Tab(title));   // for the guided tours
         order.add(tab);
         strip.add(tab);
         content.add(component, title);

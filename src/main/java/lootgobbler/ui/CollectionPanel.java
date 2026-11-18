@@ -54,6 +54,9 @@ public class CollectionPanel extends JPanel {
     private Map<Integer, CollectionStore.Entry> upeItems = Map.of();
     private final JPanel upeColumn = new JPanel();
     private final JScrollPane upeScroll;
+    /** The What's New tour's example run: a character that just started, nothing found (nothing stored). */
+    private static final int EXAMPLE = -1;
+    private boolean example, columnBeforeExample;
 
     public CollectionPanel() {
         super(new BorderLayout(0, 8));
@@ -131,6 +134,8 @@ public class CollectionPanel extends JPanel {
         Section main = new Section("Collection", Palette.GOLD, scroll(grid)).actions(headerActions);
         mainSection = main;
         GuideTargets.mark("inventory.grid", main);
+        GuideTargets.mark("inventory.view", this);
+        GuideTargets.mark("inventory.upeColumn", upeScroll);
 
         JPanel top = column(new Section("Progress", Palette.GREEN, progressBody("Collected", progress, progressText)),
                 new Section("Actions", Palette.BLUE, actionsBody()));
@@ -203,7 +208,12 @@ public class CollectionPanel extends JPanel {
                 upeColumn.add(upeEntry(new JLabel(CharactersView.skin(c, 40)), c.className, tip, r.charId, r.broken != null || !c.alive));
             }
         }
-        if (runs.isEmpty()) {
+        if (example) {
+            lootgobbler.CharacterStore.Char c = exampleChar();
+            upeColumn.add(modeLine(lootgobbler.Upe.label(lootgobbler.Upe.UPE)));
+            upeColumn.add(upeEntry(new JLabel(CharactersView.skin(c, 40)), c.className, "An example run: nothing found yet", EXAMPLE, false));
+        }
+        if (runs.isEmpty() && !example) {
             JLabel none = new JLabel("<html><div style='width:70px;text-align:center'>No game mode runs yet</div></html>");
             none.setForeground(Palette.MUTED);
             none.putClientProperty("FlatLaf.styleClass", "small");
@@ -313,14 +323,15 @@ public class CollectionPanel extends JPanel {
         if (!loaded) return;
         List<lootgobbler.Upe.Run> runs = lootgobbler.Upe.get().markedRuns();
         lootgobbler.Upe.Run run = runs.stream().filter(r -> r.charId == upeChar).findFirst().orElse(null);
-        if (run == null) upeChar = 0;   // shown no more (the mark taken off)
+        if (run == null && !(example && upeChar == EXAMPLE)) upeChar = 0;   // shown no more (the mark taken off)
         if (upeScroll.isVisible()) renderUpeColumn(runs);
         upeItems = gathered(run);
         if (upeChar != 0) {
             Map<Integer, CollectionStore.Entry> mine = upeItems;
             grid.counts(id -> mine.containsKey(id) ? mine.get(id).count : 0, id -> mine.containsKey(id) ? mine.get(id).maxEnchants() : 0);
             stView.counts(id -> mine.containsKey(id) ? mine.get(id).maxEnchants() : 0);
-            lootgobbler.CharacterStore.Char c = lootgobbler.CharacterStore.get().all().stream().filter(x -> x.charId == upeChar).findFirst().orElse(null);
+            lootgobbler.CharacterStore.Char c = upeChar == EXAMPLE ? exampleChar()
+                    : lootgobbler.CharacterStore.get().all().stream().filter(x -> x.charId == upeChar).findFirst().orElse(null);
             if (mainSection != null) mainSection.setTitle("Collection · " + (c == null ? "UPE" : c.className + " (UPE)"));
         } else {
             grid.counts(null, null);
@@ -380,6 +391,37 @@ public class CollectionPanel extends JPanel {
         cards.show(views, VIEWS[0]);
         refresh();
         revalidate();
+    }
+
+    /**
+     * The What's New tour: on, Items shows an example run (a Wizard that just started, nothing found yet) picked in
+     * the column; off, as it was before.
+     */
+    public void showExample(boolean on) {
+        if (on == example) return;
+        example = on;
+        if (on) {
+            columnBeforeExample = upeScroll.isVisible();
+            upeChar = EXAMPLE;
+            historyItem = null;
+            upeScroll.setVisible(true);   // not saved: it closes again afterwards if it was closed
+            viewPicker.select(0);
+            cards.show(views, VIEWS[0]);
+        } else {
+            if (upeChar == EXAMPLE) upeChar = 0;
+            upeScroll.setVisible(columnBeforeExample);
+        }
+        refresh();
+        revalidate();
+        repaint();
+    }
+
+    private static lootgobbler.CharacterStore.Char exampleChar() {
+        lootgobbler.CharacterStore.Char c = new lootgobbler.CharacterStore.Char();
+        c.charId = EXAMPLE;
+        c.classType = 782;   // Wizard
+        c.className = "Wizard";
+        return c;
     }
 
     /**

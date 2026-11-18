@@ -291,6 +291,9 @@ public class TomatoMenuBar implements ActionListener {
         JMenuItem releaseNotes = new JMenuItem("Release Notes");
         releaseNotes.addActionListener(e -> lootgobbler.ui.WhatsNewDialog.showAll(frame));
         info.add(releaseNotes);
+        JMenuItem whatsNew = new JMenuItem("What's New Tour");
+        whatsNew.addActionListener(e -> lootgobbler.ui.FeatureTour.showLatest());
+        info.add(whatsNew);
         info.add(new JSeparator(SwingConstants.HORIZONTAL));
         JMenu guide = new JMenu("Newcomer's Guide");
         lootgobbler.ui.GuideTargets.mark("menu.guide", guide);
