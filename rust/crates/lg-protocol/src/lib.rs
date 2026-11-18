@@ -1,10 +1,11 @@
 //! The game's protocol: from one direction's byte stream to decrypted packets.
 //!
 //! A port of RealmShark's `PacketConstructor` (Java): framing (`framer`), finding the cipher's position (`aligner`),
-//! RC4 decryption (`rc4`), the packet type table (`packet_types`, generated from the Java enum) and decoders for some
-//! packets (`packets`).
+//! RC4 decryption (`rc4`), the packet type table (`packet_types`, generated from the Java enum), the decoders for the
+//! packets the app reads (`packets`, fields read by `reader`) and their one-line dump for comparing with Java (`dump`).
 
 pub mod aligner;
+pub mod dump;
 pub mod framer;
 pub mod packet_types;
 pub mod packets;

@@ -4,9 +4,14 @@
 //! MOVE out) counting up among others. The packets are put into TCP segments of at most 1460 bytes, mostly ending at
 //! a packet's end, big packets split over several. Some segments then arrive late, twice, or overlapping, as on a
 //! real network; `Options::lose` drops one.
+//!
+//! Among them are packets of every type that has a decoder, with made-up content of mostly small numbers, so that
+//! counts and lengths stay plausible and decoding gets far: the oracle then compares the decoders' edge cases with
+//! Java's, cut-off and left-over bytes included.
 
 use lg_capture::{link, pcap, tcp};
-use lg_protocol::packets::Text;
+use lg_protocol::packet_types::PACKET_TYPES;
+use lg_protocol::packets::{DECODED_IDS, Text};
 use lg_protocol::rc4::{INCOMING_KEY, OUTGOING_KEY, Rc4};
 use lg_protocol::{Direction, aligner};
 
@@ -69,6 +74,55 @@ impl Rng {
     }
 }
 
+/// A packet of a type with a decoder, travelling this way, with made-up content: mostly zeros and small numbers
+/// (as counts, lengths and enum codes), some random bytes. Never a tick packet: those place the cipher.
+fn fuzzy(rng: &mut Rng, direction: Direction) -> Plain {
+    let ids: Vec<u8> = DECODED_IDS
+        .iter()
+        .copied()
+        .filter(|id| *id != aligner::NEWTICK && *id != aligner::MOVE)
+        .filter(|id| PACKET_TYPES.iter().any(|(i, _, d)| i == id && *d == direction))
+        .collect();
+    let id = ids[rng.below(ids.len())];
+    let long = rng.below(4) == 0;
+    let n = rng.below(if long { 400 } else { 60 });
+    let body = (0..n)
+        .map(|_| match rng.below(20) {
+            0..=10 => 0,
+            11..=15 => 1 + rng.below(24) as u8,
+            _ => rng.next() as u8,
+        })
+        .collect();
+    Plain { id, body }
+}
+
+/// TRADESTART (86) built field by field: too structured for [`fuzzy`] to get right by chance.
+fn trade_start(rng: &mut Rng) -> Plain {
+    fn string(b: &mut Vec<u8>, s: &[u8]) {
+        b.extend((s.len() as u16).to_be_bytes());
+        b.extend(s);
+    }
+    let mut b = Vec::new();
+    for side in 0..2 {
+        if side == 1 {
+            string(&mut b, b"Gobbler");
+        }
+        let items = rng.below(13);
+        b.extend((items as u16).to_be_bytes());
+        for _ in 0..items {
+            b.extend((rng.next() as i32 % 3000).to_be_bytes()); // item, -1 for none
+            b.extend((rng.below(30) as i32).to_be_bytes()); // slot type
+            b.push(rng.below(2) as u8); // tradeable
+            b.push(rng.below(2) as u8); // included
+            let unique = rng.some_bytes(0, 3);
+            string(&mut b, if unique.is_empty() { b"" } else { b"{\"enchants\":[]}" });
+        }
+    }
+    b.extend((rng.next() as i32).to_be_bytes());
+    b.push(rng.next() as u8);
+    Plain { id: 86, body: b }
+}
+
 fn plain_packets(rng: &mut Rng, direction: Direction, ticks: usize) -> Vec<Plain> {
     let first_tick = 1000 + rng.below(5000) as i32;
     let chat = |name: &str, text: &str| Plain {
@@ -111,10 +165,14 @@ fn plain_packets(rng: &mut Rng, direction: Direction, ticks: usize) -> Vec<Plain
             out.push(match (direction, rng.below(6)) {
                 (Direction::Incoming, 0) => chat("Gobbler", &format!("tick {tick}: loot!")),
                 (Direction::Incoming, 1) => Plain { id: 42, body: rng.some_bytes(1500, 4000) }, // UPDATE, big
-                (Direction::Incoming, _) => Plain { id: 8, body: rng.bytes(4) },                // PING
-                (Direction::Outgoing, 0) => Plain { id: 9, body: rng.some_bytes(10, 30) },      // PLAYERTEXT
-                (Direction::Outgoing, _) => Plain { id: 31, body: rng.some_bytes(4, 8) },       // PONG
+                (Direction::Incoming, 2) => trade_start(rng),
+                (Direction::Incoming, _) => Plain { id: 8, body: rng.bytes(4) }, // PING
+                (Direction::Outgoing, 0) => Plain { id: 9, body: rng.some_bytes(10, 30) }, // PLAYERTEXT
+                (Direction::Outgoing, _) => Plain { id: 31, body: rng.some_bytes(4, 8) }, // PONG
             });
+        }
+        for _ in 0..rng.below(4) {
+            out.push(fuzzy(rng, direction));
         }
     }
     out

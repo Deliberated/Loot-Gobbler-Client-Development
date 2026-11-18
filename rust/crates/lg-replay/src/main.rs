@@ -2,6 +2,8 @@
 //!
 //!   lg-replay <session.pcap>            every packet, with time, direction, size and (for some) its content
 //!   lg-replay <session.pcap> --oracle   one line per packet to compare with the Java client (oracle/compare.sh)
+//!   lg-replay <session.pcap> --fields   every field of each packet that has a decoder, to compare the same way
+//!   lg-replay decoded-ids               the ids of the packets that have a decoder, for oracle/compare.sh
 //!   lg-replay <session.pcap> --stats    only the summary
 //!   lg-replay synth <out.pcap> [seed]   writes a made-up session, for testing without a recording
 
@@ -25,17 +27,43 @@ fn main() -> ExitCode {
             eprintln!("{out}: {} packets in, {} out (seed {seed})", s.incoming.len(), s.outgoing.len());
             ExitCode::SUCCESS
         }
+        [cmd] if cmd == "decoded-ids" => {
+            println!("{}", packets::DECODED_IDS.iter().map(u8::to_string).collect::<Vec<_>>().join(","));
+            ExitCode::SUCCESS
+        }
         [file, flags @ ..] if !file.starts_with('-') => {
-            run(file, flags.iter().any(|f| f == "--oracle"), flags.iter().any(|f| f == "--stats"))
+            let has = |f: &str| flags.iter().any(|x| x == f);
+            let mode = if has("--oracle") {
+                Mode::Oracle
+            } else if has("--fields") {
+                Mode::Fields
+            } else if has("--stats") {
+                Mode::Stats
+            } else {
+                Mode::List
+            };
+            run(file, mode)
         }
         _ => {
-            eprintln!("usage: lg-replay <session.pcap> [--oracle | --stats]\n       lg-replay synth <out.pcap> [seed]");
+            eprintln!(
+                "usage: lg-replay <session.pcap> [--oracle | --fields | --stats]\n       lg-replay synth <out.pcap> [seed]\n       lg-replay decoded-ids"
+            );
             ExitCode::from(2)
         }
     }
 }
 
-fn run(file: &str, oracle: bool, stats_only: bool) -> ExitCode {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    List,
+    Oracle,
+    Fields,
+    Stats,
+}
+
+fn run(file: &str, mode: Mode) -> ExitCode {
+    let oracle = mode == Mode::Oracle || mode == Mode::Fields;
+    let stats_only = mode == Mode::Stats;
     let data = match std::fs::read(file) {
         Ok(d) => d,
         Err(e) => {
@@ -60,8 +88,12 @@ fn run(file: &str, oracle: bool, stats_only: bool) -> ExitCode {
         match item {
             Item::Packet { micros, packet } => {
                 *counts.entry((packet.direction.short(), packet.name())).or_default() += 1;
-                if oracle {
+                if mode == Mode::Oracle {
                     line(&mut out, format_args!("{}", oracle_line(packet)));
+                } else if mode == Mode::Fields {
+                    if let Some(f) = packets::fields_line(packet.id, &packet.body) {
+                        line(&mut out, format_args!("{} {} {} {f}", packet.direction.short(), packet.id, packet.name()));
+                    }
                 } else if !stats_only {
                     let about = packets::describe(packet.id, &packet.body).unwrap_or_default();
                     line(
