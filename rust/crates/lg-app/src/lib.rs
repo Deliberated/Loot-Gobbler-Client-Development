@@ -4,6 +4,7 @@
 //! to the app's own listeners, in the order the app registers them; where one throws, the rest are skipped.
 
 pub mod characters;
+pub mod localtime;
 pub mod profile;
 
 use lg_protocol::packets::Decoded;
