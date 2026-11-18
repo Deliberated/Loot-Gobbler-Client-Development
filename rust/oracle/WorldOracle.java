@@ -272,6 +272,67 @@ final class WorldOracle {
                 .append(p.guildRank).append(" at=").append(p.updatedAt)
                 .append(" sts=").append(p.stSetsDone == null ? "null" : p.stSetsDone.toString().replace(" ", ""))
                 .append(" exalts=").append(p.exaltChanges == null ? "null" : String.valueOf(p.exaltChanges.size())).append('\n');
+        collection(b);
+        holdings(b);
+    }
+
+    private static String ints(java.util.List<Integer> l) {
+        return l == null ? "null" : l.toString().replace(" ", "");
+    }
+
+    private static void collection(StringBuilder b) {
+        Map<Integer, lootgobbler.CollectionStore.Entry> all = new TreeMap<>(lootgobbler.CollectionStore.get().snapshot());
+        b.append("collection ").append(all.size()).append('\n');
+        for (Map.Entry<Integer, lootgobbler.CollectionStore.Entry> e : all.entrySet()) {
+            lootgobbler.CollectionStore.Entry x = e.getValue();
+            String history = "null";
+            if (x.history != null) {
+                List<String> h = new ArrayList<>();
+                for (lootgobbler.CollectionStore.Find f : x.history) {
+                    String seen = f.seen == null ? "null" : f.seen.charId + "/" + quote(f.seen.place) + "/" + f.seen.classType + "/"
+                            + f.seen.skin + "/" + f.seen.tex1 + "/" + f.seen.tex2 + "/" + f.seen.seasonal;
+                    h.add("{" + quote(f.time) + " " + f.at + " " + quote(f.source) + " " + f.enchants + " " + quote(f.where) + " "
+                            + quote(f.bag) + " " + ints(f.enchantIds) + " " + f.seasonal + " " + seen + "}");
+                }
+                history = "[" + String.join(",", h) + "]";
+            }
+            b.append("item ").append(e.getKey()).append(" first=").append(x.first == null ? "null" : quote(x.first))
+                    .append(" last=").append(x.last == null ? "null" : quote(x.last)).append(" count=").append(x.count)
+                    .append(" history=").append(history).append('\n');
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void holdings(StringBuilder b) throws ReflectiveOperationException {
+        lootgobbler.Holdings h = lootgobbler.Holdings.get();
+        Object state = get(h, "state"), visit = get(h, "visit");
+        String v = visit == null ? "null" : ((Map<?, ?>) get(visit, "sections")).size() + "/" + get(visit, "complete") + "/" + get(visit, "broken");
+        b.append("holdings vault=").append(get(h, "mapIsVault")).append(" inVault=").append(get(h, "inVault"))
+                .append(" visit=").append(v).append(" chests=").append(((Map<?, ?>) get(h, "chestSections")).size())
+                .append(" pages=").append(((Map<?, ?>) get(h, "pages")).size()).append(" asked=").append(((List<?>) get(h, "asked")).size())
+                .append(" gone=").append(((Map<?, ?>) get(state, "gone")).size()).append('\n');
+        Map<String, Object> places = new TreeMap<>((Map<String, Object>) get(state, "places"));
+        for (Map.Entry<String, Object> e : places.entrySet()) {
+            Object p = e.getValue();
+            b.append("place ").append(e.getKey()).append(" seen=").append(get(p, "seenAt")).append(" source=").append(get(p, "source"));
+            for (Map.Entry<String, List<?>> sec : ((Map<String, List<?>>) get(p, "sections")).entrySet()) {
+                List<String> slots = new ArrayList<>();
+                for (Object slot : sec.getValue()) {
+                    java.util.List<Integer> ench = (java.util.List<Integer>) get(slot, "enchantIds");
+                    slots.add(get(slot, "item") + (ench == null ? "" : ints(ench)));
+                }
+                b.append(' ').append(sec.getKey()).append("=[").append(String.join(",", slots)).append(']');
+            }
+            b.append('\n');
+        }
+        java.nio.file.Path journal = java.nio.file.Path.of("holdings-journal.txt");
+        if (java.nio.file.Files.exists(journal)) {
+            try {
+                for (String l : java.nio.file.Files.readAllLines(journal)) b.append("journal ").append(l).append('\n');
+            } catch (java.io.IOException e) {
+                throw new IllegalStateException(e);
+            }
+        }
     }
 
     private static String dbl(Double d) {

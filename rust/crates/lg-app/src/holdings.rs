@@ -1,0 +1,772 @@
+//! What you hold, slot by slot (Java: `lootgobbler.Holdings`): each character's equipment, inventory, backpack and
+//! quick slots, and both vaults' chests, from what the game shows live, vault visits and moves in the vault; with a
+//! journal of every change of collectible items.
+//!
+//! Not yet: the character list from the game's servers, syncing, the file (and its journal file).
+
+use lg_gamedata::GameData;
+use std::collections::{HashMap, HashSet};
+
+pub const VAULT: &str = "vault";
+pub const SEASONAL_VAULT: &str = "vault:seasonal";
+pub const SLOTS: &str = "slots";
+pub const QUICK: &str = "quick";
+pub const VAULT_CHEST: &str = "Vault chest";
+pub const GIFT_CHEST: &str = "Gift chest";
+pub const SPOILS: &str = "Seasonal spoils";
+pub const POTIONS: &str = "Potion storage";
+pub const MATERIALS: &str = "Material chest";
+const PAGE: i32 = 8;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Slot {
+    /// -1 = empty.
+    pub item: i32,
+    pub enchant_ids: Option<Vec<i32>>,
+}
+
+impl Default for Slot {
+    fn default() -> Self {
+        Slot { item: -1, enchant_ids: None }
+    }
+}
+
+impl Slot {
+    pub fn new(item: i32, enchant_ids: Option<Vec<i32>>) -> Slot {
+        let item = if item < 1 { -1 } else { item };
+        Slot { item, enchant_ids: if item < 0 { None } else { enchant_ids } }
+    }
+
+    pub fn empty(&self) -> bool {
+        self.item < 1
+    }
+}
+
+/// A character or a vault (Java: `Place`): its sections in order.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Place {
+    pub sections: Vec<(String, Vec<Slot>)>,
+    pub seen_at: i64,
+    pub source: Option<String>,
+}
+
+impl Place {
+    pub fn section(&self, name: &str) -> Option<&Vec<Slot>> {
+        self.sections.iter().find(|(n, _)| n == name).map(|(_, s)| s)
+    }
+
+    fn section_mut(&mut self, name: &str) -> &mut Vec<Slot> {
+        if let Some(i) = self.sections.iter().position(|(n, _)| n == name) {
+            &mut self.sections[i].1
+        } else {
+            self.sections.push((name.to_string(), Vec::new()));
+            &mut self.sections.last_mut().expect("just added").1
+        }
+    }
+
+    fn put(&mut self, name: &str, slots: Vec<Slot>) {
+        *self.section_mut(name) = slots;
+    }
+}
+
+/// What the game shows of your slots (Java: `Holdings.Live`); `i32::MIN`: not sent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Live {
+    pub items: Vec<i32>,
+    pub enchant_ids: Vec<Option<Vec<i32>>>,
+    pub quick: Option<Vec<i32>>,
+}
+
+pub const UNKNOWN: i32 = i32::MIN;
+
+#[derive(Debug, Clone, Default)]
+struct Visit {
+    sections: Vec<(String, Vec<Slot>)>,
+    complete: bool,
+    broken: bool,
+    why: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct Move {
+    from_obj: i32,
+    from_slot: i32,
+    from_item: i32,
+    from_ench: Option<Vec<i32>>,
+    to_obj: i32,
+    to_slot: i32,
+    to_item: i32,
+    to_ench: Option<Vec<i32>>,
+    at: i64,
+}
+
+/// A character as Holdings needs it: alive, seasonal, its slots.
+pub struct Living {
+    pub char_id: i32,
+    pub seasonal: bool,
+    pub slots: Option<Vec<i32>>,
+    pub slot_enchant_ids: Option<Vec<Vec<i32>>>,
+    pub quickslots: Option<Vec<i32>>,
+}
+
+#[derive(Debug, Default)]
+pub struct Holdings {
+    pub places: HashMap<String, Place>,
+    /// Places removed (character died or deleted) -> when.
+    pub gone: HashMap<String, i64>,
+    map_is_vault: bool,
+    told_not_vault: bool,
+    visit: Option<Visit>,
+    in_vault: Option<String>,
+    chest_sections: HashMap<i32, String>,
+    pages: HashMap<i32, i32>,
+    asked: Vec<Move>,
+    /// Every change, as Java's `holdings-journal.txt` has it.
+    pub journal: Vec<String>,
+    seeded: bool,
+    pub dirty: bool,
+    /// A vault visit replaced a vault: (key, before, now) for the UPE rules (not ported yet).
+    pub vault_changes: Vec<(String, Vec<Slot>, Vec<Slot>)>,
+}
+
+/// What the holdings need to know of the world around them.
+pub struct Ctx<'a> {
+    pub data: &'a GameData,
+    pub now: i64,
+    /// Local time as Java writes it.
+    pub time: &'a str,
+}
+
+impl Ctx<'_> {
+    fn collectible(&self, item: i32) -> bool {
+        self.data.items.item(item).is_some_and(|i| i.is_collectible())
+    }
+
+    fn name(&self, item: i32) -> String {
+        self.data.items.item(item).map_or(format!("#{item}"), |i| i.name.clone())
+    }
+}
+
+impl Holdings {
+    fn line(&mut self, c: &Ctx, place: &str, text: &str) {
+        self.journal.push(format!("{}  {:<15} {}", c.time, place, text));
+    }
+
+    /// Java `seedFromSavedData`, on first use: if nothing is known yet, the characters saved with their slots.
+    pub fn seed_once(&mut self, c: &Ctx, saved: &[Living]) {
+        if self.seeded {
+            return;
+        }
+        self.seeded = true;
+        if !self.places.is_empty() {
+            return;
+        }
+        for l in saved {
+            let Some(slots) = &l.slots else { continue };
+            let mut p = Place::default();
+            let ench = l.slot_enchant_ids.as_ref();
+            let s: Vec<Slot> = slots.iter().enumerate().map(|(i, &item)| Slot::new(item, ench.and_then(|e| e.get(i)).cloned())).collect();
+            p.put(SLOTS, s);
+            if let Some(q) = &l.quickslots {
+                p.put(QUICK, quick_slots(q, None));
+            }
+            p.seen_at = 0;
+            p.source = Some("saved characters".into());
+            self.places.insert(format!("char:{}", l.char_id), p);
+        }
+        if self.places.is_empty() {
+            return;
+        }
+        let n = self.places.len();
+        self.line(c, "start", &format!("seeded {n} places from saved data (until the game shows them)"));
+        self.dirty = true;
+    }
+
+    /// Java `live`: what the game shows of your character's slots.
+    pub fn live(&mut self, c: &Ctx, char_id: i32, seen: &Live) {
+        let key = format!("char:{char_id}");
+        let fresh = !self.places.contains_key(&key);
+        if fresh {
+            let mut p = Place::default();
+            p.put(SLOTS, Vec::new());
+            self.places.insert(key.clone(), p);
+        }
+        let mut lines = Vec::new();
+        let mut changed = false;
+        let p = self.places.get_mut(&key).expect("place");
+        let slots = p.section_mut(SLOTS);
+        let n = seen.items.len();
+        while slots.len() < n {
+            slots.push(Slot::default());
+        }
+        for i in 0..n {
+            let mut item = seen.items[i];
+            let old = slots[i].clone();
+            let mut ench = seen.enchant_ids.get(i).cloned().flatten();
+            if item == UNKNOWN {
+                if ench.is_none() || old.empty() {
+                    continue;
+                }
+                item = old.item;
+            }
+            if ench.is_none() && old.item == item {
+                ench = old.enchant_ids.clone();
+            }
+            let now = Slot::new(item, ench);
+            if now == old {
+                continue;
+            }
+            slots[i] = now.clone();
+            note(c, &mut lines, &format!("{} {i}", slot_name(i)), &old, &now);
+            changed = true;
+        }
+        while slots.len() > n {
+            let old = slots.pop().expect("slot");
+            note(c, &mut lines, &format!("{} {}", slot_name(slots.len()), slots.len()), &old, &Slot::default());
+            changed = true;
+        }
+        if let Some(q) = &seen.quick {
+            let before = p.section(QUICK).cloned();
+            let quick = quick_slots(q, before.as_ref());
+            for (k, s) in quick.iter().enumerate() {
+                let old = before.as_ref().and_then(|b| b.get(k)).cloned().unwrap_or_default();
+                if *s != old {
+                    note(c, &mut lines, &format!("Quick slot {k}"), &old, s);
+                    changed = true;
+                }
+            }
+            p.put(QUICK, quick);
+        }
+        p.seen_at = c.now;
+        if fresh || p.source.as_deref() != Some("live") {
+            changed = true;
+        }
+        p.source = Some("live".into());
+        if fresh {
+            let d = describe(c, self.places.get(&key));
+            self.line(c, &key, &format!("first live look: {d}"));
+        } else {
+            for l in lines {
+                self.line(c, &key, &l);
+            }
+        }
+        if changed {
+            self.dirty = true;
+        }
+    }
+
+    /// Java `vaultPacket`: a vault packet; true once the visit's last one came.
+    pub fn vault_packet(&mut self, c: &Ctx, p: &lg_protocol::packets::VaultContent) -> bool {
+        if !self.map_is_vault {
+            if !self.told_not_vault {
+                self.line(c, "vault?", "vault packet outside the vault ignored");
+            }
+            self.told_not_vault = true;
+            return false;
+        }
+        if self.visit.as_ref().is_none_or(|v| v.complete) {
+            self.visit = Some(Visit::default());
+        }
+        for (obj, sec) in [
+            (p.vault_chest_object_id, VAULT_CHEST),
+            (p.gift_chest_object_id, GIFT_CHEST),
+            (p.seasonal_spoil_chest_object_id, SPOILS),
+            (p.potion_storage_object_id, POTIONS),
+            (p.material_chest_object_id, MATERIALS),
+        ] {
+            if obj != 0 {
+                self.chest_sections.insert(obj, sec.to_string());
+            }
+        }
+        let v = self.visit.as_mut().expect("visit");
+        if p.partial && !v.broken {
+            v.broken = true;
+            v.why = Some("a packet did not decode".into());
+        }
+        for (sec, ids, ench) in [
+            (VAULT_CHEST, &p.vault_contents, Some(&p.vault_chest_enchants)),
+            (GIFT_CHEST, &p.gift_contents, Some(&p.gift_chest_enchants)),
+            (SPOILS, &p.seasonal_spoil_content, Some(&p.spoils_chest_enchants)),
+            (POTIONS, &p.potion_contents, None),
+            (MATERIALS, &p.material_contents, None),
+        ] {
+            if ids.is_empty() {
+                continue;
+            }
+            if !plausible(c, ids) && !v.broken {
+                v.broken = true;
+                v.why = Some(format!("{sec} did not decode as items"));
+            }
+            let codes: Option<Vec<&str>> = ench.map(|e| e.split(',').collect());
+            let aligned = codes.as_ref().is_some_and(|cs| cs.len() == ids.len());
+            let slots = section_of(&mut v.sections, sec);
+            for (i, &id) in ids.iter().enumerate() {
+                let e = if aligned { Some(lg_gamedata::enchants::enchant_ids(codes.as_ref().map(|cs| cs[i]))) } else { None };
+                slots.push(Slot::new(id, e));
+            }
+        }
+        if p.last_vault_packet {
+            v.complete = true;
+        }
+        v.complete
+    }
+
+    pub fn vault_waiting(&self) -> bool {
+        self.visit.as_ref().is_some_and(|v| v.complete)
+    }
+
+    /// Java `vaultSeason`: the visit's season is known: it replaces that vault.
+    pub fn vault_season(&mut self, c: &Ctx, seasonal: Option<bool>, how: &str) -> bool {
+        let Some(seasonal) = seasonal else { return false };
+        if !self.vault_waiting() {
+            return false;
+        }
+        let mut v = self.visit.take().expect("visit");
+        let (key, other) = if seasonal { (SEASONAL_VAULT, VAULT) } else { (VAULT, SEASONAL_VAULT) };
+        let p = Place { sections: v.sections.clone(), seen_at: c.now, source: Some("vault packet".into()) };
+        self.in_vault = None;
+        if !v.broken && v.sections.iter().find(|(n, _)| n == VAULT_CHEST).is_none_or(|(_, s)| s.is_empty()) {
+            v.broken = true;
+            v.why = Some("it has no vault chest slots".into());
+        }
+        if v.broken {
+            let d = describe(c, Some(&p));
+            self.line(c, key, &format!("vault visit not saved: {} ({d})", v.why.unwrap_or_default()));
+            return true;
+        }
+        let (mine, theirs) = (self.places.get(key).cloned(), self.places.get(other).cloned());
+        let like_mine = overlap(c, Some(&p), mine.as_ref());
+        let like_theirs = overlap(c, Some(&p), theirs.as_ref());
+        let size: i32 = collectibles(c, Some(&p)).values().sum();
+        if theirs.is_some() && size >= 10 && f64::from(like_theirs) > f64::from(size) * 0.8 && like_theirs > like_mine * 2 {
+            let which = if seasonal { "regular" } else { "seasonal" };
+            self.line(
+                c,
+                key,
+                &format!(
+                    "vault visit not saved: it matches the {which} vault ({like_theirs} of {size} copies) far more than this one ({like_mine}); season {how}"
+                ),
+            );
+            return true;
+        }
+        self.replace(c, key, mine, p, &format!("vault visit, season {how}"));
+        self.in_vault = Some(key.to_string());
+        self.pages.clear();
+        true
+    }
+
+    /// Java `entered`: a new map.
+    pub fn entered(&mut self, c: &Ctx, vault: bool) {
+        self.map_is_vault = vault;
+        self.told_not_vault = false;
+        self.in_vault = None;
+        self.chest_sections.clear();
+        self.pages.clear();
+        self.asked.clear();
+        if let Some(v) = self.visit.take() {
+            let (place, why) = if v.complete { ("vault", "its season was never known") } else { ("vault?", "the last packet never came") };
+            self.line(c, place, &format!("vault visit dropped on leaving: {why}"));
+        }
+    }
+
+    pub fn section(&self, obj: i32) -> Option<&String> {
+        self.chest_sections.get(&obj)
+    }
+
+    pub fn is_vault_object(&self, obj: i32) -> bool {
+        self.in_vault.is_some() && self.chest_sections.contains_key(&obj)
+    }
+
+    fn enchants_at(&self, player_id: i32, char_id: i32, obj: i32, slot: i32, item: i32) -> Option<Vec<i32>> {
+        if item < 1 {
+            return None;
+        }
+        let from = if let Some(sec) = self.chest_sections.get(&obj) {
+            self.in_vault.as_ref().and_then(|k| self.places.get(k)).and_then(|v| v.section(sec))
+        } else if obj == player_id {
+            self.places.get(&format!("char:{char_id}")).and_then(|p| p.section(SLOTS))
+        } else {
+            None
+        }?;
+        let s = from.get(usize::try_from(slot).ok()?)?;
+        if s.item != item {
+            return None;
+        }
+        s.enchant_ids.clone()
+    }
+
+    /// Java `swap`: a move you asked for, when it involves the vault.
+    #[allow(clippy::too_many_arguments)]
+    pub fn swap(&mut self, now: i64, player_id: i32, char_id: i32, from: (i32, i32, i32), to: (i32, i32, i32)) {
+        if !self.chest_sections.contains_key(&from.0) && !self.chest_sections.contains_key(&to.0) {
+            return;
+        }
+        self.asked.retain(|m| now - m.at <= 10_000);
+        let from_ench = self.enchants_at(player_id, char_id, from.0, from.1, from.2);
+        let to_ench = self.enchants_at(player_id, char_id, to.0, to.1, to.2);
+        self.asked.push(Move {
+            from_obj: from.0,
+            from_slot: from.1,
+            from_item: from.2,
+            from_ench,
+            to_obj: to.0,
+            to_slot: to.1,
+            to_item: to.2,
+            to_ench,
+            at: now,
+        });
+    }
+
+    fn side(&self, c: &Ctx, sec: Option<&String>, slot: i32, item: i32) -> String {
+        let what = if item < 1 { "empty".to_string() } else { c.name(item) };
+        match sec {
+            None => format!("you, slot {slot} ({what})"),
+            Some(s) => format!("{s}, slot {slot} ({what})"),
+        }
+    }
+
+    /// Java `swapResult`: the game's answer to a move.
+    pub fn swap_result(&mut self, c: &Ctx, result: bool, kind: i8, from: (i32, i32, i32), to: (i32, i32, i32)) {
+        let (from_sec, to_sec) = (self.chest_sections.get(&from.0).cloned(), self.chest_sections.get(&to.0).cloned());
+        if from_sec.is_none() && to_sec.is_none() {
+            return;
+        }
+        let m = self.asked.iter().position(|a| a.from_obj == from.0 && a.from_slot == from.1 && a.to_obj == to.0 && a.to_slot == to.1);
+        let m = m.map(|i| self.asked.remove(i));
+        let what = format!(
+            "{} <-> {}",
+            self.side(c, from_sec.as_ref(), from.1, m.as_ref().map_or(from.2, |m| m.from_item)),
+            self.side(c, to_sec.as_ref(), to.1, m.as_ref().map_or(to.2, |m| m.to_item))
+        );
+        let place = self.in_vault.clone().unwrap_or("vault?".into());
+        if !result {
+            self.line(c, &place, &format!("move refused by the game (type {kind}): {what}"));
+            return;
+        }
+        let Some(key) = self.in_vault.clone().filter(|k| self.places.contains_key(k)) else {
+            self.line(c, &place, &format!("move not followed, the vault of this visit is not saved: {what}"));
+            return;
+        };
+        let mut lines = Vec::new();
+        let mut changed = false;
+        let mut v = self.places.remove(&key).expect("vault");
+        if from_sec.as_deref() == Some(GIFT_CHEST) && from.2 < 1 {
+            changed |= take_gift(c, &mut v, from.1, m.as_ref().map_or(to.2, |m| m.from_item), &mut lines);
+        } else if let Some(sec) = &from_sec {
+            let ench = m.as_ref().and_then(|m| if m.to_item == from.2 { m.to_ench.clone() } else { None });
+            changed |= set(c, &mut v, sec, from.1, from.2, ench, &mut lines);
+        }
+        if to_sec.as_deref() == Some(GIFT_CHEST) && to.2 < 1 {
+            changed |= take_gift(c, &mut v, to.1, m.as_ref().map_or(from.2, |m| m.to_item), &mut lines);
+        } else if let Some(sec) = &to_sec {
+            let ench = m.as_ref().and_then(|m| if m.from_item == to.2 { m.from_ench.clone() } else { None });
+            changed |= set(c, &mut v, sec, to.1, to.2, ench, &mut lines);
+        }
+        self.places.insert(key.clone(), v);
+        let asked = if m.is_none() && kind != 1 { "  (no move asked for)" } else { "" };
+        self.line(c, &key, &format!("{}{what}{asked}", if kind == 1 { "used up: " } else { "move: " }));
+        for l in lines {
+            self.line(c, &key, &l);
+        }
+        if changed {
+            self.dirty = true;
+        }
+    }
+
+    /// Java `chestView`: what a vault chest shows (a page of 8 slots).
+    pub fn chest_view(&mut self, c: &Ctx, obj: i32, shown: &std::collections::BTreeMap<i32, i32>) {
+        if shown.is_empty() {
+            return;
+        }
+        let Some(sec) = self.chest_sections.get(&obj).cloned() else { return };
+        let Some(key) = self.in_vault.clone().filter(|k| self.places.contains_key(k)) else { return };
+        let mut v = self.places.remove(&key).expect("vault");
+        let page = self.pages.get(&obj).copied().unwrap_or(0);
+        let slots = v.section_mut(&sec).clone();
+        let mut matching = Vec::new();
+        let mut pg = 0;
+        while pg * PAGE < (slots.len() as i32).max(PAGE) {
+            if shows(&slots, pg, shown) {
+                matching.push(pg);
+            }
+            pg += 1;
+        }
+        if matching.contains(&page) {
+            self.places.insert(key, v);
+            return;
+        }
+        if shown.len() as i32 >= PAGE {
+            if matching.len() == 1 {
+                self.pages.insert(obj, matching[0]);
+            } else {
+                let which = if matching.is_empty() {
+                    "matches no stored page".to_string()
+                } else {
+                    format!("matches pages [{}]", matching.iter().map(i32::to_string).collect::<Vec<_>>().join(", "))
+                };
+                let m = shown.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(", ");
+                self.line(c, &key, &format!("{sec} shows a page that {which}: not written {{{m}}}"));
+            }
+            self.places.insert(key, v);
+            return;
+        }
+        let mut lines = Vec::new();
+        let mut changed = false;
+        for (&k, &item) in shown {
+            if k >= PAGE {
+                continue;
+            }
+            changed |= set(c, &mut v, &sec, page * PAGE + k, item, None, &mut lines);
+        }
+        self.places.insert(key.clone(), v);
+        for l in lines {
+            self.line(c, &key, &format!("seen in the vault, page {page}: {l}"));
+        }
+        if changed {
+            self.dirty = true;
+        }
+    }
+
+    /// Java `replace`: a place seen anew, with a journal line of what changed.
+    fn replace(&mut self, c: &Ctx, key: &str, before: Option<Place>, now: Place, why: &str) {
+        if let Some(b) = &before
+            && (key == VAULT || key == SEASONAL_VAULT)
+        {
+            let all = |p: &Place| p.sections.iter().flat_map(|(_, s)| s.iter().filter(|s| !s.empty()).cloned()).collect::<Vec<_>>();
+            self.vault_changes.push((key.to_string(), all(b), all(&now)));
+        }
+        let (was, is) = (collectibles(c, before.as_ref()), collectibles(c, Some(&now)));
+        let ids: HashSet<i32> = was.keys().chain(is.keys()).copied().collect();
+        let (mut gained, mut lost) = (0, 0);
+        let mut parts = Vec::new();
+        for id in ids {
+            let d = is.get(&id).copied().unwrap_or(0) - was.get(&id).copied().unwrap_or(0);
+            if d == 0 {
+                continue;
+            }
+            if d > 0 {
+                gained += d;
+            } else {
+                lost -= d;
+            }
+            parts.push(format!("{}{d} {}", if d > 0 { "+" } else { "" }, c.name(id)));
+        }
+        parts.sort_by(|a, b| java_cmp(a, b));
+        let total: i32 = is.values().sum();
+        let change = if before.is_none() { "new".to_string() } else { format!("+{gained} / -{lost}") };
+        let tail = if parts.is_empty() { String::new() } else { format!("  {}", parts.join(", ")) };
+        self.places.insert(key.to_string(), now);
+        self.line(c, key, &format!("{why}: {total} copies ({change}){tail}"));
+        self.dirty = true;
+    }
+
+    /// Java `count`: copies of a collectible item held by living characters and in the vaults.
+    pub fn count(&self, c: &Ctx, living: &HashMap<i32, bool>, item: i32) -> i32 {
+        self.tally(c, living).0.get(&item).copied().unwrap_or(0)
+    }
+
+    pub fn best_enchants(&self, c: &Ctx, living: &HashMap<i32, bool>, item: i32) -> i32 {
+        self.tally(c, living).1.get(&item).copied().unwrap_or(-1)
+    }
+
+    fn tally(&self, c: &Ctx, living: &HashMap<i32, bool>) -> (HashMap<i32, i32>, HashMap<i32, i32>) {
+        let (mut n, mut best) = (HashMap::new(), HashMap::new());
+        for (key, p) in &self.places {
+            if let Some(id) = key.strip_prefix("char:").and_then(|i| i.parse::<i32>().ok())
+                && !living.contains_key(&id)
+            {
+                continue;
+            }
+            for (_, slots) in &p.sections {
+                for s in slots {
+                    if s.empty() || !c.collectible(s.item) {
+                        continue;
+                    }
+                    *n.entry(s.item).or_insert(0) += 1;
+                    if let Some(e) = &s.enchant_ids {
+                        let b = best.entry(s.item).or_insert(e.len() as i32);
+                        *b = (*b).max(e.len() as i32);
+                    }
+                }
+            }
+        }
+        (n, best)
+    }
+
+    pub fn known(&self) -> bool {
+        !self.places.is_empty()
+    }
+
+    pub fn slots(&self, place: &str, section: &str) -> Option<&Vec<Slot>> {
+        self.places.get(place).and_then(|p| p.section(section))
+    }
+
+    pub fn dump(&self) -> String {
+        let mut out = format!(
+            "holdings vault={} inVault={} visit={} chests={} pages={} asked={} gone={}\n",
+            self.map_is_vault,
+            self.in_vault.as_deref().unwrap_or("null"),
+            self.visit.as_ref().map_or("null".into(), |v| format!("{}/{}/{}", v.sections.len(), v.complete, v.broken)),
+            self.chest_sections.len(),
+            self.pages.len(),
+            self.asked.len(),
+            self.gone.len()
+        );
+        let mut keys: Vec<&String> = self.places.keys().collect();
+        keys.sort();
+        for k in keys {
+            let p = &self.places[k];
+            out.push_str(&format!("place {k} seen={} source={}", p.seen_at, p.source.as_deref().unwrap_or("null")));
+            for (name, slots) in &p.sections {
+                let s: Vec<String> = slots
+                    .iter()
+                    .map(|s| match &s.enchant_ids {
+                        None => s.item.to_string(),
+                        Some(e) => format!("{}{:?}", s.item, e).replace(' ', ""),
+                    })
+                    .collect();
+                out.push_str(&format!(" {name}=[{}]", s.join(",")));
+            }
+            out.push('\n');
+        }
+        for l in &self.journal {
+            out.push_str(&format!("journal {l}\n"));
+        }
+        out
+    }
+}
+
+fn section_of<'a>(sections: &'a mut Vec<(String, Vec<Slot>)>, name: &str) -> &'a mut Vec<Slot> {
+    if let Some(i) = sections.iter().position(|(n, _)| n == name) {
+        &mut sections[i].1
+    } else {
+        sections.push((name.to_string(), Vec::new()));
+        &mut sections.last_mut().expect("just added").1
+    }
+}
+
+/// Java's `String.compareTo`: UTF-16 code units.
+fn java_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    a.encode_utf16().cmp(b.encode_utf16())
+}
+
+pub fn slot_name(i: usize) -> &'static str {
+    match i {
+        0..=3 => "Equipped",
+        4..=11 => "Inventory",
+        12..=19 => "Backpack",
+        _ => "Extender",
+    }
+}
+
+fn quick_slots(quick: &[i32], before: Option<&Vec<Slot>>) -> Vec<Slot> {
+    quick
+        .iter()
+        .enumerate()
+        .map(|(k, &q)| if q == UNKNOWN { before.and_then(|b| b.get(k)).cloned().unwrap_or_default() } else { Slot::new(q, None) })
+        .collect()
+}
+
+fn plausible(c: &Ctx, ids: &[i32]) -> bool {
+    let used = ids.iter().filter(|&&i| i >= 1).count();
+    let known = ids.iter().filter(|&&i| i >= 1 && !c.name(i).starts_with('#')).count();
+    known as f64 >= used as f64 * 0.9
+}
+
+fn collectibles(c: &Ctx, p: Option<&Place>) -> HashMap<i32, i32> {
+    let mut out = HashMap::new();
+    if let Some(p) = p {
+        for (_, slots) in &p.sections {
+            for s in slots.iter().filter(|s| !s.empty() && c.collectible(s.item)) {
+                *out.entry(s.item).or_insert(0) += 1;
+            }
+        }
+    }
+    out
+}
+
+fn overlap(c: &Ctx, a: Option<&Place>, b: Option<&Place>) -> i32 {
+    let (Some(a), Some(b)) = (a, b) else { return 0 };
+    let (x, y) = (collectibles(c, Some(a)), collectibles(c, Some(b)));
+    x.iter().map(|(k, v)| (*v).min(y.get(k).copied().unwrap_or(0))).sum()
+}
+
+fn describe(c: &Ctx, p: Option<&Place>) -> String {
+    match p {
+        None => "nothing".into(),
+        Some(p) => format!("{} copies", collectibles(c, Some(p)).values().sum::<i32>()),
+    }
+}
+
+/// Java `List.toString`: `[1, 2]`.
+fn list(v: &[i32]) -> String {
+    format!("[{}]", v.iter().map(i32::to_string).collect::<Vec<_>>().join(", "))
+}
+
+fn label(c: &Ctx, s: &Slot) -> String {
+    if s.empty() {
+        return "empty".into();
+    }
+    match &s.enchant_ids {
+        None => c.name(s.item),
+        Some(e) => format!("{} {}", c.name(s.item), list(e)),
+    }
+}
+
+/// Java `note`: a journal line, for collectible items only.
+fn note(c: &Ctx, lines: &mut Vec<String>, r#where: &str, old: &Slot, now: &Slot) {
+    let was = !old.empty() && c.collectible(old.item);
+    let is = !now.empty() && c.collectible(now.item);
+    if !was && !is {
+        return;
+    }
+    lines.push(format!("{}: {} -> {}", r#where, label(c, old), label(c, now)));
+}
+
+fn shows(slots: &[Slot], page: i32, shown: &std::collections::BTreeMap<i32, i32>) -> bool {
+    shown.iter().all(|(&k, &v)| {
+        let idx = page * PAGE + k;
+        let stored = usize::try_from(idx).ok().and_then(|i| slots.get(i)).map_or(-1, |s| s.item);
+        stored == if v < 1 { -1 } else { v }
+    })
+}
+
+fn set(c: &Ctx, v: &mut Place, sec: &str, idx: i32, item: i32, ench: Option<Vec<i32>>, lines: &mut Vec<String>) -> bool {
+    let slots = v.section_mut(sec);
+    let Some(i) = usize::try_from(idx).ok().filter(|&i| i < slots.len()) else {
+        lines.push(format!("{sec} {idx}: not in the stored vault ({} slots)", slots.len()));
+        return false;
+    };
+    let old = slots[i].clone();
+    let now = if item < 1 { -1 } else { item };
+    let slot = Slot::new(now, ench.or_else(|| if old.item == now { old.enchant_ids.clone() } else { None }));
+    if slot == old {
+        return false;
+    }
+    slots[i] = slot.clone();
+    note(c, lines, &format!("{sec} {idx}"), &old, &slot);
+    true
+}
+
+fn take_gift(c: &Ctx, v: &mut Place, idx: i32, item: i32, lines: &mut Vec<String>) -> bool {
+    let Some(gifts) = v.sections.iter_mut().find(|(n, _)| n == GIFT_CHEST).map(|(_, s)| s) else { return false };
+    let mut at = None;
+    'find: for d in 0..=5 {
+        for i in [idx + d, idx - d] {
+            if let Ok(u) = usize::try_from(i)
+                && gifts.get(u).is_some_and(|g| g.item == item)
+            {
+                at = Some(u);
+                break 'find;
+            }
+        }
+    }
+    let Some(at) = at else {
+        lines.push(format!("{GIFT_CHEST} {idx}: the gift taken ({}) is not there: not written", c.name(item)));
+        return false;
+    };
+    let old = gifts.remove(at);
+    let named = if at as i32 != idx { format!(" (named {idx})") } else { String::new() };
+    note(c, lines, &format!("{GIFT_CHEST} {at}{named}"), &old, &Slot::default());
+    true
+}

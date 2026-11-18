@@ -17,7 +17,7 @@ mkdir "$work/run" && ln -s "$assets" "$work/run/assets"   # Java reads ./assets
 (cd "$work/run" && java -Djava.awt.headless=true -cp "$jar:$work/classes" oracle.GameDataOracle) > "$work/java.txt" 2> "$work/java.log"
 (cd "$here/.." && "$cargo" run -q --release -p lg-replay -- gamedata "$assets") > "$work/rust.txt" 2> "$work/rust.log"
 if cmp -s "$work/java.txt" "$work/rust.txt"; then
-    echo "same game data: $(grep -c '^object' "$work/rust.txt") objects, $(grep -c '^tile' "$work/rust.txt") tiles, $(grep -c '^class' "$work/rust.txt") classes, $(grep -c '^scaling' "$work/rust.txt") scaling abilities, $(grep -c '^shotby' "$work/rust.txt") ability projectiles, $(grep -c '^enchant' "$work/rust.txt") enchantments, $(grep -c '^ID_TO_NAME_PORTAL' "$work/rust.txt") dungeon portals, $(grep -c '^enemy' "$work/rust.txt") enemies of one dungeon, $(grep -c '^item ' "$work/rust.txt") items"
+    echo "same game data: $(grep -c '^object' "$work/rust.txt") objects, $(grep -c '^tile' "$work/rust.txt") tiles, $(grep -c '^class' "$work/rust.txt") classes, $(grep -c '^scaling' "$work/rust.txt") scaling abilities, $(grep -c '^shotby' "$work/rust.txt") ability projectiles, $(grep -c '^enchant' "$work/rust.txt") enchantments, $(grep -c '^ID_TO_NAME_PORTAL' "$work/rust.txt") dungeon portals, $(grep -c '^enemy' "$work/rust.txt") enemies of one dungeon, $(grep -c '^item ' "$work/rust.txt") items, $(grep -c '^stset ' "$work/rust.txt") ST sets"
 else
     echo "DIFFERENT game data: Java $(wc -l < "$work/java.txt") lines, Rust $(wc -l < "$work/rust.txt")"
     diff "$work/java.txt" "$work/rust.txt" | cut -c1-300 | head -30

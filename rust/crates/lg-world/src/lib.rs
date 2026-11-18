@@ -25,6 +25,21 @@ use std::fmt::Write as _;
 /// in to the game's servers, which this never does.
 pub const FED: &[u8] = &[101, 25, 30, 75, 90, 35, 103, 64, 62, 13, 46, 12, 42, 10, 92, 166, 44, 67, 114, 117, 55, 95, 6, 34, 88, 183];
 
+/// What the world tells the app while it handles a packet, where Java's `TomatoData` calls into the app (in the
+/// order it does): the app takes them right after the packet, those before a throw too.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Event {
+    /// A new map (Java `setNewRealm`): the vault or not, and its name as the app shows it (`LootEvents.mapName`).
+    Entered { vault: bool, map: String },
+    /// What the game sent of your character: on entering a map (every stat), and in ticks (only those that
+    /// changed); `pack`: your backpack slots stat then (Java `LootEvents.playerStatus`).
+    PlayerStatus { char_id: i32, pack: Option<i32>, status: ObjectStatus, entering: bool },
+    /// What the game sent of another object (Java `LootEvents.objectStatus`).
+    ObjectStatus { id: i32, status: ObjectStatus },
+    /// A bag matched to who dropped it (Java `LootEvents.bagDropped`): the bag as it is now, your seasonal stat.
+    BagDropped { map: String, bag: Box<Entity>, seasonal: Option<bool> },
+}
+
 /// Java threw here: the rest of the packet was not handled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Abort(pub &'static str);
@@ -220,6 +235,8 @@ pub struct World {
     pub dungeon_stats: loot::DungeonStats,
     /// Bags matched to who dropped them, in order: for the app's records to take.
     pub drops: Vec<loot::Drop>,
+    /// What happened for the app, since it last took them.
+    pub events: Vec<Event>,
     /// Now, ms since 1970: the capture time of the packet being handled ([`World::set_time`]).
     now: i64,
     /// The clock at the map's first and last tick.
@@ -263,6 +280,7 @@ impl World {
             windows: loot::Windows::new(),
             dungeon_stats: loot::DungeonStats::default(),
             drops: Vec::new(),
+            events: Vec::new(),
             now: 0,
             first_tick_ms: None,
             last_tick_ms: None,
@@ -401,6 +419,8 @@ impl World {
             self.petyard = true;
         }
         self.map = Some(Map { name: m.name.clone(), display_name: m.display_name.clone(), width: m.width, height: m.height, seed: m.fp });
+        let vault = m.display_name == "{s.vault}";
+        self.events.push(Event::Entered { vault, map: map_name(self.map.as_ref()) });
     }
 
     /// Java `updatePlayersPos`.
@@ -429,6 +449,12 @@ impl World {
             self.panel_update(id)?;
             if self.world_player_id <= 0 && self.map_unknown() && (only_yours(status) || self.stands_where_you_are(id, status)) {
                 self.found_yourself(id);
+            }
+            if id == self.world_player_id {
+                let pack = self.entities.get(&id).and_then(|e| e.value(stats::BACKPACK_SLOTS));
+                self.events.push(Event::PlayerStatus { char_id: self.char_id, pack, status: status.clone(), entering: false });
+            } else {
+                self.events.push(Event::ObjectStatus { id, status: status.clone() });
             }
         }
         self.loot_tick();
@@ -476,6 +502,7 @@ impl World {
             let name = self.data.object_name(object_type).map(str::to_string);
             self.entity(id).name = name;
         }
+        self.events.push(Event::ObjectStatus { id, status: status.clone() });
         if new && self.map_unknown() && !self.map_guess_failed {
             self.guess_map(object_type);
         }
@@ -494,7 +521,9 @@ impl World {
             let e = self.entity(id);
             if me {
                 e.set_user(char_id);
+                let pack = e.value(stats::BACKPACK_SLOTS);
                 self.player = Some(id);
+                self.events.push(Event::PlayerStatus { char_id, pack, status: status.clone(), entering: true });
             } else {
                 e.set_player()?;
             }
@@ -748,6 +777,15 @@ fn record(r: &damage::DamageRecord) -> String {
         u8::from(r.chancellor_dammah),
         u8::from(r.walled_garden_reflectors)
     )
+}
+
+/// Java `LootEvents.mapName`: the name shown, or the map's own when that is a game text key.
+pub fn map_name(m: Option<&Map>) -> String {
+    match m {
+        None => "Unknown".into(),
+        Some(m) if !m.display_name.is_empty() && !m.display_name.starts_with('{') => m.display_name.clone(),
+        Some(m) => m.name.clone(),
+    }
 }
 
 fn quote(s: &str) -> String {

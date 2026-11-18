@@ -233,10 +233,15 @@ impl World {
                 }
             }
         }
-        for d in found {
+        let seasonal = self.me().map(|me| me.value(stats::SEASONAL) == Some(1));
+        for (d, b) in found.into_iter().zip(bags) {
             if let Some(m) = &self.map {
                 let name = m.name.clone();
                 self.dungeon_stats.items(&name, d.dropper.as_ref().map_or(0, Dropper::object_type), &d.items);
+            }
+            if let Some(bag) = self.held(b) {
+                let bag = Box::new(bag.clone());
+                self.events.push(Event::BagDropped { map: map_name(self.map.as_ref()), bag, seasonal });
             }
             self.drops.push(d);
         }

@@ -516,6 +516,10 @@ fn gamedata(dir: &std::path::Path) -> ExitCode {
     let mut ts: Vec<_> = d.items.transform_skins.iter().copied().collect();
     ts.sort_unstable();
     line(&mut out, format_args!("transform [{}]", ts.iter().map(i32::to_string).collect::<Vec<_>>().join(", ")));
+    for s in &d.st_sets {
+        let pieces = s.pieces.iter().map(i32::to_string).collect::<Vec<_>>().join(",");
+        line(&mut out, format_args!("stset {}|{}|{}|{}|[{pieces}]|{}", q(&s.name), q(&s.title), s.class_name, s.skin, q(&s.bonus)));
+    }
     if out.flush().is_err() {
         return ExitCode::SUCCESS;
     }

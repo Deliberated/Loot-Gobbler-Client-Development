@@ -62,11 +62,7 @@ impl Zone {
         let mut times = Vec::with_capacity(time);
         for i in 0..time {
             let at = data + i * size;
-            let t = if size == 8 {
-                i64::from_be_bytes(b.get(at..at + 8)?.try_into().ok()?)
-            } else {
-                i64::from(be32(b, at)? as i32)
-            };
+            let t = if size == 8 { i64::from_be_bytes(b.get(at..at + 8)?.try_into().ok()?) } else { i64::from(be32(b, at)? as i32) };
             times.push(t);
         }
         let idx = data + time * size;
@@ -99,6 +95,36 @@ impl Zone {
                 n => self.changes[n - 1].1,
             },
         }
+    }
+
+    /// Java `LocalDateTime.parse(s).atZone(systemDefault()).toInstant().toEpochMilli()`: in the autumn overlap the
+    /// earlier moment, in the spring gap shifted on. None if it doesn't read.
+    pub fn parse_local(&self, s: &str) -> Option<i64> {
+        let (date, time) = s.split_once('T')?;
+        let mut d = date.split('-');
+        let (y, m, dd): (i64, u32, u32) = (d.next()?.parse().ok()?, d.next()?.parse().ok()?, d.next()?.parse().ok()?);
+        let mut t = time.split(':');
+        let (h, mi): (i64, i64) = (t.next()?.parse().ok()?, t.next()?.parse().ok()?);
+        let (sec, ms) = match t.next() {
+            None => (0, 0),
+            Some(x) => match x.split_once('.') {
+                None => (x.parse::<i64>().ok()?, 0),
+                Some((s, f)) => (s.parse::<i64>().ok()?, format!("{f:0<3}")[..3].parse::<i64>().ok()?),
+            },
+        };
+        if !(1..=12).contains(&m) || !(1..=31).contains(&dd) || !(0..24).contains(&h) || !(0..60).contains(&mi) || !(0..60).contains(&sec) {
+            return None;
+        }
+        let local = days_from_civil(y, m, dd) * 86_400 + h * 3600 + mi * 60 + sec;
+        let (before, after) = (self.offset(local - 86_400 - 14 * 3600), self.offset(local + 86_400 + 14 * 3600));
+        let fits = |o: i32| self.offset(local - i64::from(o)) == o;
+        let utc = match (fits(before), fits(after)) {
+            (true, true) => local - i64::from(before.max(after)),
+            (true, false) => local - i64::from(before),
+            (false, true) => local - i64::from(after),
+            (false, false) => local - i64::from(before.min(after)),
+        };
+        Some(utc * 1000 + ms)
     }
 
     /// Java `LocalDateTime.now().withNano(0).toString()` for this moment (ms since 1970).
@@ -206,7 +232,7 @@ fn parse_rule(s: &str) -> Option<Rule> {
     let dst = if p.starts_with(',') { std + 3600 } else { -time(&mut p)? as i32 };
     let when = |p: &mut &str| -> Option<When> {
         let r = p.strip_prefix(",M")?;
-        let n = r.find(|c: char| c == ',' || c == '/').unwrap_or(r.len());
+        let n = r.find([',', '/']).unwrap_or(r.len());
         let mut f = r[..n].split('.').map(|x| x.parse::<u32>().ok());
         let (month, week, weekday) = (f.next()??, f.next()??, f.next()??);
         *p = &r[n..];

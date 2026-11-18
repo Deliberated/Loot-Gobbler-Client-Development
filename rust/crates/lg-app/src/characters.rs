@@ -132,6 +132,31 @@ impl Characters {
         self.chars.get(&id)
     }
 
+    /// Java `slotEnchants`: the enchantments known for that item in that slot (the saved character list is not read
+    /// yet).
+    pub fn slot_enchants(&self, char_id: i32, slot: usize, item: i32) -> Option<Vec<i32>> {
+        let c = self.chars.get(&char_id)?;
+        let (slots, ids) = (c.slots.as_ref()?, c.slot_enchant_ids.as_ref()?);
+        if slot >= slots.len() || slots[slot] != item {
+            return None;
+        }
+        ids.get(slot).cloned()
+    }
+
+    /// The living characters with their slots, in the order first seen (for the holdings).
+    pub fn living(&self) -> Vec<crate::holdings::Living> {
+        self.all()
+            .filter(|c| c.alive)
+            .map(|c| crate::holdings::Living {
+                char_id: c.char_id,
+                seasonal: c.seasonal,
+                slots: c.slots.clone(),
+                slot_enchant_ids: c.slot_enchant_ids.clone(),
+                quickslots: c.quickslots.clone(),
+            })
+            .collect()
+    }
+
     /// Every character, in the order first seen.
     pub fn all(&self) -> impl Iterator<Item = &Char> {
         self.order.iter().map(|id| &self.chars[id])

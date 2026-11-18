@@ -48,6 +48,10 @@ public final class GameDataOracle {
         abilitiesAndEnchants();
         dungeons();
         items();
+        for (lootgobbler.StSets.Set s : lootgobbler.StSets.get()) {
+            OUT.println("stset " + q(s.name()) + "|" + q(s.title()) + "|" + s.className() + "|" + s.skin() + "|"
+                    + java.util.Arrays.toString(s.pieces()).replace(" ", "") + "|" + q(s.bonus()));
+        }
     }
 
     private static String q(String s) {

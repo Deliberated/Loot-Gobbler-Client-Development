@@ -14,6 +14,7 @@ pub mod dungeons;
 pub mod dyes;
 pub mod enchants;
 pub mod items;
+pub mod st_sets;
 mod xml;
 
 use std::collections::{BTreeMap, HashMap};
@@ -117,6 +118,8 @@ pub struct GameData {
     pub abilities: abilities::Abilities,
     pub enchants: HashMap<i16, enchants::Enchant>,
     pub dungeons: dungeons::Dungeons,
+    /// The ST sets (Java: `StSets`).
+    pub st_sets: Vec<st_sets::StSet>,
     /// Dye and cloth item type -> texture code (Java: `Dyes`).
     pub dyes: HashMap<i32, i32>,
     /// The items as Loot Gobbler knows them (Java: `ItemDb`).
@@ -152,6 +155,9 @@ impl GameData {
         let (items, problems) = items::Items::load(&assets.join("xml"));
         d.items = items;
         d.problems.extend(problems);
+        if let Some(s) = read("xml/equipmentsets.xml") {
+            d.st_sets = st_sets::load(&s, &d.items);
+        }
         let (dungeons, problems) = dungeons::Dungeons::load(&assets.join("xml"));
         d.dungeons = dungeons;
         d.problems.extend(problems);
