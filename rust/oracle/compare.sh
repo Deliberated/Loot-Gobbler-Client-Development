@@ -21,7 +21,9 @@ cargo=$(command -v cargo || echo "$HOME/.cargo/bin/cargo")
 
 work=$(mktemp -d)
 if [ -n "${LG_KEEP:-}" ]; then echo "keeping $work" >&2; else trap 'rm -rf "${work:?}"' EXIT; fi
-javac -nowarn -cp "$jar" -d "$work" "$here/ReplayOracle.java" "$here/WorldOracle.java"
+javac -nowarn -cp "$jar" -d "$work" "$here/ReplayOracle.java" "$here/WorldOracle.java" "$here/ClockAgent.java"
+printf 'Premain-Class: oracle.ClockAgent\n' > "$work/manifest.txt"
+jar --create --file "$work/clock-agent.jar" --manifest "$work/manifest.txt" -C "$work" oracle/ClockAgent.class
 (cd "$here/.." && "$cargo" build -q --release -p lg-replay)
 replay="$here/../target/release/lg-replay"
 ids=$("$replay" decoded-ids)
@@ -33,7 +35,7 @@ check() { # name, rust flag, then java args
     if [ "$what" = world ]; then
         mkdir -p "$work/run/assets"
         if [ -n "$assets" ]; then cp -r "$assets/ObjectID.list" "$assets/TileID.list" "$assets/xml" "$work/run/assets/"; fi
-        (cd "$work/run" && java -Djava.awt.headless=true -Djava.net.useSystemProxies=false \
+        (cd "$work/run" && java -javaagent:"$work/clock-agent.jar" -Djava.awt.headless=true -Djava.net.useSystemProxies=false \
             -Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=9 -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=9 \
             -cp "$jar:$work" oracle.ReplayOracle "$pcap" "$@") > "$work/java.txt" 2> "$work/java.log"
         "$replay" "$pcap" "$flag" "$work/run/assets" > "$work/rust.txt" 2> "$work/rust.log"

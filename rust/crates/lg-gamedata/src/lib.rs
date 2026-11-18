@@ -11,6 +11,7 @@
 
 pub mod abilities;
 pub mod dungeons;
+pub mod dyes;
 pub mod enchants;
 pub mod items;
 mod xml;
@@ -116,6 +117,8 @@ pub struct GameData {
     pub abilities: abilities::Abilities,
     pub enchants: HashMap<i16, enchants::Enchant>,
     pub dungeons: dungeons::Dungeons,
+    /// Dye and cloth item type -> texture code (Java: `Dyes`).
+    pub dyes: HashMap<i32, i32>,
     /// The items as Loot Gobbler knows them (Java: `ItemDb`).
     pub items: items::Items,
     /// What went wrong while reading, for the log.
@@ -145,6 +148,7 @@ impl GameData {
             d.abilities = a;
             d.problems.extend(problem);
         }
+        d.dyes = dyes::load(&assets.join("xml"));
         let (items, problems) = items::Items::load(&assets.join("xml"));
         d.items = items;
         d.problems.extend(problems);
@@ -170,6 +174,11 @@ impl GameData {
 
     pub fn class(&self, object_type: i32) -> Option<&Class> {
         self.classes.iter().find(|c| c.id == object_type)
+    }
+
+    /// Java `Dyes.texture`: 0 when not a dye.
+    pub fn dye_texture(&self, item_type: i32) -> i32 {
+        self.dyes.get(&item_type).copied().unwrap_or(0)
     }
 
     /// Whether this object type is a character class (Java: `CharacterClass.isPlayerCharacter`).

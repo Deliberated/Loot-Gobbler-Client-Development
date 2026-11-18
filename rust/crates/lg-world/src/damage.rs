@@ -308,7 +308,7 @@ impl DamageState {
 impl World {
     /// Java `Entity.name()`: a player's name stat (before the first comma), else the object's name. Java throws for a
     /// name stat of only commas.
-    pub(crate) fn display_name(&self, e: &Entity) -> Result<Option<String>, Abort> {
+    pub fn display_name(&self, e: &Entity) -> Result<Option<String>, Abort> {
         if self.data.is_player_class(e.object_type)
             && let Some(n) = e.text(stats::NAME)
         {

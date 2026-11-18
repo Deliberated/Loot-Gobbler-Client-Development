@@ -1,0 +1,12 @@
+[package]
+name = "lg-app"
+description = "Loot Gobbler's own records, built from the world: characters, profile, and more to come"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+lg-gamedata = { path = "../lg-gamedata" }
+lg-protocol = { path = "../lg-protocol" }
+lg-world = { path = "../lg-world" }

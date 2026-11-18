@@ -318,7 +318,7 @@ fn world(file: &str, assets: &std::path::Path) -> ExitCode {
     for p in &game.problems {
         eprintln!("{p}");
     }
-    let mut w = lg_world::World::new(game);
+    let mut w = lg_app::App::new(lg_world::World::new(game), 0);
     let mut out = BufWriter::new(std::io::stdout().lock());
     let full = |out: &mut BufWriter<_>, when: &str, state: &str| {
         line(out, format_args!("state {when}"));
@@ -327,8 +327,8 @@ fn world(file: &str, assets: &std::path::Path) -> ExitCode {
         }
     };
     for item in &r.items {
-        let Item::Packet { packet, .. } = item else { continue };
-        if !lg_world::FED.contains(&packet.id) {
+        let Item::Packet { packet, micros } = item else { continue };
+        if !lg_app::FED.contains(&packet.id) {
             continue;
         }
         let Some(Ok(d)) = packets::decode(packet.id, &packet.body) else { continue }; // the app drops it
@@ -336,7 +336,7 @@ fn world(file: &str, assets: &std::path::Path) -> ExitCode {
         if is_map {
             full(&mut out, &format!("before {}", packet.name()), &w.dump());
         }
-        let problem = match w.packet(&d.packet) {
+        let problem = match w.packet(&d.packet, (*micros / 1000) as i64) {
             Ok(()) => "",
             Err(e) => {
                 eprintln!("world: {}: {}", packet.name(), e.0);

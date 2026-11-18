@@ -38,7 +38,20 @@ final class WorldOracle {
             PacketType.SERVERPLAYERSHOOT, PacketType.UPDATE, PacketType.NEWTICK, PacketType.MAPINFO, PacketType.STASIS,
             PacketType.TEXT, PacketType.NOTIFICATION, PacketType.EXALTATION_BONUS_CHANGED, PacketType.VAULT_UPDATE,
             PacketType.INVSWAP, PacketType.INVRESULT, PacketType.QUEST_FETCH_RESPONSE, PacketType.TRADEDONE,
-            PacketType.TRADEREQUESTED, PacketType.CRUCIBLE_RESPONSE);
+            PacketType.TRADEREQUESTED, PacketType.CRUCIBLE_RESPONSE,
+            // what the app's own listeners (ItemUse) are registered for
+            PacketType.FORGE_REQUEST, PacketType.FORGE_RESULT, PacketType.PETUPGRADEREQUEST, PacketType.INVDROP,
+            PacketType.BUYRESULT, PacketType.LOGIN_REWARD_MSG, PacketType.CHEST_REWARD_RESULT, PacketType.CLAIM_BATTLE_PASS,
+            PacketType.CLAIM_BP_MILESTONE_RESULT, PacketType.REDEEM_EXALTATION_REWARD, PacketType.TRADESTART,
+            PacketType.ACCEPTTRADE, PacketType.TRADEACCEPTED, PacketType.QUEST_REDEEM, PacketType.QUEST_REDEEM_RESPONSE);
+    /** TomatoPacketCapture's packets, in the order Tomato.packetRegister registers them (HELLO left out). */
+    private static final PacketType[] CAPTURE_ORDER = {PacketType.CREATE_SUCCESS, PacketType.ENEMYHIT,
+            PacketType.PLAYERSHOOT, PacketType.DAMAGE, PacketType.PLAYERHIT, PacketType.ENEMYSHOOT,
+            PacketType.GROUNDDAMAGE, PacketType.AOE, PacketType.MOVE, PacketType.USEITEM, PacketType.DEATH,
+            PacketType.SERVERPLAYERSHOOT, PacketType.UPDATE, PacketType.NEWTICK, PacketType.MAPINFO, PacketType.STASIS,
+            PacketType.TEXT, PacketType.NOTIFICATION, PacketType.EXALTATION_BONUS_CHANGED, PacketType.VAULT_UPDATE,
+            PacketType.INVSWAP, PacketType.INVRESULT, PacketType.QUEST_FETCH_RESPONSE, PacketType.TRADEDONE,
+            PacketType.TRADEREQUESTED, PacketType.CRUCIBLE_RESPONSE};
 
     private final TomatoData data;
     private final TomatoPacketCapture capture;
@@ -63,8 +76,28 @@ final class WorldOracle {
         }
         tomato.gui.security.ParsePanelGUI.editFont(new java.awt.Font("Monospaced", java.awt.Font.PLAIN, 12));   // as TomatoGUI
         data.bootload();
+        // the app's Register as at startup: TomatoPacketCapture first (Tomato.loadControllers), then the app's own
+        // listeners as TomatoGUI installs them
+        packets.packetcapture.register.Register r = packets.packetcapture.register.Register.INSTANCE;
+        for (PacketType t : CAPTURE_ORDER) r.register(t, capture::packetCapture);
+        lootgobbler.PacketDebug.install();
+        lootgobbler.ItemUse.install();
+        lootgobbler.CharacterStore.install();
+        lootgobbler.PlayerProfile.get().trackStSets();
+        waitFor(lootgobbler.PlayerProfile.get(), "counting");   // it counts on a thread of its own: done before the clock runs
+        lootgobbler.PlayerProfile.get().trackExalts();
+        lootgobbler.ItemCooldowns.install();
         waitForGameFileEnemies();
         tomato.backend.data.AbilityScalingManager.getInstance().initialize();   // the app does it at startup
+    }
+
+    /** Waits until an AtomicBoolean field of the object is false again. */
+    private static void waitFor(Object o, String field) {
+        try {
+            for (int i = 0; i < 600 && ((java.util.concurrent.atomic.AtomicBoolean) get(o, field)).get(); i++) Thread.sleep(50);
+        } catch (ReflectiveOperationException | InterruptedException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     /** The app reads the dungeons' enemies on a thread of its own; wait for it, so the result does not hang on timing. */
@@ -89,7 +122,8 @@ final class WorldOracle {
         String problem = "";
         if (packet instanceof MapInfoPacket) full("before " + name, state());   // how the map left ended
         try {
-            capture.packetCapture(packet);
+            packets.packetcapture.register.Register.INSTANCE.emitPacketLogs(packet);
+            waitFor(lootgobbler.PlayerProfile.get(), "counting");   // the ST set count runs on its own thread
         } catch (Throwable e) {
             if (System.getenv("WORLD_ORACLE_TRACE") != null) e.printStackTrace();
             StackTraceElement where = e.getStackTrace().length > 0 ? e.getStackTrace()[0] : null;
@@ -171,6 +205,7 @@ final class WorldOracle {
                 String fights = fights(e);
                 if (fights != null) b.append(fights).append('\n');
             }
+            records(b);
             return b.toString();
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException(e);
@@ -193,6 +228,62 @@ final class WorldOracle {
             first = false;
         }
         return b.toString();
+    }
+
+    /** The app's records: characters, profile (lg-app's dump). */
+    @SuppressWarnings("unchecked")
+    private static void records(StringBuilder b) throws ReflectiveOperationException {
+        lootgobbler.CharacterStore cs = lootgobbler.CharacterStore.get();
+        Map<Integer, lootgobbler.CharacterStore.Char> chars = new TreeMap<>((Map<Integer, lootgobbler.CharacterStore.Char>) get(cs, "chars"));
+        List<String> never = new ArrayList<>();
+        for (Object i : new TreeSet<>((java.util.Set<Integer>) get(cs, "neverSeen"))) never.add(String.valueOf(i));
+        String player = (String) get(cs, "playerName");
+        StringBuilder c = new StringBuilder("characters current=" + get(cs, "currentCharId") + " player="
+                + (player == null ? "null" : quote(player)) + " never=[" + String.join(",", never) + "]\n");
+        for (lootgobbler.CharacterStore.Char x : chars.values()) {
+            List<String> samples = new ArrayList<>();
+            for (lootgobbler.CharacterStore.Sample s : x.samples) samples.add(s.t + ":" + s.fame);
+            String dungeons = "null";
+            if (x.dungeons != null) {
+                List<String> d = new ArrayList<>();
+                for (Map.Entry<String, Integer> e : new TreeMap<>(x.dungeons).entrySet()) d.add(quote(e.getKey()) + ":" + e.getValue());
+                dungeons = "{" + String.join(",", d) + "}";
+            }
+            c.append("char ").append(x.charId).append(" cls=").append(x.classType).append(" name=").append(quote(x.className))
+                    .append(" skin=").append(x.skin).append(" tex=").append(x.tex1).append('/').append(x.tex2)
+                    .append(" pet=").append(x.petSkin).append('/').append(x.petName == null ? "null" : quote(x.petName))
+                    .append(" lvl=").append(x.level).append(" hp=").append(x.maxHp).append(" fame=").append(x.fame)
+                    .append(" maxed=").append(x.statsMaxed).append(" flags=").append(x.seasonal ? 1 : 0).append(x.crucible ? 1 : 0)
+                    .append(x.ritual ? 1 : 0).append(x.favorite ? 1 : 0)
+                    .append(" cl=").append(dbl(x.crucibleLoot)).append(" rl=").append(dbl(x.ritualLoot))
+                    .append(" ld=").append(x.lootDropUntil).append(" lt=").append(x.lootTierUntil).append(" fav=").append(x.favoriteAt)
+                    .append(" pack=").append(x.backpack ? 1 : 0).append(x.extender ? 1 : 0).append(" alive=").append(x.alive)
+                    .append(" died=").append(x.diedBy == null ? "null" : quote(x.diedBy))
+                    .append(" acct=").append(x.account == null ? "null" : quote(x.account))
+                    .append(" aliveAt=").append(x.aliveAt).append(" played=").append(x.lastPlayed)
+                    .append(" eq=").append(arr(x.equipment)).append(" ench=").append(arr(x.enchants))
+                    .append(" eids=").append(arr2(x.enchantIds)).append(" slots=").append(arr(x.slots))
+                    .append(" quick=").append(arr(x.quickslots)).append(" seids=").append(arr2(x.slotEnchantIds))
+                    .append(" dungeons=").append(dungeons).append(" samples=[").append(String.join(",", samples)).append("]\n");
+        }
+        b.append(c);
+        lootgobbler.PlayerProfile.Data p = lootgobbler.PlayerProfile.get().current();
+        b.append("profile ign=").append(quote(p.ign)).append(" guild=").append(quote(p.guild)).append(" rank=")
+                .append(p.guildRank).append(" at=").append(p.updatedAt)
+                .append(" sts=").append(p.stSetsDone == null ? "null" : p.stSetsDone.toString().replace(" ", ""))
+                .append(" exalts=").append(p.exaltChanges == null ? "null" : String.valueOf(p.exaltChanges.size())).append('\n');
+    }
+
+    private static String dbl(Double d) {
+        return d == null ? "null" : String.format("%016x", Double.doubleToRawLongBits(d));
+    }
+
+    private static String arr(int[] a) {
+        return a == null ? "null" : java.util.Arrays.toString(a).replace(" ", "");
+    }
+
+    private static String arr2(int[][] a) {
+        return a == null ? "null" : java.util.Arrays.deepToString(a).replace(" ", "");
     }
 
     /** Its name and the damage it took, as lg-world's dump writes them; null when there is nothing to tell. */

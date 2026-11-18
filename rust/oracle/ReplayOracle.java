@@ -210,6 +210,7 @@ public final class ReplayOracle {
             at += 16 + len;
             frames++;
             Instant when = Instant.ofEpochSecond(secs, nanos ? frac : frac * 1000);
+            ClockAgent.now = when.toEpochMilli();   // the app's clock, where the agent is loaded (--world)
             try {   // as Sniffer.processBufferedPackets and receivedPackets
                 RawPacket raw = LinkLayer.toEthernet(RawPacket.newPacket(frame, when), linkType);
                 EthernetPacket ethernet = raw.getNewEthernetPacket();

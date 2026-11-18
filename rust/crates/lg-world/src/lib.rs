@@ -220,7 +220,9 @@ pub struct World {
     pub dungeon_stats: loot::DungeonStats,
     /// Bags matched to who dropped them, in order: for the app's records to take.
     pub drops: Vec<loot::Drop>,
-    /// This computer's clock (ms) at the map's first and last tick.
+    /// Now, ms since 1970: the capture time of the packet being handled ([`World::set_time`]).
+    now: i64,
+    /// The clock at the map's first and last tick.
     first_tick_ms: Option<i64>,
     last_tick_ms: Option<i64>,
     /// The players on Java's security panel (`ParsePanelGUI`): showing them reads stats that throw when missing.
@@ -261,10 +263,21 @@ impl World {
             windows: loot::Windows::new(),
             dungeon_stats: loot::DungeonStats::default(),
             drops: Vec::new(),
+            now: 0,
             first_tick_ms: None,
             last_tick_ms: None,
             data,
         }
+    }
+
+    /// The time the next packets were captured, ms since 1970: what "now" means for the world (as for the Java app,
+    /// whose clock is the computer's while it captures live).
+    pub fn set_time(&mut self, ms: i64) {
+        self.now = ms;
+    }
+
+    pub fn now(&self) -> i64 {
+        self.now
     }
 
     pub fn data(&self) -> &GameData {
@@ -281,13 +294,23 @@ impl World {
         if x < MAP_SIZE && y < MAP_SIZE { self.tiles[x * MAP_SIZE + y] } else { 0 }
     }
 
+    /// A tick's own part (Java `updateNewTick`); the app's per-tick work comes between it and [`World::after_tick`].
+    pub fn tick_part(&mut self, p: &Decoded) -> Result<(), Abort> {
+        if let Decoded::NewTick(t) = p { self.new_tick(t) } else { Ok(()) }
+    }
+
+    /// What `TomatoPacketCapture` does after a tick: your crucible bonus.
+    pub fn after_tick(&mut self) {
+        self.crucible_update();
+    }
+
     /// One packet, as `TomatoPacketCapture` hands it to `TomatoData`.
     pub fn packet(&mut self, p: &Decoded) -> Result<(), Abort> {
         match p {
             Decoded::Move(m) => self.moved(m),
-            Decoded::NewTick(t) => {
-                self.new_tick(t)?;
-                self.crucible_update();
+            Decoded::NewTick(_) => {
+                self.tick_part(p)?;
+                self.after_tick();
             }
             Decoded::Update(u) => {
                 self.update(u)?;
@@ -397,7 +420,7 @@ impl World {
     /// Java `updateNewTick`.
     fn new_tick(&mut self, t: &NewTick) -> Result<(), Abort> {
         self.time = i64::from(t.server_real_time_ms);
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
+        let now = self.now;
         self.last_tick_ms = Some(now);
         self.first_tick_ms.get_or_insert(now);
         for status in &t.status {

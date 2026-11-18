@@ -35,7 +35,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '25'   # the oracle's clock agent uses the Class-File API (Java 24+)
       - run: rustup toolchain install stable --profile minimal
       - name: Build the Java client
         working-directory: .

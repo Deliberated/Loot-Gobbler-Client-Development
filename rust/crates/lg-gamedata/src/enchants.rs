@@ -301,6 +301,34 @@ pub fn parse_ok(code: &str) -> bool {
     true
 }
 
+/// Java `LootEvents.enchantIds`: the item's enchantments, -1 for an empty slot (locked and missing slots left
+/// out); none for a malformed code or the empty code.
+pub fn enchant_ids(code: Option<&str>) -> Vec<i32> {
+    let Some(code) = code else { return Vec::new() };
+    if code.is_empty() || code == "AAIE_f_9__3__f8=" {
+        return Vec::new();
+    }
+    let Ok(raw) = six_bit_bytes(code) else { return Vec::new() };
+    if raw.len() < 3 {
+        return Vec::new();
+    }
+    if i16::from_le_bytes([raw[1], raw[2]]) != 1026 {
+        return Vec::new();
+    }
+    let mut ids = Vec::new();
+    let mut at = 3;
+    for _ in 0..4 {
+        let Some(b) = raw.get(at..at + 2) else { break };
+        at += 2;
+        let id = i16::from_le_bytes([b[0], b[1]]);
+        if id == -3 || id == -2 {
+            continue;
+        }
+        ids.push(i32::from(id));
+    }
+    ids
+}
+
 /// Java `getEnchantStrings`: the enchant codes of the four equipped items, from the `UNIQUE_DATA_STRING` stat.
 pub fn slot_codes(unique_data: Option<&str>) -> [String; 4] {
     let mut out: [String; 4] = Default::default();
