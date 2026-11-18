@@ -67,3 +67,7 @@ season-art/
 lootgobbler.lock
 chat-spam-keywords.json
 upe.json
+
+# --- Recorded game sessions: the HELLO packet in them carries your game login token. Never commit them. ---
+*.pcap
+*.pcapng
