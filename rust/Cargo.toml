@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/lg-capture", "crates/lg-protocol", "crates/lg-replay"]
+members = ["crates/lg-capture", "crates/lg-gamedata", "crates/lg-protocol", "crates/lg-replay"]
 
 [workspace.package]
 version = "0.1.0"

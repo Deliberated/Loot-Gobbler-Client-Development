@@ -9,3 +9,4 @@ publish.workspace = true
 [dependencies]
 lg-capture = { path = "../lg-capture" }
 lg-protocol = { path = "../lg-protocol" }
+lg-gamedata = { path = "../lg-gamedata" }

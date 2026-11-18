@@ -7,6 +7,10 @@ name = "lg-capture"
 version = "0.1.0"
 
 [[package]]
+name = "lg-gamedata"
+version = "0.1.0"
+
+[[package]]
 name = "lg-protocol"
 version = "0.1.0"
 
@@ -15,5 +19,6 @@ name = "lg-replay"
 version = "0.1.0"
 dependencies = [
  "lg-capture",
+ "lg-gamedata",
  "lg-protocol",
 ]

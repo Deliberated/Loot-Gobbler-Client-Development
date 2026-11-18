@@ -4,6 +4,7 @@
 //!   lg-replay <session.pcap> --oracle   one line per packet to compare with the Java client (oracle/compare.sh)
 //!   lg-replay <session.pcap> --fields   every field of each packet that has a decoder, to compare the same way
 //!   lg-replay decoded-ids               the ids of the packets that have a decoder, for oracle/compare.sh
+//!   lg-replay gamedata <assets>         the game data read from an assets folder, to compare with Java
 //!   lg-replay <session.pcap> --stats    only the summary
 //!   lg-replay synth <out.pcap> [seed]   writes a made-up session, for testing without a recording
 
@@ -27,6 +28,7 @@ fn main() -> ExitCode {
             eprintln!("{out}: {} packets in, {} out (seed {seed})", s.incoming.len(), s.outgoing.len());
             ExitCode::SUCCESS
         }
+        [cmd, dir] if cmd == "gamedata" => gamedata(std::path::Path::new(dir)),
         [cmd] if cmd == "decoded-ids" => {
             println!("{}", packets::DECODED_IDS.iter().map(u8::to_string).collect::<Vec<_>>().join(","));
             ExitCode::SUCCESS
@@ -138,6 +140,40 @@ fn run(file: &str, mode: Mode) -> ExitCode {
         for ((dir, name), n) in by_count {
             eprintln!("  {n:>7}  {dir:<3} {name}");
         }
+    }
+    ExitCode::SUCCESS
+}
+
+/// Every object, tile and class as `oracle/GameDataOracle.java` prints them.
+fn gamedata(dir: &std::path::Path) -> ExitCode {
+    let d = lg_gamedata::GameData::load(dir);
+    for p in &d.problems {
+        eprintln!("{p}");
+    }
+    let mut out = BufWriter::new(std::io::stdout().lock());
+    let mut ids: Vec<_> = d.objects.keys().copied().collect();
+    ids.sort_unstable();
+    for id in ids {
+        let o = &d.objects[&id];
+        let p: Vec<String> =
+            o.projectiles.iter().map(|p| format!("{}/{}/{}/{}", p.min_damage, p.max_damage, p.armor_piercing, p.slot_type)).collect();
+        line(
+            &mut out,
+            format_args!("object {id}|{}|{}|{}|{}|{}|{}|{}", o.name(), o.class, o.group, o.label, o.texture, o.id_name, p.join(" ")),
+        );
+    }
+    let mut ids: Vec<_> = d.tiles.keys().copied().collect();
+    ids.sort_unstable();
+    for id in ids {
+        let t = &d.tiles[&id];
+        line(&mut out, format_args!("tile {id}|{}|{}|{}", t.texture, t.damage, t.id_name));
+    }
+    let join = |v: &[i32]| v.iter().map(i32::to_string).collect::<Vec<_>>().join(" ");
+    for c in &d.classes {
+        line(&mut out, format_args!("class {}|{}|{}|{}|{}", c.id, c.name, join(&c.max_stats), join(&c.base_gear), join(&c.weapon_group)));
+    }
+    if out.flush().is_err() {
+        return ExitCode::SUCCESS;
     }
     ExitCode::SUCCESS
 }
