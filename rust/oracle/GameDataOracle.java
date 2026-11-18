@@ -13,7 +13,11 @@ import java.util.TreeMap;
  * tile and class, as `lg-replay gamedata <assets>` does. Only for comparing the Rust port (rust/oracle/compare-gamedata.sh).
  */
 public final class GameDataOracle {
+    /** The output; System.out goes to the log, as the app's own messages land there ("initialized with ..."). */
+    private static final java.io.PrintStream OUT = System.out;
+
     public static void main(String[] args) throws Exception {
+        System.setOut(System.err);
         for (Map.Entry<Integer, Object> e : sorted("objectID").entrySet()) {
             Object a = e.getValue();
             StringBuilder p = new StringBuilder();
@@ -25,12 +29,12 @@ public final class GameDataOracle {
                             .append('/').append(get(x, "slotType")).append(' ');
                 }
             }
-            System.out.println("object " + e.getKey() + "|" + IdToAsset.objectName(e.getKey()) + "|" + get(a, "clazz") + "|"
+            OUT.println("object " + e.getKey() + "|" + IdToAsset.objectName(e.getKey()) + "|" + get(a, "clazz") + "|"
                     + get(a, "group") + "|" + get(a, "label") + "|" + get(a, "texture") + "|" + get(a, "idName") + "|" + p.toString().trim());
         }
         for (Map.Entry<Integer, Object> e : sorted("tileID").entrySet()) {
             Object a = e.getValue();
-            System.out.println("tile " + e.getKey() + "|" + get(a, "texture") + "|" + get(a, "tileDmg") + "|" + get(a, "idName"));
+            OUT.println("tile " + e.getKey() + "|" + get(a, "texture") + "|" + get(a, "tileDmg") + "|" + get(a, "idName"));
         }
         for (CharacterClass c : CharacterClass.CHAR_CLASS_LIST) {
             StringBuilder b = new StringBuilder("class " + c.id + "|" + c.name + "|");
@@ -39,7 +43,45 @@ public final class GameDataOracle {
             for (int v : c.baseGear) b.append(v).append(' ');
             b.append('|');
             for (int v : c.weaponGroup) b.append(v).append(' ');
-            System.out.println(b.toString().replace(" |", "|").trim());
+            OUT.println(b.toString().replace(" |", "|").trim());
+        }
+        abilitiesAndEnchants();
+    }
+
+    /** Ability scaling (equip.xml) and enchant effects (enchantments.xml). */
+    @SuppressWarnings("unchecked")
+    private static void abilitiesAndEnchants() throws Exception {
+        tomato.backend.data.AbilityScalingManager asm = tomato.backend.data.AbilityScalingManager.getInstance();
+        asm.initialize();
+        Map<Integer, Object> scaling = new TreeMap<>((Map<Integer, Object>) get(asm, "scalingData"));
+        for (Map.Entry<Integer, Object> e : scaling.entrySet()) {
+            tomato.backend.data.AbilityScalingManager.AbilityScalingData d =
+                    (tomato.backend.data.AbilityScalingManager.AbilityScalingData) e.getValue();
+            OUT.printf("scaling %d|%d|%d|%08x|%d%n", e.getKey(), d.scalingStat.get(), d.scalingMin,
+                    Float.floatToRawIntBits(d.damagePerStat), d.numShots);
+        }
+        for (Map.Entry<Integer, Integer> e : new TreeMap<>((Map<Integer, Integer>) get(asm, "projectileToWeaponMap")).entrySet()) {
+            OUT.println("shotby " + e.getKey() + "|" + e.getValue());
+        }
+        Field ef = tomato.realmshark.ParseEnchants.class.getDeclaredField("ENCHANT_EFFECTS");
+        ef.setAccessible(true);
+        Map<Short, Object> effects = new TreeMap<>((Map<Short, Object>) ef.get(null));
+        Field rf = tomato.realmshark.ParseEnchants.class.getDeclaredField("ENCHANT_REGEN");
+        rf.setAccessible(true);
+        Map<Short, Object> regen = (Map<Short, Object>) rf.get(null);
+        Field lf = tomato.realmshark.ParseEnchants.class.getDeclaredField("ENCHANT_LOOT_BONUS");
+        lf.setAccessible(true);
+        Map<Short, Float> loot = (Map<Short, Float>) lf.get(null);
+        for (Map.Entry<Short, Object> e : effects.entrySet()) {
+            Object x = e.getValue(), r = regen.get(e.getKey());
+            String floats = "";
+            for (Object o : new Object[]{get(x, "minDamageMult"), get(x, "maxDamageMult"), get(x, "rateOfFireMult"),
+                    get(x, "statDamageMult"), get(r, "manaFlatPerSec"), get(r, "manaPercentOfMaxPerSec"),
+                    get(r, "lifeFlatPerSec"), get(r, "lifePercentOfMaxPerSec"), loot.get(e.getKey())}) {
+                floats += String.format("%08x ", Float.floatToRawIntBits((Float) o));
+            }
+            OUT.println("enchant " + e.getKey() + "|" + tomato.realmshark.ParseEnchants.ENCHANTS.get(e.getKey()) + "|"
+                    + tomato.realmshark.ParseEnchants.ENCHANT_INTERNAL_IDS.get(e.getKey()) + "|" + floats.trim());
         }
     }
 

@@ -6,7 +6,11 @@
 //!   texture;label;id name`
 //! - `TileID.list`: every tile type: `id;texture;damage;id name`
 //! - `xml/players.xml`: the character classes
+//! - `xml/equip.xml`: abilities whose damage scales with a stat ([`abilities`])
+//! - `xml/enchantments.xml`: what enchantments do ([`enchants`])
 
+pub mod abilities;
+pub mod enchants;
 mod xml;
 
 use std::collections::{BTreeMap, HashMap};
@@ -107,6 +111,8 @@ pub struct GameData {
     pub tiles: HashMap<i32, Tile>,
     /// In the file's order, which is the game's (Java: `CharacterClass.CHAR_CLASS_LIST`).
     pub classes: Vec<Class>,
+    pub abilities: abilities::Abilities,
+    pub enchants: HashMap<i16, enchants::Enchant>,
     /// What went wrong while reading, for the log.
     pub problems: Vec<String>,
 }
@@ -128,6 +134,16 @@ impl GameData {
             if let Some(e) = problem {
                 d.problems.push(format!("players.xml: {e}"));
             }
+        }
+        if let Some(s) = read("xml/equip.xml") {
+            let (a, problem) = abilities::parse(&s);
+            d.abilities = a;
+            d.problems.extend(problem);
+        }
+        if let Some(s) = read("xml/enchantments.xml") {
+            let (e, problem) = enchants::parse(&s);
+            d.enchants = e;
+            d.problems.extend(problem);
         }
         d
     }
@@ -313,7 +329,7 @@ fn read_classes(s: &str, classes: &mut Vec<Class>) -> Result<(), String> {
             max("HpRegen")?,
             max("MpRegen")?,
         ];
-        let equipment = object.child("Equipment").map(|c| c.text.clone()).unwrap_or_default();
+        let equipment = object.child("Equipment").map(xml::Element::text).unwrap_or_default();
         let items = split_java(&equipment, ',');
         let mut base_gear = [0, 0, 0, 2639];
         for (i, gear) in base_gear.iter_mut().take(3).enumerate() {

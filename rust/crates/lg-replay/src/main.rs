@@ -380,6 +380,37 @@ fn gamedata(dir: &std::path::Path) -> ExitCode {
     for c in &d.classes {
         line(&mut out, format_args!("class {}|{}|{}|{}|{}", c.id, c.name, join(&c.max_stats), join(&c.base_gear), join(&c.weapon_group)));
     }
+    let mut scaling: Vec<_> = d.abilities.scaling.values().collect();
+    scaling.sort_by_key(|s| s.weapon_id);
+    for s in scaling {
+        line(&mut out, format_args!("scaling {}|{}|{}|{:08x}|{}", s.weapon_id, s.stat, s.min, s.damage_per_stat.to_bits(), s.num_shots));
+    }
+    let mut shot: Vec<_> = d.abilities.projectile_to_weapon.iter().collect();
+    shot.sort();
+    for (p, w) in shot {
+        line(&mut out, format_args!("shotby {p}|{w}"));
+    }
+    let mut ench: Vec<_> = d.enchants.values().collect();
+    ench.sort_by_key(|e| e.id);
+    for e in ench {
+        let f = e.effect;
+        let floats: Vec<String> = [
+            f.min_damage,
+            f.max_damage,
+            f.rate_of_fire,
+            f.stat_damage,
+            f.mana_flat_per_sec,
+            f.mana_percent_per_sec,
+            f.life_flat_per_sec,
+            f.life_percent_per_sec,
+            f.loot_bonus,
+        ]
+        .iter()
+        .map(|x| format!("{:08x}", x.to_bits()))
+        .collect();
+        let opt = |s: &Option<String>| s.clone().unwrap_or_else(|| "null".into());
+        line(&mut out, format_args!("enchant {}|{}|{}|{}", e.id, opt(&e.name), opt(&e.internal_id), floats.join(" ")));
+    }
     if out.flush().is_err() {
         return ExitCode::SUCCESS;
     }
