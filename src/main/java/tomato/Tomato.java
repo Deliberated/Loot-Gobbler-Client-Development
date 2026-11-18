@@ -307,6 +307,9 @@ public class Tomato {
             PacketType.TRADEREQUESTED,
             packCap::packetCapture
         );
+        // season missions: progress steps as you play, and a claim (then the new state is fetched)
+        Register.INSTANCE.register(PacketType.UNKNOWN165, packCap::packetCapture);
+        Register.INSTANCE.register(PacketType.CLAIM_MISSION, packCap::packetCapture);
 
         // Register CrucibleResponsePacket if it exists
         try {

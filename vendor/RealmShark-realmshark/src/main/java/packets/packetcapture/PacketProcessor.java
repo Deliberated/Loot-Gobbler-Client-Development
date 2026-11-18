@@ -152,7 +152,10 @@ public class PacketProcessor extends Thread implements PProcessor {
                 pData.printError(packetType);
                 lootgobbler.PacketDebug.problem(type, size, data.array(), PacketType.byOrdinal(type) + " partly parsed");
             }
-        } catch (Exception e) {
+        } catch (Exception | OutOfMemoryError e) {
+            // OutOfMemoryError: a garbled count (an UPDATE claiming millions of tiles) makes a packet ask for a huge
+            // array. Only that allocation failed, so the packet is dropped like any unreadable one; uncaught, it
+            // ended the sniffer thread and packet capture stopped.
             lootgobbler.PacketDebug.problem(type, size, data.array(), PacketType.byOrdinal(type) + " failed");
             Util.printLogs("Buffer exploded: " + pData.getIndex() + "/" + pData.size());
             debugPackets(type, data.array());
@@ -166,7 +169,13 @@ public class PacketProcessor extends Thread implements PProcessor {
      */
     private void debugPackets(int type, byte[] data) {
         Packet packetType = PacketType.getPacket(type).factory();
-        Util.printLogs(PacketType.byOrdinal(type) + " " + packetType);
+        String shown;
+        try {
+            shown = String.valueOf(packetType);
+        } catch (RuntimeException e) {
+            shown = "";   // an empty packet: some toString() expect fields only reading fills in (UPDATE's position)
+        }
+        Util.printLogs(PacketType.byOrdinal(type) + " " + shown);
         Util.printLogs(Arrays.toString(data));
     }
 
