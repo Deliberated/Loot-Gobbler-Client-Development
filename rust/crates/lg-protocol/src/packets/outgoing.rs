@@ -175,3 +175,13 @@ record! {
         unknown: i8 = r.i8()?,
     }
 }
+
+record! {
+    /// CLAIM_MISSION (163): the player claims a season mission.
+    ClaimMission(r) {
+        season_id: i32 = r.i32()?,
+        mission_positional_idx: i8 = r.i8()?,
+        request_id: i8 = r.i8()?,
+        mask: i16 = r.i16()?,
+    }
+}

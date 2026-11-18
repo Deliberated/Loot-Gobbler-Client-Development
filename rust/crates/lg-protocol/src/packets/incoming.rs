@@ -686,6 +686,13 @@ record! {
 }
 
 record! {
+    /// UNKNOWN165 (165): mission progress steps, as a string (Java: `UnknownPacket165`).
+    MissionProgress(r) {
+        unknown_string: String = r.string()?,
+    }
+}
+
+record! {
     /// STASIS (166): an object is put in stasis.
     Stasis(r) {
         entity_id: i32 = r.i32()?,

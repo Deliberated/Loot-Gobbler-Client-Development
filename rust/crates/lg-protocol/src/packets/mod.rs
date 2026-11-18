@@ -78,6 +78,8 @@ packets! {
     119 => ForgeResult,
     149 => ClaimBattlePassItem,
     150 => ClaimBpMilestoneResult,
+    163 => ClaimMission,
+    165 => MissionProgress,
     166 => Stasis,
     172 => ChestRewardResult,
     183 => CrucibleResponse,
