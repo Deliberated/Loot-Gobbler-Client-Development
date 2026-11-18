@@ -567,7 +567,7 @@ impl World {
         };
         let attacker = self.player_list.contains(&shooter).then_some(shooter);
         self.shot_hit(h.target_id, attacker, shot.as_ref())?;
-        self.entity_hit_list.insert(h.target_id);
+        self.first_hit(h.target_id, attacker);
         self.entity(h.target_id).fought = true;
         Ok(())
     }
@@ -586,10 +586,21 @@ impl World {
         if d.damage_amount > 0 {
             let shot = Projectile::new(i32::from(d.damage_amount), false);
             self.hit(d.target_id, attacker, &shot, shot.damage)?;
-            self.entity_hit_list.insert(d.target_id);
+            self.first_hit(d.target_id, attacker);
         }
         self.entity(d.target_id).fought = true;
         Ok(())
+    }
+
+    /// The first hit on an object: it is on the hit list, and if it was yours, counted for the dungeon.
+    fn first_hit(&mut self, target: i32, attacker: Option<i32>) {
+        if self.entity_hit_list.insert(target)
+            && attacker.and_then(|a| self.entities.get(&a)).is_some_and(|a| a.is_user)
+            && let Some(m) = &self.map
+        {
+            let (name, t) = (m.name.clone(), self.entities[&target].object_type);
+            self.dungeon_stats.entity_damage(&name, t);
+        }
     }
 
     /// Java `calculatePlayerDmg`: damage to you after your defense. (Java reads the newer conditions from the old

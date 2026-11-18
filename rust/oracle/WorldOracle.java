@@ -53,6 +53,7 @@ final class WorldOracle {
         new tomato.gui.dps.DpsGUI(data);
         new tomato.gui.chat.ChatGUI(data);
         new tomato.gui.myinfo.MyInfoGUI(data);
+        new tomato.gui.stats.LootGUI(data);
         try {
             Field quests = tomato.gui.TomatoGUI.class.getDeclaredField("questPanel");
             quests.setAccessible(true);
@@ -125,6 +126,34 @@ final class WorldOracle {
             b.append("dropped ").append(ids(((Map<?, ?>) get(data, "dropList")).keySet())).append('\n');
             b.append("crystals ").append(ids((Collection<?>) get(data, "crystalTracker"))).append('\n');
             b.append("bags ").append(ids((Collection<?>) get(data, "lootBags"))).append('\n');
+            List<String>[] bags = new List[2];
+            ArrayList<?>[] containers = (ArrayList<?>[]) get(data, "lootTickContainer");
+            for (int i = 0; i < 2; i++) {
+                bags[i] = new ArrayList<>();
+                for (Object e : containers[i]) bags[i].add(String.valueOf(((Entity) e).id));
+            }
+            List<String> killed = new ArrayList<>();
+            for (Object e : (List<?>) get(data, "killedEntitys")) killed.add(String.valueOf(((Entity) e).id));
+            Object w = get(data, "lootAttribution");
+            Object variant = get(w, "forcedVariantSuffix");
+            b.append("loot toggle=").append(get(data, "lootTickToggle")).append(" bags=[").append(String.join(",", bags[0]))
+                    .append("]/[").append(String.join(",", bags[1])).append("] killed=[").append(String.join(",", killed))
+                    .append("] window=").append(get(w, "nextTickAttributionMobId")).append('/').append(get(w, "nextTickAttributionSeed"))
+                    .append('/').append(get(w, "remainingAttributionTicks")).append('/').append(variant == null ? "null" : variant).append('\n');
+            tomato.backend.data.DungeonStatData ds = (tomato.backend.data.DungeonStatData) get(data, "dungeonStatData");
+            b.append("dungeonstats info=").append(ds.info == null ? "null" : quote((String) get(ds.info, "name"))).append('\n');
+            for (Map.Entry<String, tomato.backend.data.DungeonStatData.DungeonInfo> e : ds.data.entrySet()) {
+                List<String> damaged = new ArrayList<>();
+                for (Map.Entry<?, ?> d : ((Map<?, ?>) get(e.getValue(), "entityDamaged")).entrySet()) damaged.add(d.getKey() + ":" + d.getValue());
+                List<String> loot = new ArrayList<>();
+                for (Map.Entry<?, ?> l : ((Map<?, ?>) get(e.getValue(), "entityLoot")).entrySet()) {
+                    List<String> items = new ArrayList<>();
+                    for (Map.Entry<?, ?> i : ((Map<?, ?>) get(l.getValue(), "lootList")).entrySet()) items.add(i.getKey() + ":" + i.getValue());
+                    loot.add(l.getKey() + ":{" + String.join(",", items) + "}");
+                }
+                b.append("dungeon ").append(quote(e.getKey())).append(" entered=").append(get(e.getValue(), "enteredDungeon"))
+                        .append(" damaged=[").append(String.join(",", damaged)).append("] loot=[").append(String.join(",", loot)).append("]\n");
+            }
             Object rng = get(data, "rng");
             Class<?> crucible = tomato.backend.data.CrucibleBonusManager.class;
             List<String> mult = new ArrayList<>();

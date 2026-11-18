@@ -12,6 +12,7 @@
 
 pub mod damage;
 mod json;
+pub mod loot;
 pub mod stats;
 
 use lg_gamedata::GameData;
@@ -198,29 +199,38 @@ pub struct World {
     pub crystals: BTreeSet<i32>,
     pub loot_bags: BTreeSet<i32>,
     loot_tick_toggle: usize,
-    loot_tick_bags: [Vec<i32>; 2],
+    loot_tick_bags: [Vec<loot::Held>; 2],
     /// Object types that left the view while hit by you (the damage part is not ported yet, so empty).
     entity_hit_list: HashSet<i32>,
-    killed: Vec<i32>,
+    killed: Vec<loot::Held>,
     tiles: Vec<u16>,
     petyard: bool,
     own_positions: Vec<WorldPos>,
     standing_id: i32,
-    /// Enemy type -> the one dungeon it is in, for guessing the map; empty: no guessing.
-    enemy_dungeons: HashMap<i32, String>,
+    /// Enemy type -> the one dungeon it is in, for guessing the map: worked out at the first guess (Java keeps it).
+    enemy_dungeons: Option<HashMap<i32, String>>,
     guess_votes: BTreeMap<String, BTreeSet<i32>>,
     /// The character statistics string last decoded (kept across maps).
     character_stats: Option<String>,
     /// Shots, the damage roll, crucible bonuses.
     pub damage: damage::DamageState,
+    /// The bosses' loot windows.
+    windows: loot::Windows,
+    /// Per dungeon what you hit and what dropped (Java: `dungeon.stats`).
+    pub dungeon_stats: loot::DungeonStats,
+    /// Bags matched to who dropped them, in order: for the app's records to take.
+    pub drops: Vec<loot::Drop>,
+    /// This computer's clock (ms) at the map's first and last tick.
+    first_tick_ms: Option<i64>,
+    last_tick_ms: Option<i64>,
     /// The players on Java's security panel (`ParsePanelGUI`): showing them reads stats that throw when missing.
     panel: BTreeSet<i32>,
     data: GameData,
 }
 
 impl World {
-    /// A world knowing the game data and, for guessing the map, which dungeon each enemy type belongs to.
-    pub fn new(data: GameData, enemy_dungeons: HashMap<i32, String>) -> World {
+    /// A world knowing the game data.
+    pub fn new(data: GameData) -> World {
         World {
             map: None,
             map_guessed: false,
@@ -243,11 +253,16 @@ impl World {
             petyard: false,
             own_positions: Vec::new(),
             standing_id: -1,
-            enemy_dungeons,
+            enemy_dungeons: None,
             guess_votes: BTreeMap::new(),
             character_stats: None,
             damage: damage::DamageState::new(),
             panel: BTreeSet::new(),
+            windows: loot::Windows::new(),
+            dungeon_stats: loot::DungeonStats::default(),
+            drops: Vec::new(),
+            first_tick_ms: None,
+            last_tick_ms: None,
             data,
         }
     }
@@ -309,6 +324,8 @@ impl World {
             Decoded::Aoe(a) => self.aoe(a)?,
             Decoded::GroundDamage(g) => self.ground(g)?,
             Decoded::Text(t) => {
+                let seed = self.map.as_ref().map_or(-1, |m| m.seed);
+                self.windows.text(t, seed);
                 if t.text == damage::DAMMAH_COUNTERED
                     && let Some(e) = self.entities.get_mut(&t.object_id)
                 {
@@ -337,6 +354,7 @@ impl World {
         self.standing_id = -1;
         self.map_guess_failed = false;
         self.guess_votes.clear();
+        self.loot_new_map();
         // clear()
         self.world_player_id = -1;
         self.char_id = -1;
@@ -351,6 +369,8 @@ impl World {
         self.entity_hit_list.clear();
         self.tiles.fill(0);
         self.petyard = false;
+        self.first_tick_ms = None;
+        self.last_tick_ms = None;
         self.damage.new_map(m.fp);
         self.panel.clear();
         // petYardCheck
@@ -377,6 +397,9 @@ impl World {
     /// Java `updateNewTick`.
     fn new_tick(&mut self, t: &NewTick) -> Result<(), Abort> {
         self.time = i64::from(t.server_real_time_ms);
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
+        self.last_tick_ms = Some(now);
+        self.first_tick_ms.get_or_insert(now);
         for status in &t.status {
             let id = status.object_id;
             self.entity(id).update_stats(status)?;
@@ -385,10 +408,7 @@ impl World {
                 self.found_yourself(id);
             }
         }
-        // lootTick: the bags of two ticks ago are matched to who dropped them (not ported yet)
-        self.loot_tick_toggle ^= 1;
-        self.loot_tick_bags[self.loot_tick_toggle].clear();
-        self.killed.clear();
+        self.loot_tick();
         Ok(())
     }
 
@@ -412,7 +432,7 @@ impl World {
                 self.player_left(id)?;
             }
             if self.entity_hit_list.contains(&id) {
-                self.killed.push(id);
+                self.killed.push(loot::Held::Live(id));
             }
             self.player_list_updated.remove(&id);
             self.panel.remove(&id);
@@ -442,7 +462,7 @@ impl World {
             self.crystals.insert(id);
         } else if lg_gamedata::is_loot_drop_bag(object_type) && !self.loot_bags.contains(&id) {
             self.loot_bags.insert(id);
-            self.loot_tick_bags[self.loot_tick_toggle].push(id);
+            self.loot_tick_bags[self.loot_tick_toggle].push(loot::Held::Live(id));
         } else if self.data.is_player_class(object_type) {
             self.player_list.insert(id);
             self.player_list_updated.insert(id);
@@ -548,7 +568,10 @@ impl World {
         if self.map_guessed {
             return;
         }
-        let Some(dungeon) = self.enemy_dungeons.get(&object_type).cloned() else { return };
+        if self.enemy_dungeons.is_none() {
+            self.enemy_dungeons = Some(self.enemies_by_dungeon());
+        }
+        let Some(dungeon) = self.enemy_dungeons.as_ref().and_then(|e| e.get(&object_type)).cloned() else { return };
         let votes = self.guess_votes.entry(dungeon.clone()).or_default();
         votes.insert(object_type);
         let boss = self.data.object(object_type).is_some_and(|o| o.has_label("BOSS"));
@@ -578,6 +601,36 @@ impl World {
         let _ = writeln!(b, "dropped {}", ids(&self.dropped));
         let _ = writeln!(b, "crystals {}", ids(&self.crystals));
         let _ = writeln!(b, "bags {}", ids(&self.loot_bags));
+        let held = |l: &[loot::Held]| {
+            l.iter()
+                .map(|h| match h {
+                    loot::Held::Live(id) => id.to_string(),
+                    loot::Held::Copy(e) => e.id.to_string(),
+                })
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        let w = &self.windows;
+        let _ = writeln!(
+            b,
+            "loot toggle={} bags=[{}]/[{}] killed=[{}] window={}",
+            self.loot_tick_toggle,
+            held(&self.loot_tick_bags[0]),
+            held(&self.loot_tick_bags[1]),
+            held(&self.killed),
+            w.describe()
+        );
+        let ds = &self.dungeon_stats;
+        let _ = writeln!(b, "dungeonstats info={}", ds.info.as_deref().map_or("null".into(), quote));
+        for (name, i) in &ds.data {
+            let damaged: Vec<String> = i.damaged.iter().map(|(t, n)| format!("{t}:{n}")).collect();
+            let loot: Vec<String> = i
+                .loot
+                .iter()
+                .map(|(t, items)| format!("{t}:{{{}}}", items.iter().map(|(k, v)| format!("{k}:{v}")).collect::<Vec<_>>().join(",")))
+                .collect();
+            let _ = writeln!(b, "dungeon {} entered={} damaged=[{}] loot=[{}]", quote(name), i.entered, damaged.join(","), loot.join(","));
+        }
         let c = &self.damage.crucible;
         let mut mult: Vec<_> = c.damage.iter().map(|(k, v)| format!("{}:{:016x}", quote(k), v.to_bits())).collect();
         mult.sort();

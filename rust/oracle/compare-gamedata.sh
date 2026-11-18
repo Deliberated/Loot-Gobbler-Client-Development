@@ -11,13 +11,13 @@ jar=$(ls -t "$repo"/build/libs/LootGobbler-*.jar 2>/dev/null | head -1 || true)
 cargo=$(command -v cargo || echo "$HOME/.cargo/bin/cargo")
 
 work=$(mktemp -d)
-trap 'rm -rf "${work:?}"' EXIT
+if [ -n "${LG_KEEP:-}" ]; then echo "keeping $work" >&2; else trap 'rm -rf "${work:?}"' EXIT; fi
 javac -nowarn -cp "$jar" -d "$work/classes" "$here/GameDataOracle.java"
 mkdir "$work/run" && ln -s "$assets" "$work/run/assets"   # Java reads ./assets
 (cd "$work/run" && java -Djava.awt.headless=true -cp "$jar:$work/classes" oracle.GameDataOracle) > "$work/java.txt" 2> "$work/java.log"
 (cd "$here/.." && "$cargo" run -q --release -p lg-replay -- gamedata "$assets") > "$work/rust.txt" 2> "$work/rust.log"
 if cmp -s "$work/java.txt" "$work/rust.txt"; then
-    echo "same game data: $(grep -c '^object' "$work/rust.txt") objects, $(grep -c '^tile' "$work/rust.txt") tiles, $(grep -c '^class' "$work/rust.txt") classes, $(grep -c '^scaling' "$work/rust.txt") scaling abilities, $(grep -c '^shotby' "$work/rust.txt") ability projectiles, $(grep -c '^enchant' "$work/rust.txt") enchantments"
+    echo "same game data: $(grep -c '^object' "$work/rust.txt") objects, $(grep -c '^tile' "$work/rust.txt") tiles, $(grep -c '^class' "$work/rust.txt") classes, $(grep -c '^scaling' "$work/rust.txt") scaling abilities, $(grep -c '^shotby' "$work/rust.txt") ability projectiles, $(grep -c '^enchant' "$work/rust.txt") enchantments, $(grep -c '^ID_TO_NAME_PORTAL' "$work/rust.txt") dungeon portals, $(grep -c '^enemy' "$work/rust.txt") enemies of one dungeon"
 else
     echo "DIFFERENT game data: Java $(wc -l < "$work/java.txt") lines, Rust $(wc -l < "$work/rust.txt")"
     diff "$work/java.txt" "$work/rust.txt" | cut -c1-300 | head -30

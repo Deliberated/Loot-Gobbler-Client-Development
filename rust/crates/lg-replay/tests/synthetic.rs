@@ -73,7 +73,7 @@ fn a_made_up_fight_comes_out_as_sent() {
         assert_eq!(got(&packets, Direction::Incoming), expected(&s.incoming), "incoming, seed {seed}");
         assert_eq!(got(&packets, Direction::Outgoing), expected(&s.outgoing), "outgoing, seed {seed}");
         // and the world gets its fight: the map, you, damage on the enemies
-        let mut w = lg_world::World::new(lg_gamedata::GameData::default(), std::collections::HashMap::new());
+        let mut w = lg_world::World::new(lg_gamedata::GameData::default());
         for p in &packets {
             if let Some(Ok(d)) = lg_protocol::packets::decode(p.id, &p.body) {
                 let _ = w.packet(&d.packet);

@@ -8,7 +8,7 @@ const ROGUE: i32 = 768;
 fn world() -> World {
     let mut d = GameData::default();
     d.classes.push(Class { id: ROGUE, name: "Rogue".into(), max_stats: [0; 8], base_gear: [0; 4], weapon_group: vec![ROGUE] });
-    World::new(d, HashMap::new())
+    World::new(d)
 }
 
 fn pos(x: f32, y: f32) -> WorldPos {
@@ -175,13 +175,14 @@ fn the_map_is_guessed_from_its_enemies() {
         .into_iter()
         .map(|(t, n)| (t, n.to_string()))
         .collect();
-    let mut w = World::new(d.clone(), enemies.clone());
+    d.dungeons.enemies = enemies;
+    let mut w = World::new(d.clone());
     let seen = |id, t: u16| NewObject { object_type: t, status: status(id, pos(0.0, 0.0), vec![]) };
     w.packet(&update(vec![seen(1, 1), seen(2, 2)], vec![])).unwrap();
     assert!(w.map.is_none());
     w.packet(&update(vec![seen(3, 3)], vec![])).unwrap();
     assert_eq!((w.map.as_ref().unwrap().name.as_str(), w.map_guessed), ("Pirate Cave", true));
-    let mut w = World::new(d, enemies);
+    let mut w = World::new(d);
     w.packet(&update(vec![seen(1, 900)], vec![])).unwrap();
     assert_eq!(w.map.as_ref().unwrap().name, "Snake Pit", "a boss alone is enough");
 }
@@ -204,4 +205,81 @@ fn character_statistics_too_short_stop_create_success() {
     assert_eq!(w.world_player_id, 10);
     assert!(w.packet(&created("AQI=")).is_ok(), "the same string is not decoded again");
     assert!(w.packet(&created("AAAAAAAA")).is_ok());
+}
+
+fn bag_object(id: i32, p: WorldPos, item: i32) -> NewObject {
+    NewObject { object_type: 1294, status: status(id, p, vec![stat(stats::INVENTORY_0, item), stat(stats::INVENTORY_0 + 1, -1)]) }
+}
+
+fn hit(target: i32) -> Decoded {
+    Decoded::Damage(lg_protocol::packets::Damage {
+        target_id: target,
+        effects: Vec::new(),
+        damage_amount: 10,
+        damage_properties: false,
+        bullet_id: 0,
+        object_id: 0,
+    })
+}
+
+/// Java's loot tick switches to the other list of bags, then forgets the kills: a bag is matched, two ticks on, with
+/// the enemies that died in the tick after it came into view.
+#[test]
+fn a_bag_is_the_closest_killed_enemy_s() {
+    let mut w = world();
+    w.packet(&map("Pirate Cave")).unwrap();
+    let enemy = |id, x| NewObject { object_type: 700, status: status(id, pos(x, 0.0), vec![]) };
+    w.packet(&update(vec![enemy(1, 0.0), enemy(2, 10.0)], vec![])).unwrap();
+    w.packet(&hit(1)).unwrap();
+    w.packet(&hit(2)).unwrap();
+    w.packet(&update(vec![bag_object(50, pos(9.5, 0.0), 2600)], vec![])).unwrap();
+    w.packet(&tick(vec![])).unwrap();
+    // both die; the bag lies next to the second
+    w.packet(&update(vec![], vec![1, 2])).unwrap();
+    assert!(w.drops.is_empty());
+    w.packet(&tick(vec![])).unwrap();
+    assert_eq!(w.drops.len(), 1);
+    assert_eq!(w.drops[0].dropper, Some(loot::Dropper::Killed { id: 2, object_type: 700 }));
+    assert_eq!(w.drops[0].items[..2], [2600, -1]);
+    assert_eq!(w.dungeon_stats.data["Pirate Cave"].loot[&700][&2600], 1);
+}
+
+#[test]
+fn a_boss_s_last_words_claim_the_next_bags() {
+    let mut w = world();
+    w.packet(&map("The Void")).unwrap();
+    let words = |name: &str, text: &str| {
+        Decoded::Text(lg_protocol::packets::Text {
+            name: name.into(),
+            object_id: 0,
+            num_stars: 0,
+            bubble_time: 0,
+            recipient: String::new(),
+            text: text.into(),
+            clean_text: String::new(),
+            is_supporter: false,
+            star_background: 0,
+        })
+    };
+    w.packet(&words("#Valen the Unbreakable", "I see now... my strength could not have held against this growing power.")).unwrap();
+    // the window lasts two loot ticks that had bags
+    for (k, id) in [60, 61, 62].into_iter().enumerate() {
+        w.packet(&update(vec![bag_object(id, pos(1.0, 1.0), 2700)], vec![])).unwrap();
+        w.packet(&tick(vec![])).unwrap();
+        w.packet(&tick(vec![])).unwrap();
+        let boss = Some(loot::Dropper::Boss { object_type: 29003, variant: Some("HM".into()) });
+        assert_eq!(w.drops[k].dropper, if k < 2 { boss } else { None }, "bag {k}");
+    }
+}
+
+#[test]
+fn a_killed_enemy_without_a_position_stops_the_matching() {
+    let mut w = world();
+    w.packet(&map("Pirate Cave")).unwrap();
+    w.packet(&hit(9)).unwrap(); // hit before it came into view
+    w.packet(&update(vec![bag_object(70, pos(1.0, 1.0), 2800)], vec![])).unwrap();
+    w.packet(&tick(vec![])).unwrap();
+    w.packet(&update(vec![], vec![9])).unwrap();
+    w.packet(&tick(vec![])).unwrap();
+    assert!(w.drops.is_empty(), "Java throws there and the tick's bags are not counted");
 }

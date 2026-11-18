@@ -113,7 +113,20 @@ struct Fight {
     enemies: Vec<i32>,
     minions: Vec<i32>,
     enemy_bullets: Vec<(i32, i16)>,
+    /// Next object id for new enemies, bags.
+    next_id: i32,
+    /// Bags to come next round: where.
+    bags_due: Vec<(f32, f32)>,
 }
+
+const BAGS: [u16; 8] = [1287, 1289, 1291, 1292, 1294, 1295, 1708, 1724];
+/// Last words that open a boss's loot window.
+const LAST_WORDS: [(&str, &str); 4] = [
+    ("#Void Entity", "You fools... You can never truly defeat me! I am in all of you! I AM all of you!"),
+    ("#Valen the Unbreakable", "I see now... my strength could not have held against this growing power."),
+    ("#Kitsune Umi", "This fully concludes the Moonlight Festival!"),
+    ("#Dancer Miko", "Thank you all for coming tonight."),
+];
 
 impl Fight {
     fn send(&mut self, d: Direction, id: u8, b: B) {
@@ -353,6 +366,82 @@ impl Fight {
         self.my_pos.0 += 0.25;
     }
 
+    fn object(&mut self, kind: u16, id: i32, pos: (f32, f32), st: &[S]) -> Vec<u8> {
+        let _ = self;
+        B::default().u16(kind).raw(&status(id, pos, st)).0
+    }
+
+    /// Enemies die, bags drop, bosses speak their last words.
+    fn loot(&mut self) {
+        let mut new_objects = Vec::new();
+        for pos in std::mem::take(&mut self.bags_due) {
+            self.next_id += 1;
+            let kind = self.pick(&BAGS);
+            let mut st = Vec::new();
+            for slot in 0..8 {
+                let item = if self.chance(40) { 0x0a00 + self.small(0x300) } else { -1 };
+                st.push(S::N(8 + slot, item));
+            }
+            new_objects.push(self.object(kind, self.next_id, pos, &st));
+        }
+        let mut drops = Vec::new();
+        if self.chance(15) && self.enemies.len() > 2 {
+            let k = 2 + self.rng.below(self.enemies.len() - 2);
+            let gone = self.enemies.remove(k);
+            drops.push(gone);
+            let pos = (12.0, 14.0 + (gone % 10) as f32);
+            self.bags_due.push(pos);
+            if self.chance(30) {
+                self.bags_due.push((pos.0 + 0.5, pos.1));
+            }
+            // a new one comes into view
+            self.next_id += 1;
+            let id = self.next_id;
+            self.enemies.push(id);
+            let st = vec![S::N(0, 900), S::N(1, 900), S::N(21, self.small(20))];
+            let kind = 0x0600 + self.small(0x80) as u16;
+            new_objects.push(self.object(kind, id, (12.0, 14.0 + (id % 10) as f32), &st));
+        }
+        if self.chance(5) {
+            // an enemy hit before it came into view, then gone: it has no position
+            self.next_id += 1;
+            let unseen = self.next_id;
+            self.send(Direction::Outgoing, 25, B::default().i32(0).i16(self.bullet).i32(ME).i32(unseen).bool(false).i32(unseen));
+            drops.push(unseen);
+            self.bags_due.push((9.0, 9.0));
+        }
+        if self.chance(5) {
+            let (name, text) = self.pick(&LAST_WORDS);
+            let t = lg_protocol::packets::Text {
+                name: name.into(),
+                object_id: 0,
+                num_stars: -1,
+                bubble_time: 0,
+                recipient: String::new(),
+                text: text.into(),
+                clean_text: String::new(),
+                is_supporter: false,
+                star_background: 0,
+            };
+            self.out.push((Direction::Incoming, Plain { id: 44, body: t.encode() }));
+            self.bags_due.push((30.0, 30.0));
+            if self.chance(50) {
+                self.bags_due.push((30.5, 30.0));
+            }
+        }
+        if !new_objects.is_empty() || !drops.is_empty() {
+            let mut b = B::default().pos(self.my_pos).i8(0).ci(0).ci(new_objects.len() as i32);
+            for o in &new_objects {
+                b = b.raw(o);
+            }
+            b = b.ci(drops.len() as i32);
+            for d in drops {
+                b = b.ci(d);
+            }
+            self.send(Direction::Incoming, 42, b);
+        }
+    }
+
     fn leave(&mut self) {
         let gone = self.players.remove(0);
         self.send(Direction::Incoming, 42, B::default().pos(self.my_pos).i8(0).ci(0).ci(0).ci(1).ci(gone));
@@ -371,6 +460,8 @@ pub fn fight(seed: u64) -> Session {
         enemies: Vec::new(),
         minions: Vec::new(),
         enemy_bullets: Vec::new(),
+        next_id: 5000,
+        bags_due: Vec::new(),
     };
     for _ in 0..3 {
         f.tick(Vec::new());
@@ -381,6 +472,7 @@ pub fn fight(seed: u64) -> Session {
     f.crucible();
     for r in 0..120 {
         f.round();
+        f.loot();
         if r == 60 {
             f.leave();
         }

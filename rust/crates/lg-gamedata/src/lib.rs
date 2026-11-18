@@ -10,6 +10,7 @@
 //! - `xml/enchantments.xml`: what enchantments do ([`enchants`])
 
 pub mod abilities;
+pub mod dungeons;
 pub mod enchants;
 mod xml;
 
@@ -113,6 +114,7 @@ pub struct GameData {
     pub classes: Vec<Class>,
     pub abilities: abilities::Abilities,
     pub enchants: HashMap<i16, enchants::Enchant>,
+    pub dungeons: dungeons::Dungeons,
     /// What went wrong while reading, for the log.
     pub problems: Vec<String>,
 }
@@ -140,6 +142,9 @@ impl GameData {
             d.abilities = a;
             d.problems.extend(problem);
         }
+        let (dungeons, problems) = dungeons::Dungeons::load(&assets.join("xml"));
+        d.dungeons = dungeons;
+        d.problems.extend(problems);
         if let Some(s) = read("xml/enchantments.xml") {
             let (e, problem) = enchants::parse(&s);
             d.enchants = e;

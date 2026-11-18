@@ -212,7 +212,7 @@ fn live(all: bool, assets: Option<&std::path::Path>) -> ExitCode {
         if game.objects.is_empty() {
             eprintln!("no game data in {} (expected ObjectID.list, xml/players.xml)", a.display());
         }
-        lg_world::World::new(game, std::collections::HashMap::new())
+        lg_world::World::new(game)
     });
     eprintln!("listening (link type {}); start or change servers in the game to see everything. Ctrl+C ends.", input.link_type);
     let mut session = lg_replay::Session::new(input.link_type);
@@ -318,7 +318,7 @@ fn world(file: &str, assets: &std::path::Path) -> ExitCode {
     for p in &game.problems {
         eprintln!("{p}");
     }
-    let mut w = lg_world::World::new(game, std::collections::HashMap::new());
+    let mut w = lg_world::World::new(game);
     let mut out = BufWriter::new(std::io::stdout().lock());
     let full = |out: &mut BufWriter<_>, when: &str, state: &str| {
         line(out, format_args!("state {when}"));
@@ -421,6 +421,27 @@ fn gamedata(dir: &std::path::Path) -> ExitCode {
         .collect();
         let opt = |s: &Option<String>| s.clone().unwrap_or_else(|| "null".into());
         line(&mut out, format_args!("enchant {}|{}|{}|{}", e.id, opt(&e.name), opt(&e.internal_id), floats.join(" ")));
+    }
+    let dg = &d.dungeons;
+    let tables: [Vec<String>; 4] = [
+        dg.portal_names.iter().map(|(k, v)| format!("ID_TO_NAME_PORTAL {k}|{v}")).collect(),
+        dg.portal_by_name.iter().map(|(k, v)| format!("NAME_TO_ID_PORTAL {k}|{v}")).collect(),
+        dg.modifier_names.iter().map(|(k, v)| format!("ID_TO_NAME_MODS {k}|{v}")).collect(),
+        dg.modifier_by_name.iter().map(|(k, v)| format!("NAME_TO_ID_MODS {k}|{v}")).collect(),
+    ];
+    for mut lines in tables {
+        lines.sort();
+        for l in lines {
+            line(&mut out, format_args!("{l}"));
+        }
+    }
+    for n in dg.all_names() {
+        line(&mut out, format_args!("dungeon {n}"));
+    }
+    let mut en: Vec<_> = dg.enemies.iter().collect();
+    en.sort();
+    for (k, v) in en {
+        line(&mut out, format_args!("enemy {k}|{v}"));
     }
     if out.flush().is_err() {
         return ExitCode::SUCCESS;

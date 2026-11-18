@@ -46,6 +46,30 @@ public final class GameDataOracle {
             OUT.println(b.toString().replace(" |", "|").trim());
         }
         abilitiesAndEnchants();
+        dungeons();
+    }
+
+    /** Dungeon portals and modifiers (ParseDungeon), and the enemies of one dungeon (GameFileEnemies). */
+    @SuppressWarnings("unchecked")
+    private static void dungeons() throws Exception {
+        Class<?> pd = tomato.realmshark.ParseDungeon.class;
+        for (String m : new String[]{"ID_TO_NAME_PORTAL", "NAME_TO_ID_PORTAL", "ID_TO_NAME_MODS", "NAME_TO_ID_MODS"}) {
+            Field f = pd.getDeclaredField(m);
+            f.setAccessible(true);
+            java.util.List<String> lines = new java.util.ArrayList<>();
+            for (Map.Entry<?, ?> e : ((Map<?, ?>) f.get(null)).entrySet()) lines.add(m + " " + e.getKey() + "|" + e.getValue());
+            java.util.Collections.sort(lines);
+            for (String l : lines) OUT.println(l);
+        }
+        for (String n : tomato.realmshark.ParseDungeon.allDungeonNames()) OUT.println("dungeon " + n);
+        Class<?> gfe = Class.forName("tomato.backend.data.GameFileEnemies");
+        java.lang.reflect.Method get = gfe.getDeclaredMethod("get");
+        get.setAccessible(true);
+        Object enemies = null;
+        for (int i = 0; i < 600 && (enemies = get.invoke(null)) == null; i++) Thread.sleep(100);
+        for (Map.Entry<Integer, String> e : new TreeMap<>((Map<Integer, String>) enemies).entrySet()) {
+            OUT.println("enemy " + e.getKey() + "|" + e.getValue());
+        }
     }
 
     /** Ability scaling (equip.xml) and enchant effects (enchantments.xml). */

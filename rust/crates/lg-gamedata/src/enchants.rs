@@ -45,7 +45,7 @@ pub struct Enchant {
 }
 
 /// Java `Short.decode`.
-fn decode_short(s: &str) -> Option<i16> {
+pub(crate) fn decode_short(s: &str) -> Option<i16> {
     let (neg, body) = match s.strip_prefix('-') {
         Some(b) => (true, b),
         None => (false, s.strip_prefix('+').unwrap_or(s)),
