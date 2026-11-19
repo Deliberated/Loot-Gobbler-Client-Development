@@ -182,6 +182,13 @@ final class WorldOracle {
             List<String> hits = new ArrayList<>(), deaths = new ArrayList<>();
             for (Object k : ((Map<?, ?>) get(data, "entityHitList")).keySet()) hits.add(String.valueOf(k));   // HashMap order
             for (packets.incoming.NotificationPacket n : data.getDeathNotifications()) deaths.add(n.message == null ? "null" : quote(n.message));
+            Field pi = tomato.gui.character.CharacterPetsGUI.class.getDeclaredField("INSTANCE");
+            pi.setAccessible(true);
+            List<String> panel = new ArrayList<>();
+            for (Map.Entry<Integer, ?> e : new TreeMap<>((Map<Integer, ?>) get(pi.get(null), "petList")).entrySet()) {
+                panel.add(e.getKey() + "{" + statsText((StatData[]) get(get(e.getValue(), "stat"), "stats")) + "}");
+            }
+            b.append("petspanel [").append(String.join(";", panel)).append("]\n");
             b.append("fight timePc=").append(data.timePc).append(" first=").append(get(data, "timePcFirst"))
                     .append(" hits=[").append(String.join(",", hits)).append("] deaths=[").append(String.join(",", deaths))
                     .append("]\n");
@@ -235,6 +242,19 @@ final class WorldOracle {
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    private static String statsText(StatData[] stats) {
+        StringBuilder b = new StringBuilder();
+        boolean first = true;
+        for (StatData s : stats) {
+            if (s == null) continue;
+            b.append(first ? "" : ",").append(s.statTypeNum).append(':');
+            b.append(s.stringStatValue != null ? quote(s.stringStatValue) : String.valueOf(s.statValue));
+            b.append('/').append(s.statValueTwo);
+            first = false;
+        }
+        return b.toString();
     }
 
     private static String entity(Entity e) throws ReflectiveOperationException {
@@ -306,6 +326,28 @@ final class WorldOracle {
         moonlight(b);
         amulet(b);
         cooldowns(b);
+        pets(b);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void pets(StringBuilder b) throws ReflectiveOperationException {
+        for (Map.Entry<Integer, lootgobbler.PetStore.Pet> e : ((Map<Integer, lootgobbler.PetStore.Pet>) get(lootgobbler.PetStore.get(), "pets")).entrySet()) {
+            lootgobbler.PetStore.Pet p = e.getValue();
+            List<String> ab = new ArrayList<>();
+            if (p.abilities != null) for (lootgobbler.PetStore.Ability a : p.abilities) ab.add(a.type + "/" + a.power + "/" + a.points);
+            b.append("pet ").append(e.getKey()).append(':').append(p.instanceId).append(" name=").append(quote(p.name))
+                    .append(" type=").append(p.type).append(" skin=").append(p.skin).append(" rarity=").append(p.rarity)
+                    .append(" max=").append(p.maxPower).append(" abilities=[").append(String.join(",", ab)).append("] bag=")
+                    .append(bag(p.saddlebag)).append(" seasonal=").append(bag(p.seasonalSaddlebag)).append(" seen=")
+                    .append(p.lastSeen).append('\n');
+        }
+    }
+
+    private static String bag(lootgobbler.PetStore.Saddlebag s) {
+        if (s == null) return "null";
+        List<String> e = new ArrayList<>();
+        if (s.enchantIds != null) for (int[] x : s.enchantIds) e.add(arr(x == null ? new int[0] : x));
+        return arr(s.items) + "/[" + String.join(",", e) + "]";
     }
 
     @SuppressWarnings("unchecked")

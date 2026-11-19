@@ -16,6 +16,7 @@ pub mod item_use;
 pub mod localtime;
 pub mod loot_events;
 pub mod moonlight;
+pub mod pet_store;
 pub mod profile;
 pub mod tinkerer;
 pub mod upe;
@@ -50,6 +51,7 @@ pub struct App {
     pub amulet_saves: amulet_saves::AmuletSaves,
     pub cooldowns: item_cooldowns::ItemCooldowns,
     pub vitals: item_cooldowns::Vitals,
+    pub pets: pet_store::PetStore,
     /// Tomato's exaltation progress per class (`RealmCharacter.exalts`): from the login's fetch (not ported yet),
     /// then from the game's exaltation packets.
     pub realm_exalts: std::collections::HashMap<i32, Vec<i32>>,
@@ -82,8 +84,8 @@ impl App {
         App::importing(world, now, None)
     }
 
-    /// The same, taking over what the Java app kept in its folder (only read, never changed): so far the exalts and
-    /// the amulet saves.
+    /// The same, taking over what the Java app kept in its folder (only read, never changed): so far the exalts,
+    /// the amulet saves and the pets.
     pub fn importing(world: World, now: i64, java_data: Option<&std::path::Path>) -> App {
         let exalts = java_data.map(exalt_store::ExaltStore::import).unwrap_or_default();
         let amulet_saves = java_data.map(amulet_saves::AmuletSaves::import).unwrap_or_default();
@@ -106,6 +108,7 @@ impl App {
             amulet_saves,
             cooldowns: item_cooldowns::ItemCooldowns::new(),
             vitals: item_cooldowns::Vitals::default(),
+            pets: java_data.map(pet_store::PetStore::import).unwrap_or_default(),
             realm_exalts: std::collections::HashMap::new(),
             zone: localtime::Zone::system(),
         }
@@ -375,6 +378,7 @@ impl App {
                 }
                 Event::MoonAdded { id, object_type } => self.moonlight.added(&self.world, &mut self.dungeon_visits, id, object_type, now),
                 Event::MoonRemoved { id } => self.moonlight.removed(id),
+                Event::YardPet { object_type, status } => self.pets.yard_pet(object_type, &status, now),
                 Event::MoonConditions { id, conditions } => {
                     self.moonlight.conditions(&self.world, &mut self.dungeon_visits, id, &conditions, now)
                 }
@@ -423,6 +427,7 @@ impl App {
         s.push_str(&self.amulet_saves.dump());
         s.push_str(&self.cooldowns.dump());
         s.push_str(&format!("vitals {}/{} at={}\n", self.vitals.mp, self.vitals.max_mp, self.vitals.at));
+        s.push_str(&self.pets.dump());
         s
     }
 }

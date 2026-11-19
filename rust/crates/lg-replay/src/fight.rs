@@ -624,6 +624,42 @@ impl Fight {
         }
     }
 
+    /// Pets in the Pet Yard: some known from the saved pets (oracle/seed/pets.json), one without an id, one without
+    /// its feed points, skins of 0 and -1; then some again, with other feed points.
+    fn pets(&mut self) {
+        let mut objects = Vec::new();
+        for (k, id) in [501, 503, 504, 0, 505].into_iter().enumerate() {
+            let mut st = vec![S::N(84, self.small(5)), S::N(85, 50 + self.small(50)), S::N(93, 402), S::N(90, 30), S::N(94, 406)];
+            if id > 0 {
+                st.push(S::N(81, id));
+            }
+            if self.chance(60) {
+                st.push(S::T(82, if self.chance(20) { " ".into() } else { format!("Pet{k}") }));
+            }
+            let skin = self.pick(&[0, -1, 2, 2, 2]);
+            if self.chance(80) {
+                st.push(S::N(25, skin));
+            }
+            if self.chance(85) {
+                st.extend([S::N(87, self.small(100)), S::N(88, 0), S::N(89, 0)]);
+            }
+            objects.push(self.object(0x7d00 + k as u16, 7000 + k as i32, (5.0, 5.0 + k as f32), &st));
+        }
+        for o in objects {
+            let b = B::default().pos(self.my_pos).i8(0).ci(0).ci(1).raw(&o).ci(0);
+            self.send(Direction::Incoming, 42, b);
+            self.tick(Vec::new());
+        }
+        // seen again: the same pets, their feed points now other or the same
+        for k in 0..3 {
+            let id = [501, 503, 504][k];
+            let st = vec![S::N(81, id), S::N(87, self.small(3)), S::N(88, 0), S::N(89, self.small(2)), S::N(25, 2)];
+            let o = self.object(0x7d00, 7100 + k as i32, (6.0, 6.0), &st);
+            let b = B::default().pos(self.my_pos).i8(0).ci(0).ci(1).raw(&o).ci(0);
+            self.send(Direction::Incoming, 42, b);
+        }
+    }
+
     fn new_room(&mut self) {
         self.players.clear();
         self.enemies.clear();
@@ -676,10 +712,17 @@ pub fn fight(seed: u64) -> Session {
         if r == 80 {
             f.moon = None;
             let seed2 = f.rng.next() as i32;
-            let (name, display) =
-                f.pick(&[("Second Room", "Second Room"), ("Guild Hall", "{s.guildhall}"), ("Pirate Cave", "Pirate Cave")]);
+            let (name, display) = f.pick(&[
+                ("Second Room", "Second Room"),
+                ("Guild Hall", "{s.guildhall}"),
+                ("Pirate Cave", "Pirate Cave"),
+                ("Pet Yard", "Pet Yard"),
+            ]);
             f.map(name, display, seed2);
             f.new_room();
+            if display == "Pet Yard" {
+                f.pets();
+            }
         }
         if r == 100 && f.chance(50) {
             f.die();

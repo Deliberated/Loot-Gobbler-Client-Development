@@ -45,6 +45,11 @@ pub enum Event {
         id: i32,
         conditions: Vec<(String, i32)>,
     },
+    /// A pet in the Pet Yard came into view (Java `PetStore.importYardPet`), with the stats it was sent.
+    YardPet {
+        object_type: i32,
+        status: ObjectStatus,
+    },
     /// The map you are in was told by its enemies (Java `guessMap`): it is in `map` now.
     Guessed,
     /// A new map (Java `setNewRealm`): the vault or not, and its name as the app shows it (`LootEvents.mapName`).
@@ -273,6 +278,9 @@ pub struct World {
     killed: Vec<loot::Held>,
     tiles: Vec<u16>,
     petyard: bool,
+    /// Tomato's old pets panel (`CharacterPetsGUI`, built though its tab is gone): the pets it lists, by instance id
+    /// (-1 for one without), each with the stats it was sent.
+    pets_panel: HashMap<i32, Vec<Option<Stat>>>,
     own_positions: Vec<WorldPos>,
     standing_id: i32,
     /// Enemy type -> the one dungeon it is in, for guessing the map: worked out at the first guess (Java keeps it).
@@ -326,6 +334,7 @@ impl World {
             killed: Vec::new(),
             tiles: vec![0; MAP_SIZE * MAP_SIZE],
             petyard: false,
+            pets_panel: HashMap::new(),
             own_positions: Vec::new(),
             standing_id: -1,
             enemy_dungeons: None,
@@ -408,6 +417,7 @@ impl World {
                 }
                 if self.map.as_ref().is_some_and(|m| m.display_name == "Pet Yard") {
                     self.petyard = true;
+                    self.pets_panel.clear();
                 }
             }
             Decoded::UseItem(u) => self.used_item(u),
@@ -438,6 +448,48 @@ impl World {
 
     fn entity(&mut self, id: i32) -> &mut Entity {
         self.entities.entry(id).or_insert_with(|| Entity::new(id))
+    }
+
+    /// Java `CharacterPetsGUI.add`: a known pet is updated when its feed points changed (reading them throws when one
+    /// of them was not sent, on either side); a new one (any pet stat) is listed and drawn, which throws for a skin of 0
+    /// or below (no image to scale; -1 is the empty one). The sprite sheets are taken as not loaded, as when the game
+    /// files hold none (then an unknown sprite throws too: not followed yet).
+    fn pets_panel_add(&mut self, status: &ObjectStatus) -> Result<(), Abort> {
+        const INSTANCE: u8 = 81;
+        const POINTS: [u8; 3] = [87, 88, 89];
+        let mut sent: Vec<Option<Stat>> = vec![None; STAT_SLOTS];
+        for s in &status.stats {
+            sent[usize::from(s.stat_type_num)] = Some(s.clone());
+        }
+        let value = |v: &[Option<Stat>], t: u8| {
+            v[usize::from(t)].as_ref().map(|s| s.stat_value).ok_or(Abort("the pets panel read a feed point stat not sent"))
+        };
+        if let Some(id) = sent[usize::from(INSTANCE)].as_ref().map(|s| s.stat_value)
+            && let Some(old) = self.pets_panel.get_mut(&id)
+        {
+            let mut changed = false;
+            for t in POINTS {
+                if value(old, t)? != value(&sent, t)? {
+                    changed = true;
+                    break;
+                }
+            }
+            if changed {
+                for s in &status.stats {
+                    old[usize::from(s.stat_type_num)] = Some(s.clone());
+                }
+            }
+            return Ok(());
+        }
+        if status.stats.iter().any(|s| (81..96).contains(&s.stat_type_num)) {
+            let id = sent[usize::from(INSTANCE)].as_ref().map_or(-1, |s| s.stat_value);
+            let skin = sent[usize::from(stats::SKIN_ID)].as_ref().map_or(1, |s| s.stat_value);
+            self.pets_panel.insert(id, sent);
+            if skin <= 0 && skin != -1 {
+                return Err(Abort("the pets panel has no image for a skin of 0"));
+            }
+        }
+        Ok(())
     }
 
     /// Java `MoonlightLog.inDungeon`.
@@ -491,6 +543,7 @@ impl World {
         // petYardCheck
         if m.display_name == "Pet Yard" {
             self.petyard = true;
+            self.pets_panel.clear();
         }
         self.map = Some(Map { name: m.name.clone(), display_name: m.display_name.clone(), width: m.width, height: m.height, seed: m.fp });
         let vault = m.display_name == "{s.vault}";
@@ -603,7 +656,9 @@ impl World {
             self.guess_map(object_type);
         }
         if self.petyard {
-            // a pet in the Pet Yard: the app's pet list (not ported yet)
+            // a pet in the Pet Yard: Tomato's pets panel, then the app's pet list
+            self.pets_panel_add(status)?;
+            self.events.push(Event::YardPet { object_type, status: status.clone() });
         } else if CRYSTALS.contains(&object_type) {
             self.crystals.insert(id);
         } else if lg_gamedata::is_loot_drop_bag(object_type) && !self.loot_bags.contains(&id) {
@@ -760,6 +815,27 @@ impl World {
         let _ = writeln!(b, "crystals {}", ids(&self.crystals));
         let _ = writeln!(b, "bags {}", ids(&self.loot_bags));
         let deaths: Vec<String> = self.death_notifications.iter().map(|n| n.message.as_deref().map_or("null".into(), quote)).collect();
+        let mut panel: Vec<_> = self.pets_panel.iter().collect();
+        panel.sort_by_key(|(k, _)| **k);
+        let panel: Vec<String> = panel
+            .iter()
+            .map(|(k, v)| {
+                let st: Vec<String> = v
+                    .iter()
+                    .flatten()
+                    .map(|s| {
+                        format!(
+                            "{}:{}/{}",
+                            s.stat_type_num,
+                            s.string_stat_value.as_deref().map_or(s.stat_value.to_string(), quote),
+                            s.stat_value_two
+                        )
+                    })
+                    .collect();
+                format!("{k}{{{}}}", st.join(","))
+            })
+            .collect();
+        let _ = writeln!(b, "petspanel [{}]", panel.join(";"));
         let _ = writeln!(
             b,
             "fight timePc={} first={} hits=[{}] deaths=[{}]",
