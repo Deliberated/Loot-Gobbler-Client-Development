@@ -28,6 +28,17 @@ jar --create --file "$work/clock-agent.jar" --manifest "$work/manifest.txt" -C "
 replay="$here/../target/release/lg-replay"
 ids=$("$replay" decoded-ids)
 
+# Tomato's old panels, which the app builds and its packet handlers call into, need a display (AWT refuses them
+# headless); none is ever shown. A virtual one (xvfb-run) if installed, else the session's.
+if command -v xvfb-run >/dev/null; then
+    display="xvfb-run -a"
+elif [ -n "${DISPLAY:-}" ]; then
+    display=""
+else
+    echo "The world comparison needs a display: install Xvfb (xvfb-run) or run it in a desktop session" >&2
+    exit 2
+fi
+
 status=0
 check() { # name, rust flag, then java args
     local what=$1 flag=$2
@@ -40,7 +51,7 @@ check() { # name, rust flag, then java args
         mkdir -p "$work/seed"
         cp "$here"/seed/*.json "$work/seed/"
         cp "$here"/seed/*.json "$work/run/"
-        (cd "$work/run" && java -javaagent:"$work/clock-agent.jar" -Djava.awt.headless=true -Djava.net.useSystemProxies=false \
+        (cd "$work/run" && $display java -javaagent:"$work/clock-agent.jar" -Djava.net.useSystemProxies=false \
             -Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=9 -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=9 \
             -cp "$jar:$work" oracle.ReplayOracle "$pcap" "$@") > "$work/java.txt" 2> "$work/java.log"
         "$replay" "$pcap" "$flag" "$work/run/assets" --java-data "$work/seed" > "$work/rust.txt" 2> "$work/rust.log"

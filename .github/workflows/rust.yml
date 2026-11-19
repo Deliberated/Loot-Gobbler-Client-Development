@@ -37,6 +37,8 @@ jobs:
           distribution: temurin
           java-version: '25'   # the oracle's clock agent uses the Class-File API (Java 24+)
       - run: rustup toolchain install stable --profile minimal
+      - name: A virtual display (the old Tomato panels the app builds need one)
+        run: sudo apt-get install -y -q xvfb
       - name: Build the Java client
         working-directory: .
         run: ./gradlew -q shadowJar

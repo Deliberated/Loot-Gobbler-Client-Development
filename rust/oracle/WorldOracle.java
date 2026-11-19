@@ -61,12 +61,18 @@ final class WorldOracle {
         this.out = out;
         data = new TomatoData();
         capture = new TomatoPacketCapture(data);
-        // the panels the packet handlers update, as TomatoGUI builds them (panels work without a screen; the window not)
+        // the panels the packet handlers update, as TomatoGUI builds them (never shown; AWT needs a display for some)
         new tomato.gui.security.ParsePanelGUI();
         new tomato.gui.dps.DpsGUI(data);
         new tomato.gui.chat.ChatGUI(data);
         new tomato.gui.myinfo.MyInfoGUI(data);
         new tomato.gui.stats.LootGUI(data);
+        // panels without a tab that are still created (TomatoGUI): key-pops, security, the old characters view (exalts,
+        // pets...) and statistics
+        new tomato.gui.keypop.KeypopGUI();
+        new tomato.gui.security.SecurityGUI();
+        new tomato.gui.character.CharacterPanelGUI(data);
+        new tomato.gui.stats.StatisticsGUI(data);
         try {
             Field quests = tomato.gui.TomatoGUI.class.getDeclaredField("questPanel");
             quests.setAccessible(true);
