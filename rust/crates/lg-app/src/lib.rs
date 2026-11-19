@@ -131,7 +131,7 @@ impl App {
             collection: java_data.map(collection::Collection::import).unwrap_or_default(),
             holdings: java_data.map(holdings::Holdings::import).unwrap_or_default(),
             loot_events: loot_events::LootEvents::default(),
-            upe: upe::Upe::default(),
+            upe: java_data.map(upe::Upe::import).unwrap_or_default(),
             item_use: item_use::ItemUse::default(),
             tinkerer: tinkerer::Tinkerer::default(),
             dps_history,

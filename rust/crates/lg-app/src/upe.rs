@@ -121,6 +121,120 @@ pub struct Run {
     pub no_pet: bool,
 }
 
+/// Java `repair`, at loading: old modes renamed, then the per-slot arrays the length of the slots.
+fn load_repair(run: &mut Run, mode_missing: bool) {
+    if mode_missing || run.mode.trim().is_empty() {
+        run.mode = UPE.into(); // runs from before there were modes
+    }
+    if run.mode == "NPE" {
+        run.mode = PPE.into(); // NPE is a PPE without a pet now
+        run.no_pet = true;
+    }
+    repair(run);
+}
+
+fn read_run(v: &lg_world::json::Json) -> Result<(Run, bool), crate::java::Thrown> {
+    use crate::gson;
+    use crate::java::Thrown;
+    use lg_world::json::Json;
+    let v = gson::object(v)?;
+    let mut r = Run::new(0);
+    let ints_or = |k: &str| gson::ints(v.get(k)).map(|x| x.map(Option::unwrap_or_default));
+    if let Some(x) = gson::int(v.get("charId"))? {
+        r.char_id = x;
+    }
+    let mut mode_missing = false;
+    if let Some(x) = gson::string(v.get("mode"))? {
+        match x {
+            Some(m) => r.mode = m,
+            None => mode_missing = true,
+        }
+    }
+    for (f, k) in [
+        (&mut r.fresh, "fresh"),
+        (&mut r.marked, "marked"),
+        (&mut r.guild_locked, "guildLocked"),
+        (&mut r.pet, "pet"),
+        (&mut r.no_pet, "noPet"),
+    ] {
+        if let Some(x) = gson::boolean(v.get(k))? {
+            *f = x;
+        }
+    }
+    for (f, k) in [(&mut r.marked_at, "markedAt"), (&mut r.broken_at, "brokenAt"), (&mut r.last_seen, "lastSeen")] {
+        if let Some(x) = gson::long(v.get(k))? {
+            *f = x;
+        }
+    }
+    if let Some(x) = gson::string(v.get("broken"))? {
+        r.broken = x;
+    }
+    if let Some(x) = gson::list(v.get("notes"), |n| gson::string(Some(n)).map(|s| s.flatten().unwrap_or_default()))? {
+        r.notes = x.map(|l| l.into_iter().flatten().collect()).unwrap_or_default();
+    }
+    if let Some(x) = ints_or("items")? {
+        r.items = x;
+    }
+    if let Some(x) = gson::ints2(v.get("enchants"))? {
+        r.enchants = x.unwrap_or_default();
+    }
+    if let Some(x) = gson::list(v.get("origin"), |n| gson::string(Some(n)).map(|s| s.flatten().unwrap_or_default()))? {
+        r.origin = x.map(|l| l.into_iter().map(Option::unwrap_or_default).collect()).unwrap_or_default();
+    }
+    if let Some(x) = gson::list(v.get("since"), |n| gson::long(Some(n))?.ok_or(Thrown))? {
+        r.since = x.map(|l| l.into_iter().map(|i| i.unwrap_or(0)).collect()).unwrap_or_default();
+    }
+    if let Some(x) = gson::int(v.get("level"))? {
+        r.level = x;
+    }
+    if let Some(x) = gson::ints(v.get("baseStats"))? {
+        r.base_stats = x.and_then(|b| <[i32; 8]>::try_from(b).ok());
+    }
+    if let Some(x) = gson::ints2(v.get("allowed"))? {
+        r.allowed = x.map(|l| l.into_iter().flatten().collect()).unwrap_or_default();
+    }
+    if let Some(x) = gson::objects(v.get("gathered"), |g| {
+        let g = gson::object(g)?;
+        Ok(Gathered {
+            item: gson::int(g.get("item"))?.unwrap_or(0),
+            enchants: gson::ints(g.get("enchants"))?.flatten(),
+            at: gson::long(g.get("at"))?.unwrap_or(0),
+            how: gson::string(g.get("how"))?.flatten().unwrap_or_default(),
+            r#where: gson::string(g.get("where"))?.map_or(String::new(), Option::unwrap_or_default),
+        })
+    })? {
+        r.gathered = x;
+    }
+    let item = |t: &Json| -> Result<TradeItem, Thrown> {
+        let t = gson::object(t)?;
+        Ok(TradeItem {
+            item: gson::int(t.get("item"))?.unwrap_or(0),
+            enchants: gson::ints(t.get("enchants"))?.flatten(),
+            clean: gson::boolean(t.get("clean"))?.unwrap_or(false),
+        })
+    };
+    if let Some(x) = gson::objects(v.get("trades"), |t| {
+        let t = gson::object(t)?;
+        let st = |k: &str, d: &str| gson::string(t.get(k)).map(|s| s.map_or(d.to_string(), Option::unwrap_or_default));
+        Ok(Trade {
+            at: gson::long(t.get("at"))?.unwrap_or(0),
+            char_id: gson::int(t.get("charId"))?.unwrap_or(0),
+            me: st("me", "")?,
+            partner: st("partner", "")?,
+            mode: st("mode", "gUPE")?,
+            standing: gson::boolean(t.get("standing"))?.unwrap_or(false),
+            gave: gson::objects(t.get("gave"), item)?.unwrap_or_default(),
+            got: gson::objects(t.get("got"), item)?.unwrap_or_default(),
+            status: st("status", CHECKING)?,
+            why: gson::string(t.get("why"))?.flatten(),
+        })
+    })? {
+        r.trades = x;
+    }
+    r.t0_start = gson::boolean(v.get("t0Start"))?;
+    Ok((r, mode_missing))
+}
+
 impl Run {
     fn new(char_id: i32) -> Run {
         Run {
@@ -389,6 +503,63 @@ fn repair(run: &mut Run) {
 }
 
 impl Upe {
+    /// What the Java app kept (`upe.json`), read only, with Java's repair of each run. Unreadable: nothing.
+    pub fn import(dir: &std::path::Path) -> Upe {
+        use crate::gson;
+        use lg_world::json::Json;
+        let mut u = Upe::default();
+        let Ok(text) = std::fs::read_to_string(dir.join("upe.json")) else { return u };
+        let read = || -> Result<Upe, crate::java::Thrown> {
+            let mut u = Upe::default();
+            let root = lg_world::json::parse(&text).map_err(|_| crate::java::Thrown)?;
+            if root == Json::Null {
+                return Ok(u);
+            }
+            let root = gson::object(&root)?;
+            if let Some(Json::Object(runs)) = root.get("runs") {
+                for (k, v) in runs {
+                    if *v == Json::Null {
+                        continue;
+                    }
+                    let (mut run, missing) = read_run(v)?;
+                    load_repair(&mut run, missing);
+                    u.runs.insert(crate::java::parse_int(k)?, run);
+                }
+            }
+            if let Some(l) = gson::objects(root.get("left"), |l| {
+                let l = gson::object(l)?;
+                Ok(Left {
+                    item: gson::int(l.get("item"))?.unwrap_or(0),
+                    enchants: gson::ints(l.get("enchants"))?.flatten().unwrap_or_default(),
+                    from: gson::long(l.get("from"))?.unwrap_or(0),
+                    to: gson::long(l.get("to"))?.unwrap_or(0),
+                    vault: gson::string(l.get("vault"))?.flatten().unwrap_or_default(),
+                })
+            })? {
+                u.left = l;
+            }
+            if let Some(Json::Object(m)) = root.get("missions") {
+                for (k, v) in m {
+                    let v = gson::object(v)?;
+                    u.missions.insert(
+                        k.clone(),
+                        MissionRun {
+                            char_id: gson::int(v.get("charId"))?.unwrap_or(0),
+                            from_zero: gson::boolean(v.get("fromZero"))?.unwrap_or(false),
+                            clean: gson::boolean(v.get("clean"))?.unwrap_or(false),
+                            started_at: gson::long(v.get("startedAt"))?.unwrap_or(0),
+                        },
+                    );
+                }
+            }
+            Ok(u)
+        };
+        if let Ok(x) = read() {
+            u = x;
+        }
+        u
+    }
+
     pub fn in_vault(&mut self, vault: bool) {
         self.in_vault_map = vault;
     }
