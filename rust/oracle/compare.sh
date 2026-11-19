@@ -3,7 +3,9 @@
 #   packets: the same packets, in the same order, with the same content (Java's sniffer classes)
 #   fields:  every packet that has a Rust decoder decodes to the same fields (Java's packet classes)
 #   world:   the same world state after each packet the app's TomatoData is fed (Java's TomatoData itself)
-# Usage: rust/oracle/compare.sh <session.pcap> [assets folder]
+# Usage: rust/oracle/compare.sh <session.pcap> [assets folder] [game answers folder]
+# With a folder of the game's web answers (its char list, exalts...: made up, see lg-replay synth-login), both sides
+# are also handed HELLO and answered from it; without, HELLO is never handed on. Either way nothing reaches the game.
 # With the app's assets folder (the game data it extracts; only read, never changed) the world knows the game's
 # classes and objects; without, both sides run without game data.
 # For the world, Java runs in an empty temporary folder (the app writes its files next to itself), is never handed
@@ -15,6 +17,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../.." && pwd)
 pcap=$(realpath "${1:?usage: compare.sh <session.pcap> [assets folder]}")
 assets=${2:+$(realpath "$2")}
+web=${3:+$(realpath "$3")}
 jar=$(ls -t "$repo"/build/libs/LootGobbler-*.jar 2>/dev/null | head -1 || true)
 [ -n "$jar" ] || { echo "Build the Java client first: ./gradlew shadowJar (in $repo)" >&2; exit 2; }
 cargo=$(command -v cargo || echo "$HOME/.cargo/bin/cargo")
@@ -53,8 +56,8 @@ check() { # name, rust flag, then java args
         cp "$here"/seed/*.json "$work/run/"
         (cd "$work/run" && $display java -javaagent:"$work/clock-agent.jar" -Djava.net.useSystemProxies=false \
             -Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=9 -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=9 \
-            -cp "$jar:$work" oracle.ReplayOracle "$pcap" "$@") > "$work/java.txt" 2> "$work/java.log"
-        "$replay" "$pcap" "$flag" "$work/run/assets" --java-data "$work/seed" > "$work/rust.txt" 2> "$work/rust.log"
+            ${web:+-Doracle.web="$web"} -cp "$jar:$work" oracle.ReplayOracle "$pcap" "$@") > "$work/java.txt" 2> "$work/java.log"
+        "$replay" "$pcap" "$flag" "$work/run/assets" --java-data "$work/seed" ${web:+--web "$web"} > "$work/rust.txt" 2> "$work/rust.log"
     else
         java -cp "$jar:$work" oracle.ReplayOracle "$pcap" "$@" > "$work/java.txt" 2> "$work/java.log"
         "$replay" "$pcap" "$flag" > "$work/rust.txt" 2> "$work/rust.log"

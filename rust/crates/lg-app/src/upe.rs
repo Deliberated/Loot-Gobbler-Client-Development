@@ -976,6 +976,28 @@ impl Upe {
         None
     }
 
+    /// Java `pets`: whether each listed character has a pet (from the character list), for the no-pet rule; in
+    /// Java's `HashMap` order of the characters.
+    pub fn pets(&mut self, c: &Ctx, pets: &[(i32, bool)], now: i64) {
+        if pets.is_empty() {
+            return;
+        }
+        let mut changed = false;
+        for id in lg_world::fight::java_hash_order(&pets.iter().map(|p| p.0).collect::<Vec<_>>()) {
+            let has = pets.iter().find(|p| p.0 == id).expect("listed").1;
+            let Some(mut run) = self.runs.remove(&id) else { continue };
+            if run.pet != has {
+                run.pet = has;
+                changed = true;
+                self.check(c, &mut run, now);
+            }
+            self.runs.insert(id, run);
+        }
+        if changed {
+            self.dirty = true;
+        }
+    }
+
     /// Java `check`: the loadout of a standing run.
     fn check(&self, c: &Ctx, run: &mut Run, now: i64) -> bool {
         if !run.standing() {

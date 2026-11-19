@@ -1,8 +1,7 @@
 //! Your pets (Java: `PetStore`): the character list names the pet each character has, with its abilities and
 //! saddlebag (regular and seasonal characters each see their own); pets seen in the Pet Yard add their stats.
 //!
-//! Not yet: the character list's part (it comes with the character list), and reading Java's last saved character list
-//! (`char-list.xml`) when it kept no pets yet.
+//! Not yet: reading Java's last saved character list (`char-list.xml`) when it kept no pets yet.
 
 use lg_protocol::packets::data::{ObjectStatus, Stat};
 use lg_world::json::{self, Json};
@@ -116,6 +115,49 @@ impl PetStore {
         p.last_seen = now;
     }
 
+    /// Java `importCharList`: every character's pet from the raw list, its abilities and the saddlebag that character
+    /// sees (regular or seasonal).
+    pub fn import_char_list(&mut self, xml: &str, now: i64) -> Result<(), crate::java::Thrown> {
+        for (_, body) in crate::patterns::chars(xml) {
+            let Some((attrs, pet_body)) = first_pet(body) else { continue };
+            let seasonal = body.contains("<Seasonal>True</Seasonal>");
+            let a = attributes(attrs);
+            let get = |k: &str| a.iter().rev().find(|(n, _)| *n == k).map(|(_, v)| *v); // a HashMap: the last wins
+            let id = int_of(get("instanceId"));
+            if id <= 0 {
+                continue;
+            }
+            let mut abilities = Vec::new();
+            for ab in abilities_in(pet_body) {
+                let aa = attributes(ab);
+                let g = |k: &str| aa.iter().rev().find(|(n, _)| *n == k).map(|(_, v)| *v);
+                abilities.push(Ability { kind: int_of(g("type")), power: int_of(g("power")), points: long_of(g("points")) });
+            }
+            let bag = saddlebag_of(get("inv"), pet_body)?;
+            let p = self.pet(id);
+            p.instance_id = id;
+            if let Some(n) = get("name") {
+                p.name = n.to_string();
+            }
+            p.kind = int_of(get("type"));
+            p.skin = int_of(get("skin"));
+            p.rarity = int_of(get("rarity"));
+            p.max_power = int_of(get("maxAbilityPower"));
+            p.last_seen = now;
+            if !abilities.is_empty() {
+                p.abilities = abilities;
+            }
+            if let Some(b) = bag {
+                if seasonal {
+                    p.seasonal_saddlebag = Some(b);
+                } else {
+                    p.saddlebag = Some(b);
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn dump(&self) -> String {
         let q = |s: &str| lg_protocol::dump::to_string(&s.to_string());
         let arr = |a: &[i32]| format!("[{}]", a.iter().map(i32::to_string).collect::<Vec<_>>().join(","));
@@ -143,6 +185,125 @@ impl PetStore {
         }
         s
     }
+}
+
+/// `<Pet ([^>]*)>(.*?)</Pet>` (dot matching newlines): the first in a character.
+fn first_pet(body: &str) -> Option<(&str, &str)> {
+    let mut from = 0;
+    while let Some(i) = body[from..].find("<Pet ") {
+        let a = from + i + "<Pet ".len();
+        if let Some(gt) = body[a..].find('>') {
+            let inner = a + gt + 1;
+            if let Some(end) = body[inner..].find("</Pet>") {
+                return Some((&body[a..a + gt], &body[inner..inner + end]));
+            }
+        }
+        from = from + i + 1;
+    }
+    None
+}
+
+/// `(\w+)="([^"]*)"`: every attribute, in order.
+fn attributes(s: &str) -> Vec<(&str, &str)> {
+    let b = s.as_bytes();
+    let word = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        if !word(b[i]) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < b.len() && word(b[i]) {
+            i += 1;
+        }
+        // greedy \w+ from the earliest start; on failure the regex tries the next start
+        if b.get(i) == Some(&b'=') && b.get(i + 1) == Some(&b'"') {
+            let v = i + 2;
+            if let Some(n) = s[v..].find('"') {
+                out.push((&s[start..i], &s[v..v + n]));
+                i = v + n + 1;
+                continue;
+            }
+        }
+        i = start + 1;
+    }
+    out
+}
+
+/// `<Ability ([^/>]*)/?>`: every ability's attributes.
+fn abilities_in(s: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(i) = s[from..].find("<Ability ") {
+        let a = from + i + "<Ability ".len();
+        let n = s[a..].find(['/', '>']).unwrap_or(s.len() - a);
+        let rest = &s[a + n..];
+        if rest.starts_with('>') || rest.starts_with("/>") {
+            out.push(&s[a..a + n]);
+            from = a + n + 1;
+        } else if rest.starts_with('/') {
+            // `/?>` fails at "/x": [^/>]* backs off, which only gives shorter runs that end before '/': no match
+            from = from + i + 1;
+        } else {
+            break;
+        }
+    }
+    out
+}
+
+/// Java `intOf` / `longOf`: 0 for none or not a number.
+fn int_of(s: Option<&str>) -> i32 {
+    s.and_then(|s| crate::java::parse_int(crate::java::trim(s)).ok()).unwrap_or(0)
+}
+
+fn long_of(s: Option<&str>) -> i64 {
+    s.and_then(|s| crate::java::parse_long(crate::java::trim(s)).ok()).unwrap_or(0)
+}
+
+/// Java `saddlebag`: from the pet's inv attribute ("0,6;X;10022#uid,583,-1,..."): item ids, unique ones with "#id"
+/// whose enchantments are in the pet's UniqueItemInfo.
+fn saddlebag_of(inv: Option<&str>, pet_body: &str) -> Result<Option<Saddlebag>, crate::java::Thrown> {
+    let Some(inv) = inv.filter(|i| !crate::java::is_blank(i)) else { return Ok(None) };
+    let parts = crate::java::split(inv, ';');
+    let list = *parts.last().ok_or(crate::java::Thrown)?; // parts[parts.length - 1]
+    let mut codes = std::collections::HashMap::new();
+    for (id, code) in item_data_digits_id(pet_body) {
+        codes.insert(id, crate::java::trim(code));
+    }
+    let slots = if crate::java::is_blank(list) { Vec::new() } else { crate::java::split(list, ',') };
+    let mut bag = Saddlebag::default();
+    for s in slots {
+        let item = crate::java::split(crate::java::trim(s), '#');
+        let first = item.first().copied().ok_or(crate::java::Thrown)?; // item[0] of "#"
+        bag.items.push(if first.is_empty() { -1 } else { int_of(Some(first)) });
+        let code = item.get(1).and_then(|k| codes.get(k).copied());
+        bag.enchant_ids.push(lg_gamedata::enchants::enchant_ids(code));
+    }
+    Ok(Some(bag))
+}
+
+/// `<ItemData id="(\d+)"[^>]*>([^<]*)</ItemData>`.
+fn item_data_digits_id(s: &str) -> Vec<(&str, &str)> {
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(i) = s[from..].find("<ItemData id=\"") {
+        let v = from + i + "<ItemData id=\"".len();
+        let n = s.as_bytes()[v..].iter().take_while(|b| b.is_ascii_digit()).count();
+        let ok = n > 0 && s.as_bytes().get(v + n) == Some(&b'"');
+        if ok && let Some(gt) = s[v + n..].find('>') {
+            let t = v + n + gt + 1;
+            let m = s[t..].find('<').unwrap_or(s.len() - t);
+            if s[t + m..].starts_with("</ItemData>") {
+                out.push((&s[v..v + n], &s[t..t + m]));
+                from = t + m + "</ItemData>".len();
+                continue;
+            }
+        }
+        from = from + i + 1;
+    }
+    out
 }
 
 fn ints(v: &Json) -> Option<Vec<i32>> {

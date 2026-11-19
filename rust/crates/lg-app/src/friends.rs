@@ -16,9 +16,9 @@ fn space(c: char) -> bool {
     matches!(c, ' ' | '\t' | '\n' | '\u{b}' | '\u{c}' | '\r')
 }
 
-/// A character Java's `\b` counts as part of a word.
+/// A character Java's `\b` counts as part of a word (Java 25: ASCII letters, digits and `_`).
 fn word(c: char) -> bool {
-    c.is_alphanumeric() || c == '_'
+    c.is_ascii_alphanumeric() || c == '_'
 }
 
 /// `<Name>\s*([^<\s]+)\s*</Name>` at `i`: the name and where the match ends.

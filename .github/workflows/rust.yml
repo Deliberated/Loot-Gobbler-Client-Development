@@ -52,4 +52,6 @@ jobs:
             oracle/compare.sh "$RUNNER_TEMP/fight$seed.pcap"
             ./target/release/lg-replay synth-items "$RUNNER_TEMP/items$seed.pcap" "$seed"
             oracle/compare.sh "$RUNNER_TEMP/items$seed.pcap"
+            ./target/release/lg-replay synth-login "$RUNNER_TEMP/login$seed.pcap" "$RUNNER_TEMP/web$seed" "$seed"
+            oracle/compare.sh "$RUNNER_TEMP/login$seed.pcap" "" "$RUNNER_TEMP/web$seed"
           done

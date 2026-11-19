@@ -6,11 +6,13 @@
 //!   lg-replay decoded-ids               the ids of the packets that have a decoder, for oracle/compare.sh
 //!   lg-replay gamedata <assets>         the game data read from an assets folder, to compare with Java
 //!   lg-replay <session.pcap> --stats    only the summary
-//!   lg-replay <session.pcap> --world <assets> [--java-data <dir>]
+//!   lg-replay <session.pcap> --world <assets> [--java-data <dir>] [--web <dir>]
 //!                                       the world state after each packet the world is fed, to compare
 //!                                       with Java (oracle/compare.sh): a checksum, the whole state on map changes
 //!   lg-replay synth <out.pcap> [seed]   writes a made-up session, for testing without a recording
 //!   lg-replay synth-fight <out.pcap> [seed]   writes a made-up fight, for testing the damage logic
+//!   lg-replay synth-login <out.pcap> <answers dir> [seed]
+//!                                       writes a made-up login and the game's made-up web answers to it
 //!   lg-replay synth-items <out.pcap> [seed]   writes a made-up session with items (vault, moves, forge, trades...)
 //!   lg-replay live [--all] [--world <assets>]
 //!                                       the game packets of a live capture piped in, as they happen:
@@ -47,6 +49,27 @@ fn main() -> ExitCode {
             eprintln!("{out}: a made-up fight, {} packets in, {} out (seed {seed})", s.incoming.len(), s.outgoing.len());
             ExitCode::SUCCESS
         }
+        [cmd, out, dir, rest @ ..] if cmd == "synth-login" => {
+            let seed = rest.first().and_then(|s| s.parse().ok()).unwrap_or(1);
+            let (s, files) = lg_replay::login::login(seed);
+            if let Err(e) = std::fs::write(out, &s.pcap).and_then(|()| std::fs::create_dir_all(dir)) {
+                eprintln!("cannot write {out}: {e}");
+                return ExitCode::FAILURE;
+            }
+            for (name, text) in &files {
+                if let Err(e) = std::fs::write(std::path::Path::new(dir).join(name), text) {
+                    eprintln!("cannot write {name}: {e}");
+                    return ExitCode::FAILURE;
+                }
+            }
+            eprintln!(
+                "{out}: a made-up login, {} packets in, {} out; {} game answers in {dir} (seed {seed})",
+                s.incoming.len(),
+                s.outgoing.len(),
+                files.len()
+            );
+            ExitCode::SUCCESS
+        }
         [cmd, out, rest @ ..] if cmd == "synth-items" => {
             let seed = rest.first().and_then(|s| s.parse().ok()).unwrap_or(1);
             let s = lg_replay::items::items(seed);
@@ -72,16 +95,22 @@ fn main() -> ExitCode {
             if let [flag, assets, rest @ ..] = flags
                 && flag == "--world"
             {
-                // --java-data <dir>: what the Java app kept in its folder, taken over (read only)
-                let java = match rest {
-                    [f, dir] if f == "--java-data" => Some(std::path::Path::new(dir)),
-                    [] => None,
-                    _ => {
-                        eprintln!("usage: lg-replay <session.pcap> --world <assets> [--java-data <dir>]");
-                        return ExitCode::FAILURE;
+                // --java-data <dir>: what the Java app kept in its folder, taken over (read only); --web <dir>: the
+                // game's web answers from files, and HELLO handed on (nothing reaches the game)
+                let (mut java, mut web) = (None, None);
+                let mut i = 0;
+                while i < rest.len() {
+                    match (rest[i].as_str(), rest.get(i + 1)) {
+                        ("--java-data", Some(d)) => java = Some(std::path::Path::new(d)),
+                        ("--web", Some(d)) => web = Some(std::path::Path::new(d)),
+                        _ => {
+                            eprintln!("usage: lg-replay <session.pcap> --world <assets> [--java-data <dir>] [--web <dir>]");
+                            return ExitCode::FAILURE;
+                        }
                     }
-                };
-                return world(file, std::path::Path::new(assets), java);
+                    i += 2;
+                }
+                return world(file, std::path::Path::new(assets), java, web);
             }
             let mode = if has("--oracle") {
                 Mode::Oracle
@@ -320,7 +349,7 @@ fn summary(w: &lg_world::World) -> String {
 }
 
 /// The world state after each packet it is fed, as `oracle/WorldOracle.java` prints Java's.
-fn world(file: &str, assets: &std::path::Path, java_data: Option<&std::path::Path>) -> ExitCode {
+fn world(file: &str, assets: &std::path::Path, java_data: Option<&std::path::Path>, web: Option<&std::path::Path>) -> ExitCode {
     let data = match std::fs::read(file) {
         Ok(d) => d,
         Err(e) => {
@@ -340,6 +369,10 @@ fn world(file: &str, assets: &std::path::Path, java_data: Option<&std::path::Pat
         eprintln!("{p}");
     }
     let mut w = lg_app::App::importing(lg_world::World::new(game), 0, java_data);
+    if let Some(dir) = web {
+        w.web = Box::new(lg_app::web::Canned::new(dir));
+    }
+    let fed = |id: u8| lg_app::FED.contains(&id) || (web.is_some() && id == lg_app::HELLO);
     let mut out = BufWriter::new(std::io::stdout().lock());
     let full = |out: &mut BufWriter<_>, when: &str, state: &str| {
         line(out, format_args!("state {when}"));
@@ -364,7 +397,7 @@ fn world(file: &str, assets: &std::path::Path, java_data: Option<&std::path::Pat
             );
             continue;
         }
-        if !lg_app::FED.contains(&packet.id) {
+        if !fed(packet.id) {
             continue;
         }
         let Some(Ok(d)) = packets::decode(packet.id, &packet.body) else { continue }; // the app drops it

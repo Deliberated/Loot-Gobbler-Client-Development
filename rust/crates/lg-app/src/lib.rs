@@ -5,6 +5,7 @@
 //! world tells the app while it works ([`lg_world::Event`]) is taken right after, in order.
 
 pub mod amulet_saves;
+pub mod char_list;
 pub mod characters;
 pub mod collection;
 pub mod dps_history;
@@ -14,13 +15,20 @@ pub mod friends;
 pub mod holdings;
 pub mod item_cooldowns;
 pub mod item_use;
+pub mod java;
 pub mod localtime;
+pub mod login;
 pub mod loot_events;
 pub mod moonlight;
+pub mod patterns;
+pub mod pc_stats;
+mod pc_stats_table;
 pub mod pet_store;
 pub mod profile;
+pub mod realm_character;
 pub mod tinkerer;
 pub mod upe;
+pub mod web;
 
 use lg_protocol::packets::Decoded;
 use lg_world::{Abort, Event, World};
@@ -31,6 +39,10 @@ pub const FED: &[u8] = &[
     101, 25, 30, 75, 90, 35, 103, 64, 62, 13, 46, 12, 42, 10, 92, 166, 44, 67, 114, 117, 55, 95, 6, 34, 88, 183, 118, 119, 16, 19, 22, 93,
     172, 149, 150, 115, 86, 36, 14, 58, 96,
 ];
+
+/// HELLO: your login token. The app is handed it only where its web answers come from files (replays), or from the
+/// game once that part is built.
+pub const HELLO: u8 = 74;
 
 /// Packets unknown to the packet table the app still reads, raw (Java: `PacketDebug.problem` -> `ItemUse.raw`).
 pub const RAW: &[u8] = &[item_use::USE_REQUEST, item_use::USE_RESULT];
@@ -54,9 +66,17 @@ pub struct App {
     pub vitals: item_cooldowns::Vitals,
     pub pets: pet_store::PetStore,
     pub friends: friends::Friends,
-    /// Tomato's exaltation progress per class (`RealmCharacter.exalts`): from the login's fetch (not ported yet),
-    /// then from the game's exaltation packets.
-    pub realm_exalts: std::collections::HashMap<i32, Vec<i32>>,
+    /// Tomato's exaltation progress per class (`RealmCharacter.exalts`): from the login's fetches, then from the
+    /// game's exaltation packets.
+    pub realm_exalts: realm_character::Exalts,
+    /// The game's web API (answers from files in a replay).
+    pub web: Box<dyn web::Web>,
+    /// The login token last sent (Java: `TomatoData.token`).
+    pub token: Option<String>,
+    /// The exaltations were asked for once (Java: `updatedExaltStats`).
+    pub updated_exalts: bool,
+    pub friends_asked: i64,
+    pub missions: login::Missions,
     pub zone: localtime::Zone,
 }
 
@@ -70,7 +90,7 @@ macro_rules! records {
         if $seed {
             $app.holdings.seed_once(&ctx, &$app.characters.living());
         }
-        loot_events::Records { ctx, characters: &$app.characters, collection: &mut $app.collection, holdings: &mut $app.holdings }
+        loot_events::Records { ctx, characters: &mut $app.characters, collection: &mut $app.collection, holdings: &mut $app.holdings }
     }};
 }
 
@@ -93,9 +113,12 @@ impl App {
         let amulet_saves = java_data.map(amulet_saves::AmuletSaves::import).unwrap_or_default();
         let mut profile = profile::Profile::default();
         profile.start(&exalts.changes, now);
+        let mut characters = characters::Characters::default();
+        // Java's char-list.xml: the list saved at the last login (read on the first enchantment lookup)
+        characters.saved_list = java_data.and_then(|d| std::fs::read_to_string(d.join("char-list.xml")).ok());
         App {
             world,
-            characters: characters::Characters::default(),
+            characters,
             profile,
             collection: collection::Collection::default(),
             holdings: holdings::Holdings::default(),
@@ -112,7 +135,12 @@ impl App {
             vitals: item_cooldowns::Vitals::default(),
             pets: java_data.map(pet_store::PetStore::import).unwrap_or_default(),
             friends: java_data.map(friends::Friends::import).unwrap_or_default(),
-            realm_exalts: std::collections::HashMap::new(),
+            realm_exalts: realm_character::Exalts::new(),
+            web: Box::new(web::Offline::default()),
+            token: None,
+            updated_exalts: false,
+            friends_asked: 0,
+            missions: login::Missions::default(),
             zone: localtime::Zone::system(),
         }
     }
@@ -209,13 +237,14 @@ impl App {
                 self.world.packet(p)?;
                 self.events(now);
                 let c = upe::Ctx { data: self.world.data(), zone: &self.zone, now };
+                let ctx = holdings::Ctx { data: self.world.data(), now, time: &time };
+                self.holdings.seed_once(&ctx, &self.characters.living());
                 let mut r = loot_events::Records {
-                    ctx: holdings::Ctx { data: self.world.data(), now, time: &time },
-                    characters: &self.characters,
+                    ctx,
+                    characters: &mut self.characters,
                     collection: &mut self.collection,
                     holdings: &mut self.holdings,
                 };
-                r.holdings.seed_once(&r.ctx, &self.characters.living());
                 self.loot_events.inv_result(&mut r, &mut self.upe, &c, &self.world, s);
             }
             // TomatoPacketCapture: the world, DungeonVisits, LootEvents for the UPE rules
@@ -313,6 +342,20 @@ impl App {
                 self.events(now);
                 self.amulet_saves.text(&self.world, &mut self.dungeon_visits, t, now);
             }
+            // TomatoData.updateToken
+            Decoded::Hello(h) => {
+                self.world.packet(p)?;
+                self.events(now);
+                self.hello(&h.access_token, now)?;
+            }
+            // TomatoData.webRequest after setUserId: the Pet Yard and the Daily Quest Room ask for the list at once
+            Decoded::CreateSuccess(_) => {
+                self.world.packet(p)?;
+                self.events(now);
+                if self.world.map.as_ref().is_some_and(|m| m.display_name == "Pet Yard" || m.display_name == "Daily Quest Room") {
+                    self.char_list_request(now);
+                }
+            }
             Decoded::ExaltationUpdate(x) => {
                 self.world.packet(p)?;
                 self.events(now);
@@ -340,7 +383,7 @@ impl App {
     /// kept from earlier; nothing known: ignored).
     fn exalt_update(&mut self, x: &lg_protocol::packets::ExaltationUpdate, now: i64) {
         let cls = i32::from(x.obj_type);
-        let Some(before) = self.realm_exalts.get(&cls).or_else(|| self.exalts.progress(cls)).cloned() else { return };
+        let Some(before) = self.realm_exalts.get(&cls).cloned().flatten().or_else(|| self.exalts.progress(cls).cloned()) else { return };
         let update = vec![
             x.dexterity_progress,
             x.speed_progress,
@@ -355,7 +398,7 @@ impl App {
             return;
         }
         self.dungeon_visits.exalt_progress(cls, &before, &update, now);
-        self.realm_exalts.insert(cls, update.clone());
+        self.realm_exalts.insert(cls, Some(update.clone()));
         self.exalts.update(&[(cls, update)], now);
         self.profile.track_exalts(&self.exalts.changes, now);
     }
@@ -382,6 +425,11 @@ impl App {
                 Event::MoonAdded { id, object_type } => self.moonlight.added(&self.world, &mut self.dungeon_visits, id, object_type, now),
                 Event::MoonRemoved { id } => self.moonlight.removed(id),
                 Event::YardPet { object_type, status } => self.pets.yard_pet(object_type, &status, now),
+                Event::EnteredNexus => {
+                    if self.characters.entered_nexus(now) {
+                        self.fetch_char_list(now);
+                    }
+                }
                 Event::MoonConditions { id, conditions } => {
                     self.moonlight.conditions(&self.world, &mut self.dungeon_visits, id, &conditions, now)
                 }
@@ -431,6 +479,7 @@ impl App {
         s.push_str(&self.cooldowns.dump());
         s.push_str(&format!("vitals {}/{} at={}\n", self.vitals.mp, self.vitals.max_mp, self.vitals.at));
         s.push_str(&self.pets.dump());
+        s.push_str(&self.login_dump());
         s
     }
 }

@@ -33,7 +33,7 @@ pub struct LootEvents {
 /// The records LootEvents writes into, and the moment.
 pub struct Records<'a> {
     pub ctx: Ctx<'a>,
-    pub characters: &'a Characters,
+    pub characters: &'a mut Characters,
     pub collection: &'a mut Collection,
     pub holdings: &'a mut Holdings,
 }
@@ -280,7 +280,7 @@ impl LootEvents {
             }
             let mut ids = (i < codes.len()).then(|| enchant_ids(Some(codes[i])));
             if ids.is_none() {
-                ids = r.characters.slot_enchants(player.char_id, i, v);
+                ids = r.characters.slot_enchants(player.char_id, i, v, r.ctx.now);
             }
             let (now, time) = (r.ctx.now, r.ctx.time);
             let mut f = match ids {

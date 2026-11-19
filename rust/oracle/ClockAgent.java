@@ -48,6 +48,59 @@ public final class ClockAgent {
         return LocalDateTime.ofInstant(instant(), ZoneId.systemDefault());
     }
 
+    // --- the game's web API, answered from files: the app never reaches the game's servers -------------------------
+
+    /** Every web request the app made, in order: "type extra -> answered or refused" (for the state dump). */
+    public static final java.util.List<String> WEB = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /** Tomato's HttpCharListRequest.webRequest: the answer in oracle.web/<type, / as _>[-mule].xml, else refused. */
+    public static String webRequest(String token, String type, String extra) {
+        String dir = System.getProperty("oracle.web");
+        java.nio.file.Path f = dir == null ? null
+                : java.nio.file.Path.of(dir, type.replace('/', '_') + (extra.contains("muleDump") ? "-mule" : "") + ".xml");
+        String answer = null;
+        try {
+            if (f != null && java.nio.file.Files.exists(f)) {
+                // as Java reads the answer: line by line, the line ends dropped
+                answer = String.join("", java.nio.file.Files.readString(f).lines().toList());
+            }
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
+        WEB.add(type + (extra.isEmpty() ? "" : " " + extra) + (answer == null ? " refused" : " answered"));
+        return answer;
+    }
+
+    public static String webRequest(String token, String type) {
+        return webRequest(token, type, "");
+    }
+
+    // --- the app's fetch threads, run to their end where they are started (one order Java may run them in) -------
+
+    private static final java.util.Set<String> INLINE = java.util.Set.of("char-list-fetch", "friend-list", "missions", "missions-claim");
+    private static final ThreadLocal<Boolean> INLINED = ThreadLocal.withInitial(() -> false);
+
+    public static void start(Thread t) {
+        if (!INLINE.contains(t.getName())) {
+            t.start();
+            return;
+        }
+        boolean was = INLINED.get();
+        INLINED.set(true);
+        try {
+            t.run();
+        } catch (RuntimeException e) {
+            System.err.println("ClockAgent: thread " + t.getName() + " threw " + e);
+        } finally {
+            INLINED.set(was);
+        }
+    }
+
+    /** Thread.sleep: no waiting inside an inlined fetch thread (it runs on the clock of the recording). */
+    public static void sleep(long ms) throws InterruptedException {
+        if (!INLINED.get()) Thread.sleep(ms);
+    }
+
     private static final ClassDesc SELF = ClassDesc.of("oracle.ClockAgent");
 
     /** owner.name()descriptor -> the replacement here. */
@@ -84,6 +137,24 @@ public final class ClockAgent {
                 .orElse(java.lang.classfile.ClassHierarchyResolver.ofResourceParsing(ClassLoader.getPlatformClassLoader()));
         ClassFile cf = ClassFile.of(ClassFile.ClassHierarchyResolverOption.of(resolver));
         CodeTransform swap = (b, e) -> {
+            if (e instanceof InvokeInstruction i) {
+                String owner = i.owner().asInternalName(), m = i.name().stringValue(), d = i.typeSymbol().descriptorString();
+                if (owner.equals("tomato/realmshark/HttpCharListRequest") && m.equals("webRequest")
+                        && i.opcode() == java.lang.classfile.Opcode.INVOKESTATIC) {
+                    b.invokestatic(SELF, "webRequest", MethodTypeDesc.ofDescriptor(d));
+                    return;
+                }
+                if (owner.equals("java/lang/Thread") && m.equals("start") && d.equals("()V")
+                        && i.opcode() == java.lang.classfile.Opcode.INVOKEVIRTUAL) {
+                    b.invokestatic(SELF, "start", MethodTypeDesc.ofDescriptor("(Ljava/lang/Thread;)V"));
+                    return;
+                }
+                if (owner.equals("java/lang/Thread") && m.equals("sleep") && d.equals("(J)V")
+                        && i.opcode() == java.lang.classfile.Opcode.INVOKESTATIC) {
+                    b.invokestatic(SELF, "sleep", MethodTypeDesc.ofDescriptor(d));
+                    return;
+                }
+            }
             if (e instanceof InvokeInstruction i && i.method().type().stringValue().startsWith("()")) {
                 String key = i.owner().asInternalName() + "." + i.name().stringValue();
                 String to = SWAPS.get(key);

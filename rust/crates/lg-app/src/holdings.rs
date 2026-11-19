@@ -2,7 +2,7 @@
 //! quick slots, and both vaults' chests, from what the game shows live, vault visits and moves in the vault; with a
 //! journal of every change of collectible items.
 //!
-//! Not yet: the character list from the game's servers, syncing, the file (and its journal file).
+//! Not yet: syncing, the file (and its journal file).
 
 use lg_gamedata::GameData;
 use std::collections::{HashMap, HashSet};
@@ -137,7 +137,22 @@ pub struct Holdings {
     pub dirty: bool,
     /// A vault visit replaced a vault, for the UPE rules: (key, seen before, slots before, seen now, slots now).
     pub vault_changes: Vec<VaultChange>,
+    /// The places' keys in the order put (for Java's `HashMap` order), and the most there ever were.
+    place_keys: Vec<String>,
+    place_most: usize,
 }
+
+/// What the character list says a character holds (Java: `Holdings.Listed`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Listed {
+    pub char_id: i32,
+    pub slots: Option<Vec<i32>>,
+    pub enchant_ids: Option<Vec<Vec<i32>>>,
+    pub quick: Option<Vec<i32>>,
+}
+
+/// A character seen live this recently wins over the character list.
+const LIVE_WINS_MS: i64 = 60_000;
 
 /// What the holdings need to know of the world around them.
 pub struct Ctx<'a> {
@@ -182,7 +197,9 @@ impl Holdings {
             }
             p.seen_at = 0;
             p.source = Some("saved characters".into());
-            self.places.insert(format!("char:{}", l.char_id), p);
+            let key = format!("char:{}", l.char_id);
+            self.places.insert(key.clone(), p);
+            self.track(&key);
         }
         if self.places.is_empty() {
             return;
@@ -200,6 +217,7 @@ impl Holdings {
             let mut p = Place::default();
             p.put(SLOTS, Vec::new());
             self.places.insert(key.clone(), p);
+            self.track(&key);
         }
         let mut lines = Vec::new();
         let mut changed = false;
@@ -572,8 +590,116 @@ impl Holdings {
         let change = if before.is_none() { "new".to_string() } else { format!("+{gained} / -{lost}") };
         let tail = if parts.is_empty() { String::new() } else { format!("  {}", parts.join(", ")) };
         self.places.insert(key.to_string(), now);
+        self.track(key);
         self.line(c, key, &format!("{why}: {total} copies ({change}){tail}"));
         self.dirty = true;
+    }
+
+    /// A place put (Java: `state.places.put`): a new key goes to the end of Java's order.
+    fn track(&mut self, key: &str) {
+        if !self.place_keys.iter().any(|k| k == key) {
+            self.place_keys.push(key.to_string());
+            self.place_most = self.place_most.max(self.places.len());
+        }
+    }
+
+    /// The places' keys in Java's `HashMap` order.
+    fn java_place_order(&self) -> Vec<String> {
+        let keys: Vec<(String, i32)> = self
+            .place_keys
+            .iter()
+            .filter(|k| self.places.contains_key(*k))
+            .map(|k| (k.clone(), lg_world::fight::java_string_hash(k)))
+            .collect();
+        lg_world::fight::java_bucket_order(&keys, lg_world::fight::java_buckets_grown(self.place_most))
+    }
+
+    /// Java `characters`: what the character list says each character holds. Ignored when it is empty or shares no
+    /// character with those known (another account's); a character seen live in the last minute keeps that; the
+    /// characters missing from it are removed.
+    pub fn characters(&mut self, c: &Ctx, listed: &[Listed]) {
+        let now = c.now;
+        let keep: Vec<String> = listed.iter().filter(|l| l.slots.is_some()).map(|l| format!("char:{}", l.char_id)).collect();
+        let known = self.places.keys().any(|k| k.starts_with("char:"));
+        if keep.is_empty() || known && !keep.iter().any(|k| self.places.contains_key(k)) {
+            let why = if keep.is_empty() { "it is empty" } else { "it shares no character with the known ones (another account?)" };
+            self.line(c, "chars", &format!("character list ignored: {why}"));
+            return;
+        }
+        let mut changed = false;
+        for l in listed {
+            let Some(slots) = &l.slots else { continue };
+            let key = format!("char:{}", l.char_id);
+            let before = self.places.get(&key).cloned();
+            if let Some(b) = &before
+                && b.source.as_deref() == Some("live")
+                && now - b.seen_at < LIVE_WINS_MS
+            {
+                self.line(c, &key, &format!("character list ignored: seen live {} s ago", (now - b.seen_at) / 1000));
+                continue;
+            }
+            let mut p = Place::default();
+            let list: Vec<Slot> = slots
+                .iter()
+                .enumerate()
+                .map(|(i, &item)| Slot::new(item, l.enchant_ids.as_ref().and_then(|e| e.get(i)).cloned()))
+                .collect();
+            p.put(SLOTS, list);
+            if let Some(q) = &l.quick {
+                p.put(QUICK, quick_slots(q, None));
+            } else if let Some(q) = before.as_ref().and_then(|b| b.section(QUICK)) {
+                p.put(QUICK, q.clone());
+            }
+            p.seen_at = now;
+            p.source = Some("char list".into());
+            self.replace(c, &key, before, p, "character list");
+            changed = true;
+        }
+        for key in self.java_place_order() {
+            if !key.starts_with("char:") || keep.contains(&key) {
+                continue;
+            }
+            let d = describe(c, self.places.get(&key));
+            self.line(c, &key, &format!("not in the character list: removed ({d})"));
+            self.places.remove(&key);
+            self.place_keys.retain(|k| *k != key);
+            self.gone.insert(key, now);
+            changed = true;
+        }
+        if changed {
+            self.dirty = true;
+        }
+    }
+
+    /// Java `listedVault`: the regular vault from the character list replaces the stored one, except while you are
+    /// in it; sections it does not carry keep theirs. Ignored when empty or not decoding as items.
+    pub fn listed_vault(&mut self, c: &Ctx, sections: Option<Vec<(String, Vec<Slot>)>>) {
+        let Some(sections) = sections else { return };
+        if self.in_vault.as_deref() == Some(VAULT) {
+            self.line(c, VAULT, "vault from the character list ignored: you are in it");
+            return;
+        }
+        let ids: Vec<i32> = sections.iter().find(|(n, _)| n == VAULT_CHEST).map_or(Vec::new(), |(_, s)| s.iter().map(|s| s.item).collect());
+        if ids.is_empty() || !plausible(c, &ids) {
+            let why = if ids.is_empty() { "it is empty" } else { "it does not decode as items" };
+            self.line(c, VAULT, &format!("vault from the character list ignored: {why}"));
+            return;
+        }
+        let before = self.places.get(VAULT).cloned();
+        let mut p = Place::default();
+        for (n, s) in sections {
+            p.put(&n, s);
+        }
+        if let Some(b) = &before {
+            for (n, s) in &b.sections {
+                if p.section(n).is_none() {
+                    p.put(n, s.clone());
+                }
+            }
+        }
+        p.seen_at = c.now;
+        p.source = Some("char list".into());
+        self.replace(c, VAULT, before, p, "vault from the character list");
     }
 
     /// Java `count`: copies of a collectible item held by living characters and in the vaults.
@@ -673,6 +799,64 @@ pub fn slot_name(i: usize) -> &'static str {
         12..=19 => "Backpack",
         _ => "Extender",
     }
+}
+
+/// Java `vaultFromCharList`: the regular vault as the full character list shows it (the account's own Account
+/// block): vault chests, gifts, potions, material chests; items "id" or "id#instance", an instance's enchantments
+/// from the UniqueItemInfo blocks. None without a vault.
+pub fn vault_from_char_list(xml: &str) -> Option<Vec<(String, Vec<Slot>)>> {
+    let at = xml.find("<Vault>")?;
+    // lastIndexOf("<Account>", at): one starting at or before the vault
+    let start = xml[..(at + "<Account>".len()).min(xml.len())].rfind("<Account>")?;
+    let end = at + xml[at..].find("</Account>")?;
+    let account = &xml[start..end];
+    let vault = between(account, "<Vault>", "</Vault>")?;
+    let mut codes: HashMap<&str, String> = HashMap::new();
+    for (id, code) in crate::patterns::item_data(account, crate::patterns::Attr::Id) {
+        codes.insert(id, crate::java::trim(code).to_string());
+    }
+    let mut out = vec![(VAULT_CHEST.to_string(), chests(vault, &codes))];
+    if let Some(g) = between(account, "<Gifts>", "</Gifts>") {
+        let mut list = items(g, &codes);
+        list.retain(|s| !s.empty());
+        out.push((GIFT_CHEST.to_string(), list));
+    }
+    if let Some(p) = between(account, "<Potions>", "</Potions>") {
+        out.push((POTIONS.to_string(), items(p, &codes)));
+    }
+    if let Some(m) = between(account, "<MaterialStorage>", "</MaterialStorage>") {
+        out.push((MATERIALS.to_string(), chests(m, &codes)));
+    }
+    Some(out)
+}
+
+fn between<'a>(s: &'a str, open: &str, close: &str) -> Option<&'a str> {
+    let a = s.find(open)?;
+    let b = a + s[a..].find(close)?;
+    s.get(a + open.len()..b)
+}
+
+fn chests(block: &str, codes: &HashMap<&str, String>) -> Vec<Slot> {
+    crate::patterns::texts(block, "Chest").into_iter().flat_map(|t| items(t, codes)).collect()
+}
+
+fn items(csv: &str, codes: &HashMap<&str, String>) -> Vec<Slot> {
+    if crate::java::is_blank(csv) {
+        return Vec::new();
+    }
+    crate::java::split(csv, ',')
+        .into_iter()
+        .map(|part| {
+            let t = crate::java::trim(part);
+            let (id, instance) = match t.find('#') {
+                Some(h) => (&t[..h], Some(&t[h + 1..])),
+                None => (t, None),
+            };
+            let item = crate::java::parse_int(id).unwrap_or(-1);
+            let code = instance.and_then(|i| codes.get(i));
+            Slot::new(item, code.map(|c| lg_gamedata::enchants::enchant_ids(Some(c))))
+        })
+        .collect()
 }
 
 fn quick_slots(quick: &[i32], before: Option<&Vec<Slot>>) -> Vec<Slot> {

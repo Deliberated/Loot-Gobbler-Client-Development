@@ -57,13 +57,17 @@ impl ExaltStore {
     /// Java `update`: new values from the game replace those of each class given; values that went up are noted
     /// (not for a class seen for the first time), and notes older than a week go.
     pub fn update(&mut self, exalts: &[(i32, Vec<i32>)], now: i64) {
+        let all: Vec<(i32, Option<Vec<i32>>)> = exalts.iter().map(|(c, v)| (*c, Some(v.clone()))).collect();
+        self.update_all(&all, now);
+    }
+
+    /// The same for Tomato's whole map, where a class can be there without values (skipped, as in Java).
+    pub fn update_all(&mut self, exalts: &[(i32, Option<Vec<i32>>)], now: i64) {
         if exalts.is_empty() {
             return;
         }
         for (cls, values) in exalts {
-            if values.len() < 8 {
-                continue;
-            }
+            let Some(values) = values.as_ref().filter(|v| v.len() >= 8) else { continue };
             if let Some(was) = self.progress.get(cls) {
                 for (i, (&w, &v)) in was.iter().zip(values).enumerate() {
                     if v > w {

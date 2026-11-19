@@ -2,6 +2,7 @@
 
 pub mod fight;
 pub mod items;
+pub mod login;
 pub mod synth;
 
 use lg_capture::{Flow, Splitter, StreamEvent, pcap};

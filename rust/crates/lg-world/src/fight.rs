@@ -26,6 +26,39 @@ pub fn java_hash_order(keys: &[i32]) -> Vec<i32> {
     out
 }
 
+/// Java's `String.hashCode`: over the UTF-16 units, wrapping.
+pub fn java_string_hash(s: &str) -> i32 {
+    s.encode_utf16().fold(0i32, |h, c| h.wrapping_mul(31).wrapping_add(i32::from(c)))
+}
+
+/// The order a Java `HashMap` of `buckets` buckets walks keys with these hashes, put in this order: by bucket, then
+/// in the order put.
+pub fn java_bucket_order<T: Clone>(keys: &[(T, i32)], buckets: usize) -> Vec<T> {
+    let bucket = |h: i32| {
+        let h = h as u32;
+        ((h ^ (h >> 16)) as usize) & (buckets - 1)
+    };
+    let mut out: Vec<&(T, i32)> = keys.iter().collect();
+    out.sort_by_key(|(_, h)| bucket(*h)); // stable
+    out.into_iter().map(|(k, _)| k.clone()).collect()
+}
+
+/// The buckets of a Java `HashMap` that grew to `most` entries one by one (16, doubled past three quarters full).
+pub fn java_buckets_grown(most: usize) -> usize {
+    let mut b = 16;
+    while most > b / 4 * 3 {
+        b *= 2;
+    }
+    b
+}
+
+/// The buckets of `new HashMap<>(other)` for a map of `n` entries (Java 25: `tableSizeFor(ceil(n / 0.75))`, as
+/// checked with jshell).
+pub fn java_buckets_copied(n: usize) -> usize {
+    let t = (n as f64 / 0.75).ceil() as usize;
+    t.max(1).next_power_of_two()
+}
+
 /// Java `Entity.name()`: a player's name stat (before the first comma), else the object's name. Java throws for a
 /// name stat of only commas.
 pub fn name(data: &GameData, e: &Entity) -> Result<Option<String>, Abort> {
@@ -162,5 +195,9 @@ mod tests {
         assert_eq!(java_hash_order(&keys), want);
         // the high bits spread into the bucket
         assert_eq!(java_hash_order(&[1_048_593, 17, 65_553, 33]), vec![65_553, 1_048_593, 17, 33]);
+        assert_eq!(java_string_hash("char:506"), "char:506".chars().fold(0i32, |h, c| h.wrapping_mul(31).wrapping_add(c as i32)));
+        assert_eq!(java_string_hash("hello"), 99_162_322);
+        assert_eq!((java_buckets_copied(5), java_buckets_copied(6), java_buckets_copied(19), java_buckets_copied(0)), (8, 8, 32, 1));
+        assert_eq!((java_buckets_grown(12), java_buckets_grown(13)), (16, 32));
     }
 }

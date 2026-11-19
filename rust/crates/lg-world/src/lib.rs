@@ -45,6 +45,8 @@ pub enum Event {
         id: i32,
         conditions: Vec<(String, i32)>,
     },
+    /// The Nexus is entered (Java: `CharacterStore.enteredNexus`, after the map left is cleared).
+    EnteredNexus,
     /// A pet in the Pet Yard came into view (Java `PetStore.importYardPet`), with the stats it was sent.
     YardPet {
         object_type: i32,
@@ -544,6 +546,9 @@ impl World {
         if m.display_name == "Pet Yard" {
             self.petyard = true;
             self.pets_panel.clear();
+        }
+        if m.display_name == "{s.nexus}" {
+            self.events.push(Event::EnteredNexus);
         }
         self.map = Some(Map { name: m.name.clone(), display_name: m.display_name.clone(), width: m.width, height: m.height, seed: m.fp });
         let vault = m.display_name == "{s.vault}";

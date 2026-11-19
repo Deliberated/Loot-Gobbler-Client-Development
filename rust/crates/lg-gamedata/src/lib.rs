@@ -17,7 +17,7 @@ pub mod dyes;
 pub mod enchants;
 pub mod items;
 pub mod st_sets;
-mod xml;
+pub mod xml;
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;

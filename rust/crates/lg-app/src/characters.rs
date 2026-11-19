@@ -1,7 +1,8 @@
 //! Your characters (Java: `lootgobbler.CharacterStore`): every character seen, with what it wears and holds, its
 //! level and fame over time, whether it is alive. Filled every 5 s while you play, and by the game's death packet.
 //!
-//! Not yet: the character list from the game's servers (at login), syncing with the Loot Gobbler server, the file.
+//! The character list from the game's servers is read in [`crate::char_list`]. Not yet: syncing with the Loot Gobbler
+//! server, the file.
 
 use crate::profile::Profile;
 use lg_world::{Abort, Entity, World, stats};
@@ -119,8 +120,8 @@ const QUICKSLOTS: [u8; 3] = [stats::POTION_ONE_TYPE, stats::POTION_TWO_TYPE, sta
 #[derive(Debug, Default)]
 pub struct Characters {
     /// In the order first seen (Java's `LinkedHashMap`).
-    order: Vec<i32>,
-    chars: HashMap<i32, Char>,
+    pub(crate) order: Vec<i32>,
+    pub(crate) chars: HashMap<i32, Char>,
     /// Characters first seen in this run of the app.
     pub never_seen: BTreeSet<i32>,
     /// The character you are playing (or last played this run), 0 = none yet.
@@ -129,6 +130,12 @@ pub struct Characters {
     pub player_name: Option<String>,
     last_live: i64,
     last_save: i64,
+    /// The login token handling (Java: `fetcher`, `fetchedToken`, `listToken`, `lastFetch`, `fetching`).
+    pub login: crate::char_list::Login,
+    /// What Java's `char-list.xml` holds: the list saved at the last login (from the Java folder at the start), and
+    /// whether it was read yet (Java reads it on the first enchantment lookup).
+    pub saved_list: Option<String>,
+    pub(crate) saved_list_read: bool,
     /// Set when the file should be written (the app writes it; nothing here touches files).
     pub dirty: bool,
 }
@@ -143,9 +150,10 @@ impl Characters {
         self.chars.get(&id)
     }
 
-    /// Java `slotEnchants`: the enchantments known for that item in that slot (the saved character list is not read
-    /// yet).
-    pub fn slot_enchants(&self, char_id: i32, slot: usize, item: i32) -> Option<Vec<i32>> {
+    /// Java `slotEnchants`: the enchantments known for that item in that slot, as of the last character list (the
+    /// first lookup reads the list saved at the last login, as Java does).
+    pub fn slot_enchants(&mut self, char_id: i32, slot: usize, item: i32, now: i64) -> Option<Vec<i32>> {
+        self.read_saved_list(now);
         let c = self.chars.get(&char_id)?;
         let (slots, ids) = (c.slots.as_ref()?, c.slot_enchant_ids.as_ref()?);
         if slot >= slots.len() || slots[slot] != item {
@@ -173,7 +181,7 @@ impl Characters {
         self.order.iter().map(|id| &self.chars[id])
     }
 
-    fn save(&mut self, now: i64) {
+    pub(crate) fn save(&mut self, now: i64) {
         self.last_save = now;
         self.dirty = true;
     }

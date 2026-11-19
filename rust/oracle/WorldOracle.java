@@ -85,7 +85,10 @@ final class WorldOracle {
         // the app's Register as at startup: TomatoPacketCapture first (Tomato.loadControllers), then the app's own
         // listeners as TomatoGUI installs them
         packets.packetcapture.register.Register r = packets.packetcapture.register.Register.INSTANCE;
-        for (PacketType t : CAPTURE_ORDER) r.register(t, capture::packetCapture);
+        for (PacketType t : CAPTURE_ORDER) {
+            r.register(t, capture::packetCapture);
+            if (WEB && t == PacketType.QUEST_FETCH_RESPONSE) r.register(PacketType.HELLO, capture::packetCapture);
+        }
         lootgobbler.PacketDebug.install();
         lootgobbler.ItemUse.install();
         lootgobbler.CharacterStore.install();
@@ -118,8 +121,13 @@ final class WorldOracle {
         }
     }
 
+    /** With canned game answers (-Doracle.web, see ClockAgent.webRequest) HELLO is handed on too: nothing leaves. */
+    static final boolean WEB = System.getProperty("oracle.web") != null;
+
     static boolean fed(int type) {
-        return PacketType.containsKey(type) && FED.contains(PacketType.byOrdinal(type));
+        if (!PacketType.containsKey(type)) return false;
+        PacketType t = PacketType.byOrdinal(type);
+        return FED.contains(t) || (WEB && t == PacketType.HELLO);
     }
 
     /** One decoded packet, as the app's Register hands it on: an exception ends its handling there. */
@@ -130,6 +138,7 @@ final class WorldOracle {
         try {
             packets.packetcapture.register.Register.INSTANCE.emitPacketLogs(packet);
             waitFor(lootgobbler.PlayerProfile.get(), "counting");   // the ST set count runs on its own thread
+            if (!javax.swing.SwingUtilities.isEventDispatchThread()) javax.swing.SwingUtilities.invokeAndWait(() -> {});   // panels updated later
         } catch (Throwable e) {
             if (System.getenv("WORLD_ORACLE_TRACE") != null) e.printStackTrace();
             StackTraceElement where = e.getStackTrace().length > 0 ? e.getStackTrace()[0] : null;
@@ -238,6 +247,8 @@ final class WorldOracle {
                 if (fights != null) b.append(fights).append('\n');
             }
             records(b);
+            login(b);
+            b.append("web [").append(String.join(",", oracle.ClockAgent.WEB)).append("]\n");
             return b.toString();
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException(e);
@@ -327,6 +338,7 @@ final class WorldOracle {
         amulet(b);
         cooldowns(b);
         pets(b);
+
     }
 
     @SuppressWarnings("unchecked")
@@ -341,6 +353,44 @@ final class WorldOracle {
                     .append(bag(p.saddlebag)).append(" seasonal=").append(bag(p.seasonalSaddlebag)).append(" seen=")
                     .append(p.lastSeen).append('\n');
         }
+    }
+
+    private static String crc(String s) {
+        if (s == null) return "null";
+        CRC32 c = new CRC32();
+        c.update(s.getBytes(StandardCharsets.UTF_8));
+        return String.format("#%08x", c.getValue());
+    }
+
+    private static String fileCrc(String name) {
+        try {
+            java.nio.file.Path p = java.nio.file.Path.of(name);
+            if (!java.nio.file.Files.exists(p)) return "null";
+            CRC32 c = new CRC32();
+            c.update(java.nio.file.Files.readAllBytes(p));
+            return String.format("%08x", c.getValue());
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
+    }
+
+    /** The login token handling and what the game's web API answered, as lg-app's login_dump writes it. */
+    @SuppressWarnings("unchecked")
+    private void login(StringBuilder b) throws ReflectiveOperationException {
+        lootgobbler.CharacterStore cs = lootgobbler.CharacterStore.get();
+        b.append("login token=").append(crc((String) get(data, "token"))).append(" fetcher=").append(get(cs, "fetcher") != null)
+                .append(" fetched=").append(crc((String) get(cs, "fetchedToken"))).append(" list=").append(crc((String) get(cs, "listToken")))
+                .append(" last=").append(get(cs, "lastFetch")).append(" fetching=").append(get(cs, "fetching"))
+                .append(" exaltsAsked=").append(get(data, "updatedExaltStats")).append(" savedList=").append(fileCrc("char-list.xml"))
+                .append('/').append(get(cs, "savedListRead")).append('\n');
+        List<String> ex = new ArrayList<>();
+        for (Map.Entry<Integer, int[]> e : tomato.realmshark.RealmCharacter.exalts.entrySet()) ex.add(e.getKey() + "=" + arr(e.getValue()));
+        b.append("realm exalts [").append(String.join(",", ex)).append("]\n");
+        lootgobbler.Friends f = lootgobbler.Friends.get();
+        b.append("friends [").append(String.join(",", new TreeSet<>((Set<String>) get(f, "names")))).append("] asked=").append(get(f, "asked")).append('\n');
+        lootgobbler.Missions m = lootgobbler.Missions.get();
+        b.append("missions asked=").append(get(m, "asked")).append(" fetching=").append(get(m, "fetching")).append(" seasons=")
+                .append(fileCrc("missions-seasons.json")).append(" player=").append(fileCrc("missions-player.xml")).append('\n');
     }
 
     private static String bag(lootgobbler.PetStore.Saddlebag s) {
