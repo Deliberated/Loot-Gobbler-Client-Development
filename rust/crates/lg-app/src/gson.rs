@@ -66,6 +66,39 @@ pub fn string(v: Option<&Json>) -> Result<Option<Option<String>>, Thrown> {
     }
 }
 
+/// A `boolean` field: true/false, or a string read with `Boolean.parseBoolean`.
+pub fn boolean(v: Option<&Json>) -> Read<bool> {
+    match v {
+        None | Some(Json::Null) => Ok(None),
+        Some(Json::Bool(b)) => Ok(Some(*b)),
+        Some(Json::String(s)) => Ok(Some(s.eq_ignore_ascii_case("true"))),
+        Some(_) => Err(Thrown),
+    }
+}
+
+/// An `int[]` field: Some(None) for `null`; a `null` element throws.
+pub fn ints(v: Option<&Json>) -> Result<Option<Option<Vec<i32>>>, Thrown> {
+    match v {
+        None => Ok(None),
+        Some(Json::Null) => Ok(Some(None)),
+        Some(Json::Array(a)) => Ok(Some(Some(a.iter().map(|x| int(Some(x))?.ok_or(Thrown)).collect::<Result<_, _>>()?))),
+        Some(_) => Err(Thrown),
+    }
+}
+
+/// An `int[][]` as read: the arrays, a `null` one as None.
+pub type Ints2 = Vec<Option<Vec<i32>>>;
+
+/// An `int[][]` field: a `null` inner array stays null (here: None).
+pub fn ints2(v: Option<&Json>) -> Result<Option<Option<Ints2>>, Thrown> {
+    match v {
+        None => Ok(None),
+        Some(Json::Null) => Ok(Some(None)),
+        Some(Json::Array(a)) => Ok(Some(Some(a.iter().map(|x| ints(Some(x)).map(|r| r.flatten())).collect::<Result<_, _>>()?))),
+        Some(_) => Err(Thrown),
+    }
+}
+
 /// A `List<T>` field: Some(None) for `null`, else each element read by `item` (None for a `null` element).
 pub fn list<T>(v: Option<&Json>, item: impl Fn(&Json) -> Result<T, Thrown>) -> Result<Option<Option<Vec<Option<T>>>>, Thrown> {
     match v {

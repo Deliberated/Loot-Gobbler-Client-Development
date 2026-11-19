@@ -146,6 +146,30 @@ fn blank(s: &str) -> bool {
 }
 
 impl Characters {
+    /// What the Java app kept (`characters.json`, and your name from `realmShark.properties`), read only; then
+    /// Java's repair at loading (a death without a cause brings the character back). Unreadable: nothing.
+    pub fn import(dir: &std::path::Path) -> Characters {
+        let mut c = Characters::default();
+        if let Ok(props) = std::fs::read_to_string(dir.join("realmShark.properties")) {
+            c.player_name = crate::java::property(&props, "playerName");
+        }
+        let Ok(text) = std::fs::read_to_string(dir.join("characters.json")) else { return c };
+        if let Ok(list) = parse_chars(&text) {
+            for (id, ch) in list {
+                if !c.chars.contains_key(&id) {
+                    c.order.push(id);
+                }
+                c.chars.insert(id, ch);
+            }
+        }
+        for ch in c.chars.values_mut() {
+            if !ch.alive && ch.died_by.is_none() {
+                ch.alive = true;
+            }
+        }
+        c
+    }
+
     pub fn get(&self, id: i32) -> Option<&Char> {
         self.chars.get(&id)
     }
@@ -493,4 +517,114 @@ fn read_slots(p: &Entity, c: &mut Char, pack: i32) -> bool {
     c.slots = Some(slots);
     c.slot_enchant_ids = Some(ids);
     changed
+}
+
+/// Gson reading `LinkedHashMap<Integer, Char>`: missing fields keep Char's defaults.
+fn parse_chars(text: &str) -> Result<Vec<(i32, Char)>, crate::java::Thrown> {
+    use crate::gson;
+    use crate::java::Thrown;
+    use lg_world::json::Json;
+    let root = lg_world::json::parse(text).map_err(|_| Thrown)?;
+    let Json::Object(o) = root else {
+        return if root == Json::Null { Ok(Vec::new()) } else { Err(Thrown) };
+    };
+    let mut out = Vec::new();
+    for (k, v) in &o {
+        let id = crate::java::parse_int(k)?;
+        if *v == Json::Null {
+            continue; // a null value: Java keeps the key with no character; nothing reads it
+        }
+        let Json::Object(_) = v else { return Err(Thrown) };
+        let f = |n: &str| v.get(n);
+        let mut c = Char::default();
+        macro_rules! set {
+            ($field:ident, $read:expr) => {
+                if let Some(x) = $read? {
+                    c.$field = x;
+                }
+            };
+        }
+        set!(char_id, gson::int(f("charId")));
+        set!(class_type, gson::int(f("classType")));
+        if let Some(x) = gson::string(f("className"))? {
+            c.class_name = x.unwrap_or_default();
+        }
+        set!(skin, gson::int(f("skin")));
+        set!(tex1, gson::int(f("tex1")));
+        set!(tex2, gson::int(f("tex2")));
+        set!(pet_skin, gson::int(f("petSkin")));
+        if let Some(x) = gson::string(f("petName"))? {
+            c.pet_name = x;
+        }
+        set!(level, gson::int(f("level")));
+        set!(max_hp, gson::int(f("maxHp")));
+        set!(fame, gson::long(f("fame")));
+        set!(stats_maxed, gson::int(f("statsMaxed")));
+        set!(seasonal, gson::boolean(f("seasonal")));
+        set!(crucible, gson::boolean(f("crucible")));
+        set!(ritual, gson::boolean(f("ritual")));
+        set!(favorite, gson::boolean(f("favorite")));
+        c.crucible_loot = gson::double(f("crucibleLoot"))?;
+        c.ritual_loot = gson::double(f("ritualLoot"))?;
+        set!(loot_drop_until, gson::long(f("lootDropUntil")));
+        set!(loot_tier_until, gson::long(f("lootTierUntil")));
+        set!(favorite_at, gson::long(f("favoriteAt")));
+        set!(backpack, gson::boolean(f("backpack")));
+        set!(extender, gson::boolean(f("extender")));
+        set!(alive, gson::boolean(f("alive")));
+        if let Some(x) = gson::string(f("diedBy"))? {
+            c.died_by = x;
+        }
+        if let Some(x) = gson::string(f("account"))? {
+            c.account = x;
+        }
+        set!(alive_at, gson::long(f("aliveAt")));
+        set!(last_played, gson::long(f("lastPlayed")));
+        let opt2 = |x: Option<Vec<Option<Vec<i32>>>>| x.map(|v| v.into_iter().map(Option::unwrap_or_default).collect());
+        if let Some(x) = gson::ints(f("equipment"))? {
+            c.equipment = x;
+        }
+        if let Some(x) = gson::ints(f("enchants"))? {
+            c.enchants = x;
+        }
+        if let Some(x) = gson::ints2(f("enchantIds"))? {
+            c.enchant_ids = opt2(x);
+        }
+        if let Some(x) = gson::ints(f("slots"))? {
+            c.slots = x;
+        }
+        if let Some(x) = gson::ints(f("quickslots"))? {
+            c.quickslots = x;
+        }
+        if let Some(x) = gson::ints2(f("slotEnchantIds"))? {
+            c.slot_enchant_ids = opt2(x);
+        }
+        match f("dungeons") {
+            None => {}
+            Some(Json::Null) => c.dungeons = None,
+            Some(Json::Object(d)) => {
+                let mut m = BTreeMap::new();
+                for (name, n) in d {
+                    if let Some(n) = gson::int(Some(n))? {
+                        m.insert(name.clone(), n);
+                    }
+                }
+                c.dungeons = Some(m);
+            }
+            Some(_) => return Err(Thrown),
+        }
+        match f("samples") {
+            None | Some(Json::Null) => {}
+            Some(Json::Array(a)) => {
+                c.samples = a
+                    .iter()
+                    .filter(|x| **x != Json::Null)
+                    .map(|x| Ok(Sample { t: gson::long(x.get("t"))?.unwrap_or(0), fame: gson::long(x.get("fame"))?.unwrap_or(0) }))
+                    .collect::<Result<_, Thrown>>()?;
+            }
+            Some(_) => return Err(Thrown),
+        }
+        out.push((id, c));
+    }
+    Ok(out)
 }

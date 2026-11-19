@@ -51,9 +51,10 @@ check() { # name, rust flag, then java args
         if [ -n "$assets" ]; then cp -r "$assets/ObjectID.list" "$assets/TileID.list" "$assets/xml" "$work/run/assets/"; fi
         # the Java app's own files from an earlier start (made up: oracle/seed): Java finds them next to itself, Rust
         # takes them over from a copy (Java changes its own as it runs)
+        # (LG_SEED: another folder of them, e.g. what Java wrote in an earlier comparison, kept with LG_KEEP)
         mkdir -p "$work/seed"
-        cp "$here"/seed/*.json "$work/seed/"
-        cp "$here"/seed/*.json "$work/run/"
+        find "${LG_SEED:-$here/seed}" -maxdepth 1 -type f -exec cp {} "$work/seed/" \;
+        find "${LG_SEED:-$here/seed}" -maxdepth 1 -type f -exec cp {} "$work/run/" \;
         (cd "$work/run" && $display java -javaagent:"$work/clock-agent.jar" -Djava.net.useSystemProxies=false \
             -Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=9 -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=9 \
             ${web:+-Doracle.web="$web"} -cp "$jar:$work" oracle.ReplayOracle "$pcap" "$@") > "$work/java.txt" 2> "$work/java.log"

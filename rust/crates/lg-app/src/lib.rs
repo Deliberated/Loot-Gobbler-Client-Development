@@ -115,10 +115,10 @@ impl App {
         let amulet_saves = java_data.map(amulet_saves::AmuletSaves::import).unwrap_or_default();
         let mut profile = profile::Profile::default();
         profile.start(&exalts.changes, now);
-        let mut characters = characters::Characters::default();
+        let mut characters = java_data.map(characters::Characters::import).unwrap_or_default();
         // Java's char-list.xml: the list saved at the last login (read on the first enchantment lookup)
         characters.saved_list = java_data.and_then(|d| std::fs::read_to_string(d.join("char-list.xml")).ok());
-        App {
+        let mut app = App {
             world,
             characters,
             profile,
@@ -144,7 +144,13 @@ impl App {
             friends_asked: 0,
             missions: missions::Missions::default(),
             zone: localtime::Zone::system(),
-        }
+        };
+        // the app builds every store at startup (Java: ServerSync.get()): Holdings seeds itself from the saved
+        // characters then
+        let time = app.zone.local_date_time(now);
+        let ctx = holdings::Ctx { data: app.world.data(), now, time: &time };
+        app.holdings.seed_once(&ctx, &app.characters.living());
+        app
     }
 
     fn playing(&self) -> i32 {

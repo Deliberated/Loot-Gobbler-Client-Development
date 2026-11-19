@@ -96,6 +96,9 @@ final class WorldOracle {
         waitFor(lootgobbler.PlayerProfile.get(), "counting");   // it counts on a thread of its own: done before the clock runs
         lootgobbler.PlayerProfile.get().trackExalts();
         lootgobbler.ItemCooldowns.install();
+        // the app builds every store at startup (ServerSync.get() in TomatoGUI, its syncing is never started here):
+        // Holdings seeds itself from the saved characters then
+        lootgobbler.ServerSync.get();
         waitForGameFileEnemies();
         tomato.backend.data.AbilityScalingManager.getInstance().initialize();   // the app does it at startup
     }
