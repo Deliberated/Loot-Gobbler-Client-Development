@@ -133,6 +133,10 @@ const MOON_FLAME: u16 = 20518;
 const MOON_BOSSES: [u16; 4] = [20450, 20451, 20452, 20493];
 const DANCING: i32 = 67_108_864;
 const LANTERN_UP: i32 = 16_777_216;
+/// The Fitted Protective Matrix; the Coral Juice Refinery and the Miniature Alien Generator.
+const MATRIX: i32 = 0x0485;
+const REFINERY: i32 = 44495;
+const ALIEN: i32 = 48164;
 /// The Amulet of Restoration.
 const AMULET: i32 = 0x5c48;
 /// What your quick slots hold.
@@ -245,7 +249,8 @@ impl Fight {
     fn setup(&mut self) {
         let mut objects = Vec::new();
         let ring = if self.chance(70) { AMULET } else { -1 };
-        let mut me = self.player_stats("Tester", [i32::from(DAGGER), i32::from(CLOAK), i32::from(ARMOR), ring]);
+        let armor = if self.chance(50) { MATRIX } else { i32::from(ARMOR) };
+        let mut me = self.player_stats("Tester", [i32::from(DAGGER), i32::from(CLOAK), armor, ring]);
         me.push(S::N(35, 100)); // gold: yours only
         me.extend([S::N(116, QUICK[0]), S::N(117, QUICK[1]), S::N(118, -1)]); // quick slots
         if self.chance(50) {
@@ -302,7 +307,7 @@ impl Fight {
             changes.push(status(e, (12.0, 14.0), &[S::N(29, cond), S::N(69, newc), S::N(21, self.small(60))]));
         }
         if self.chance(30) {
-            let cond = self.pick(&[0, 0x4, 0x4_0000, 0x100_0000, 0x200_0000, 0x2_0000, 0x40]);
+            let cond = self.pick(&[0, 0x4, 0x4_0000, 0x100_0000, 0x200_0000, 0x2_0000, 0x40, 0x100_0020, 0x20]);
             let attack = 40 + self.small(40);
             let ability = self.pick(&[i32::from(CLOAK), i32::from(CLOAK) + 1, 0x0a5a]);
             changes.push(status(ME, self.my_pos, &[S::N(29, cond), S::N(20, attack), S::N(9, ability), S::N(27, 20 + self.small(70))]));
@@ -401,7 +406,7 @@ impl Fight {
         // a quick slot used, by its quick slot id or from a slot; or an item from the inventory
         if self.chance(6) {
             let (slot, item) = match self.small(5) {
-                0 => (1_000_000 + self.small(3), self.pick(&QUICK)),
+                0 => (1_000_000 + self.small(3), self.pick(&[QUICK[0], QUICK[1], REFINERY, ALIEN])),
                 1 => (2, QUICK[0]),
                 2 => (0, i32::from(DAGGER)),
                 3 => (1_000_005, QUICK[1]),

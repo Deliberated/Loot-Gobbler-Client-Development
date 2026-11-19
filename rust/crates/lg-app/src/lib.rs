@@ -11,6 +11,7 @@ pub mod dps_history;
 pub mod dungeon_visits;
 pub mod exalt_store;
 pub mod holdings;
+pub mod item_cooldowns;
 pub mod item_use;
 pub mod localtime;
 pub mod loot_events;
@@ -47,6 +48,8 @@ pub struct App {
     pub exalts: exalt_store::ExaltStore,
     pub moonlight: moonlight::Moonlight,
     pub amulet_saves: amulet_saves::AmuletSaves,
+    pub cooldowns: item_cooldowns::ItemCooldowns,
+    pub vitals: item_cooldowns::Vitals,
     /// Tomato's exaltation progress per class (`RealmCharacter.exalts`): from the login's fetch (not ported yet),
     /// then from the game's exaltation packets.
     pub realm_exalts: std::collections::HashMap<i32, Vec<i32>>,
@@ -101,6 +104,8 @@ impl App {
             exalts,
             moonlight: moonlight::Moonlight::default(),
             amulet_saves,
+            cooldowns: item_cooldowns::ItemCooldowns::new(),
+            vitals: item_cooldowns::Vitals::default(),
             realm_exalts: std::collections::HashMap::new(),
             zone: localtime::Zone::system(),
         }
@@ -128,6 +133,9 @@ impl App {
         let playing = self.playing();
         let c = upe_ctx!(self);
         self.item_use.raw(&c, &self.loot_events, &mut self.collection, &mut self.upe, playing, id, body, &time);
+        for item in std::mem::take(&mut self.item_use.requested) {
+            self.cooldowns.used(item, now);
+        }
         self.after(now);
     }
 
@@ -162,6 +170,8 @@ impl App {
                 self.dungeon_visits.hits(&f, &self.characters, false, now);
                 self.moonlight.tick(&self.world, &mut self.dungeon_visits, now);
                 self.amulet_saves.tick(&self.world, &mut self.dungeon_visits, now);
+                self.cooldowns.armor_tick(&self.world, now);
+                self.vitals.tick(&self.world, now);
                 let me = self.world.me().cloned();
                 let mut r = records!(self, &time, me.is_some());
                 self.loot_events.inventory_tick(&mut r, me.as_ref());
@@ -213,6 +223,8 @@ impl App {
                 let c = upe::Ctx { data: self.world.data(), zone: &self.zone, now };
                 let r = records!(self, &time, lookup);
                 self.loot_events.item_used(&r, &mut self.upe, &c, me.as_ref(), u);
+                // ItemCooldowns' listener, registered after the capture's
+                self.cooldowns.used(u.slot_object.object_type, now);
             }
             Decoded::TradeDone(t) => {
                 self.world.packet(p)?;
@@ -409,6 +421,8 @@ impl App {
         s.push_str(&self.dungeon_visits.dump());
         s.push_str(&self.moonlight.dump());
         s.push_str(&self.amulet_saves.dump());
+        s.push_str(&self.cooldowns.dump());
+        s.push_str(&format!("vitals {}/{} at={}\n", self.vitals.mp, self.vitals.max_mp, self.vitals.at));
         s
     }
 }

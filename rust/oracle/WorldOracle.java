@@ -299,6 +299,29 @@ final class WorldOracle {
         visits(b);
         moonlight(b);
         amulet(b);
+        cooldowns(b);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void cooldowns(StringBuilder b) throws ReflectiveOperationException {
+        Class<?> c = lootgobbler.ItemCooldowns.class;
+        List<String> r = new ArrayList<>();
+        for (Map.Entry<?, lootgobbler.ItemCooldowns.Running> e : ((Map<?, lootgobbler.ItemCooldowns.Running>) stat(c, "running")).entrySet()) {
+            lootgobbler.ItemCooldowns.Running x = e.getValue();
+            Object k = e.getKey();
+            String sound = k == lootgobbler.ItemSound.REFINERY ? "REFINERY" : k == lootgobbler.ItemSound.ALIEN ? "ALIEN" : k == lootgobbler.ItemSound.MATRIX ? "MATRIX" : "?";
+            r.add(sound + ":" + x.type() + "/" + quote(x.name()) + "/" + x.start() + "/" + x.durationMs());
+        }
+        b.append("cooldowns [").append(String.join(",", r)).append("] was=").append(stat(c, "wasInvulnerable")).append(" matrix=")
+                .append(stat(c, "matrixFired")).append('/').append(stat(c, "matrixType")).append('\n');
+        Class<?> v = lootgobbler.PlayerVitals.class;
+        b.append("vitals ").append(stat(v, "mp")).append('/').append(stat(v, "maxMp")).append(" at=").append(stat(v, "at")).append('\n');
+    }
+
+    private static Object stat(Class<?> c, String name) throws ReflectiveOperationException {
+        Field f = c.getDeclaredField(name);
+        f.setAccessible(true);
+        return f.get(null);
     }
 
     @SuppressWarnings("unchecked")

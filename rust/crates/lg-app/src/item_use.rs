@@ -21,6 +21,8 @@ pub struct ItemUse {
     forging: Vec<Used>,
     /// slot -> item of a use request, until its answer.
     using: HashMap<i32, Used>,
+    /// The items of use requests, for the cooldowns to take (Java calls `ItemCooldowns.used` there).
+    pub requested: Vec<i32>,
 }
 
 pub const USE_REQUEST: u8 = 195;
@@ -130,6 +132,7 @@ impl ItemUse {
                 int(&mut at);
                 let (slot, item) = (int(&mut at), int(&mut at));
                 slots[i] = slot;
+                self.requested.push(item);
                 if c.data.items.item(item).is_some_and(|it| it.is_collectible()) {
                     self.using.insert(slot, Used { id: item, copy: loot.copy_in_slot(slot, item) });
                 }
