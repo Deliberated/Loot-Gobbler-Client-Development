@@ -113,7 +113,7 @@ impl App {
     pub fn importing(world: World, now: i64, java_data: Option<&std::path::Path>) -> App {
         let exalts = java_data.map(exalt_store::ExaltStore::import).unwrap_or_default();
         let amulet_saves = java_data.map(amulet_saves::AmuletSaves::import).unwrap_or_default();
-        let mut profile = profile::Profile::default();
+        let mut profile = java_data.map(profile::Profile::import).unwrap_or_default();
         profile.start(&exalts.changes, now);
         let mut characters = java_data.map(characters::Characters::import).unwrap_or_default();
         // Java's char-list.xml: the list saved at the last login (read on the first enchantment lookup)
@@ -123,7 +123,7 @@ impl App {
             characters,
             profile,
             collection: java_data.map(collection::Collection::import).unwrap_or_default(),
-            holdings: holdings::Holdings::default(),
+            holdings: java_data.map(holdings::Holdings::import).unwrap_or_default(),
             loot_events: loot_events::LootEvents::default(),
             upe: upe::Upe::default(),
             item_use: item_use::ItemUse::default(),

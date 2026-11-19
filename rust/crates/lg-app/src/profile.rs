@@ -19,6 +19,43 @@ pub struct Profile {
 }
 
 impl Profile {
+    /// What the Java app kept (`profile.json`), read only. Unreadable: the default.
+    pub fn import(dir: &std::path::Path) -> Profile {
+        use crate::gson;
+        use lg_world::json::Json;
+        let read = || -> Option<Profile> {
+            let v = lg_world::json::parse(&std::fs::read_to_string(dir.join("profile.json")).ok()?).ok()?;
+            if v == Json::Null {
+                return None;
+            }
+            let Json::Object(_) = v else { return None };
+            let mut p = Profile::default();
+            if let Some(x) = gson::string(v.get("ign")).ok()? {
+                p.ign = x.unwrap_or_default();
+            }
+            if let Some(x) = gson::string(v.get("guild")).ok()? {
+                p.guild = x.unwrap_or_default();
+            }
+            if let Some(x) = gson::int(v.get("guildRank")).ok()? {
+                p.guild_rank = x;
+            }
+            if let Some(x) = gson::long(v.get("updatedAt")).ok()? {
+                p.updated_at = x;
+            }
+            p.st_sets_done = match v.get("stSetsDone") {
+                None | Some(Json::Null) => None,
+                Some(Json::Array(a)) => Some(a.iter().map(|x| gson::long(Some(x)).ok().flatten()).collect::<Option<Vec<_>>>()?),
+                Some(_) => return None,
+            };
+            p.exalt_changes = match v.get("exaltChanges") {
+                None | Some(Json::Null) => None,
+                Some(c) => Some(crate::exalt_store::changes_of(c)?),
+            };
+            Some(p)
+        };
+        read().unwrap_or_default()
+    }
+
     /// Java `update`: what the game shows of you; unknown parts stay as they were.
     pub fn update(&mut self, ign: Option<&str>, guild: Option<&str>, rank: Option<i32>, now: i64) {
         let ign = match ign {

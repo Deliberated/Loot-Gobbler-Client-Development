@@ -113,7 +113,12 @@ fn parse_progress(text: &str) -> Option<BTreeMap<i32, Vec<i32>>> {
 
 /// Gson reading `ArrayList<Change>` (missing fields are 0).
 fn parse_changes(text: &str) -> Option<Vec<Change>> {
-    let Json::Array(a) = json::parse(text).ok()? else { return None };
+    changes_of(&json::parse(text).ok()?)
+}
+
+/// The same, from a JSON value already read.
+pub(crate) fn changes_of(v: &Json) -> Option<Vec<Change>> {
+    let Json::Array(a) = v else { return None };
     let mut out = Vec::new();
     for c in a {
         let int = |k: &str| c.get(k).map_or(Some(0), |v| v.as_int().ok());

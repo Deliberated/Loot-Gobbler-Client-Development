@@ -140,6 +140,9 @@ pub struct Holdings {
     /// The places' keys in the order put (for Java's `HashMap` order), and the most there ever were.
     place_keys: Vec<String>,
     place_most: usize,
+    /// An earlier version's record of the vaults (Java's `whereabouts.json`), for the first start; Java deletes it
+    /// once taken over (here only forgotten: the Java folder is never changed).
+    whereabouts: Option<String>,
 }
 
 /// What the character list says a character holds (Java: `Holdings.Listed`).
@@ -177,15 +180,47 @@ impl Holdings {
         self.journal.push(format!("{}  {:<15} {}", c.time, place, text));
     }
 
-    /// Java `seedFromSavedData`, on first use: if nothing is known yet, the characters saved with their slots.
+    /// What the Java app kept (`holdings.json`, its journal, an earlier version's `whereabouts.json`), read only.
+    pub fn import(dir: &std::path::Path) -> Holdings {
+        let mut h = Holdings::default();
+        if let Ok(text) = std::fs::read_to_string(dir.join("holdings.json"))
+            && let Ok(Some((places, gone))) = parse_state(&text)
+        {
+            for (k, p) in places {
+                if !h.places.contains_key(&k) {
+                    h.place_keys.push(k.clone());
+                }
+                h.places.insert(k, p);
+            }
+            h.place_most = h.places.len();
+            h.gone = gone;
+        }
+        if let Ok(text) = std::fs::read_to_string(dir.join("holdings-journal.txt")) {
+            h.journal = text.lines().map(str::to_string).collect();
+        }
+        h.whereabouts = std::fs::read_to_string(dir.join("whereabouts.json")).ok();
+        h
+    }
+
+    /// Java `retire`: the earlier version's file is done with.
+    fn retire(&mut self, c: &Ctx) {
+        if self.whereabouts.take().is_some() {
+            self.line(c, "start", "whereabouts.json deleted: its vaults were taken over");
+        }
+    }
+
+    /// Java `seedFromSavedData`, on first use: if nothing is known yet, the characters saved with their slots and
+    /// the vaults of an earlier version's record.
     pub fn seed_once(&mut self, c: &Ctx, saved: &[Living]) {
         if self.seeded {
             return;
         }
         self.seeded = true;
-        if !self.places.is_empty() {
+        if self.known() {
+            self.retire(c);
             return;
         }
+        let vaults = self.whereabouts.as_deref().map(earlier_vaults).unwrap_or_default();
         for l in saved {
             let Some(slots) = &l.slots else { continue };
             let mut p = Place::default();
@@ -201,12 +236,29 @@ impl Holdings {
             self.places.insert(key.clone(), p);
             self.track(&key);
         }
+        for (key, by_item) in vaults {
+            let mut p = Place::default();
+            let mut slots = Vec::new();
+            for (item, n) in by_item {
+                for _ in 0..n {
+                    slots.push(Slot::new(item, None));
+                }
+            }
+            p.put(VAULT_CHEST, slots);
+            p.seen_at = 0;
+            p.source = Some("earlier version".into());
+            self.places.insert(key.clone(), p);
+            self.track(&key);
+        }
         if self.places.is_empty() {
             return;
         }
         let n = self.places.len();
         self.line(c, "start", &format!("seeded {n} places from saved data (until the game shows them)"));
         self.dirty = true;
+        if self.known() {
+            self.retire(c);
+        }
     }
 
     /// Java `live`: what the game shows of your character's slots.
@@ -828,6 +880,98 @@ pub fn vault_from_char_list(xml: &str) -> Option<Vec<(String, Vec<Slot>)>> {
         out.push((MATERIALS.to_string(), chests(m, &codes)));
     }
     Some(out)
+}
+
+/// The vaults of `whereabouts.json` (`places.vault`, `places.vault:seasonal`: item -> its copies), how many copies
+/// of each item, in Java's `HashMap` orders; what comes before something it cannot read.
+fn earlier_vaults(text: &str) -> Vec<(String, Vec<(i32, usize)>)> {
+    use lg_world::json::Json;
+    let mut out: Vec<(String, Vec<(i32, usize)>)> = Vec::new();
+    let Ok(Json::Object(root)) = lg_world::json::parse(text) else { return out };
+    let Some((_, places)) = root.iter().find(|(k, _)| k == "places") else { return out };
+    let Json::Object(places) = places else { return out };
+    'keys: for key in [VAULT, SEASONAL_VAULT] {
+        let Some((_, v)) = places.iter().find(|(k, _)| k == key) else { continue };
+        let Json::Object(items) = v else { break };
+        let mut by_item: Vec<(i32, usize)> = Vec::new();
+        for (item, copies) in items {
+            let (Ok(item), Json::Array(a)) = (crate::java::parse_int(item), copies) else {
+                break 'keys; // Java throws here: the vaults read so far stay
+            };
+            match by_item.iter_mut().find(|(i, _)| *i == item) {
+                Some(e) => e.1 = a.len(),
+                None => by_item.push((item, a.len())),
+            }
+        }
+        let order = lg_world::fight::java_hash_order(&by_item.iter().map(|b| b.0).collect::<Vec<_>>());
+        out.push((key.to_string(), order.into_iter().map(|i| *by_item.iter().find(|b| b.0 == i).expect("item")).collect()));
+    }
+    // vaults: a HashMap<String, ...> of two keys
+    let keys: Vec<(String, i32)> = out.iter().map(|(k, _)| (k.clone(), lg_world::fight::java_string_hash(k))).collect();
+    lg_world::fight::java_bucket_order(&keys, 16).into_iter().map(|k| out.iter().find(|o| o.0 == k).expect("key").clone()).collect()
+}
+
+/// Gson reading `State`: its places (in the file's order) and the places gone; None when Java keeps its own.
+/// Places in the file's order, and the places gone.
+type State = (Vec<(String, Place)>, HashMap<String, i64>);
+
+fn parse_state(text: &str) -> Result<Option<State>, crate::java::Thrown> {
+    use crate::gson;
+    use crate::java::Thrown;
+    use lg_world::json::Json;
+    let root = lg_world::json::parse(text).map_err(|_| Thrown)?;
+    if root == Json::Null {
+        return Ok(None);
+    }
+    let Json::Object(_) = root else { return Err(Thrown) };
+    let places = match root.get("places") {
+        None | Some(Json::Null) => return Ok(None),
+        Some(Json::Object(p)) => p,
+        Some(_) => return Err(Thrown),
+    };
+    let mut out = Vec::new();
+    for (k, v) in places {
+        let Json::Object(_) = v else {
+            if *v == Json::Null {
+                continue;
+            }
+            return Err(Thrown);
+        };
+        let mut p = Place::default();
+        match v.get("sections") {
+            None | Some(Json::Null) => {}
+            Some(Json::Object(secs)) => {
+                for (name, list) in secs {
+                    let slots = gson::list(Some(list), |x| {
+                        let Json::Object(_) = x else { return Err(Thrown) };
+                        let item = gson::int(x.get("item"))?.unwrap_or(-1);
+                        let ids = gson::list(x.get("enchantIds"), |e| gson::int(Some(e))?.ok_or(Thrown))?.flatten();
+                        Ok(Slot { item, enchant_ids: ids.map(|l| l.into_iter().map(|i| i.unwrap_or(0)).collect()) })
+                    })?
+                    .flatten()
+                    .unwrap_or_default();
+                    p.put(name, slots.into_iter().map(Option::unwrap_or_default).collect());
+                }
+            }
+            Some(_) => return Err(Thrown),
+        }
+        if let Some(x) = gson::long(v.get("seenAt"))? {
+            p.seen_at = x;
+        }
+        if let Some(x) = gson::string(v.get("source"))? {
+            p.source = x;
+        }
+        out.push((k.clone(), p));
+    }
+    let mut gone = HashMap::new();
+    if let Some(Json::Object(g)) = root.get("gone") {
+        for (k, v) in g {
+            if let Some(t) = gson::long(Some(v))? {
+                gone.insert(k.clone(), t);
+            }
+        }
+    }
+    Ok(Some((out, gone)))
 }
 
 fn between<'a>(s: &'a str, open: &str, close: &str) -> Option<&'a str> {
