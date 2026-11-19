@@ -109,6 +109,14 @@ public final class GameDataOracle {
         for (lootgobbler.ItemDb.Item i : db.collectible()) c.append(' ').append(i.id);
         OUT.println(c);
         OUT.println("transform " + new java.util.TreeSet<>((java.util.Set<Integer>) get(db, "transformSkins")));
+        lootgobbler.Amulets.isAmulet(0);   // read them
+        java.lang.reflect.Field af = lootgobbler.Amulets.class.getDeclaredField("amulets");
+        af.setAccessible(true);
+        for (lootgobbler.Amulets.Amulet a : new java.util.TreeMap<>((java.util.Map<Integer, lootgobbler.Amulets.Amulet>) af.get(null)).values()) {
+            OUT.println("amulet " + a.type() + "|" + a.name() + "|" + String.format("%016x", Double.doubleToRawLongBits(a.threshold())) + "|"
+                    + a.effect() + "|" + a.cooldownS());
+        }
+        OUT.println("restoration " + lootgobbler.Amulets.restorationId());
     }
 
     /** Dungeon portals and modifiers (ParseDungeon), and the enemies of one dungeon (GameFileEnemies). */

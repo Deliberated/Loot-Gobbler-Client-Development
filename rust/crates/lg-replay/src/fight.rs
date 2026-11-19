@@ -133,6 +133,8 @@ const MOON_FLAME: u16 = 20518;
 const MOON_BOSSES: [u16; 4] = [20450, 20451, 20452, 20493];
 const DANCING: i32 = 67_108_864;
 const LANTERN_UP: i32 = 16_777_216;
+/// The Amulet of Restoration.
+const AMULET: i32 = 0x5c48;
 /// What your quick slots hold.
 const QUICK: [i32; 2] = [2594, 2595];
 /// The names the death notifications tell (one never in view).
@@ -242,7 +244,8 @@ impl Fight {
 
     fn setup(&mut self) {
         let mut objects = Vec::new();
-        let mut me = self.player_stats("Tester", [i32::from(DAGGER), i32::from(CLOAK), i32::from(ARMOR), -1]);
+        let ring = if self.chance(70) { AMULET } else { -1 };
+        let mut me = self.player_stats("Tester", [i32::from(DAGGER), i32::from(CLOAK), i32::from(ARMOR), ring]);
         me.push(S::N(35, 100)); // gold: yours only
         me.extend([S::N(116, QUICK[0]), S::N(117, QUICK[1]), S::N(118, -1)]); // quick slots
         if self.chance(50) {
@@ -422,6 +425,35 @@ impl Fight {
                 b = b.ci(x);
             }
             self.send(Direction::Incoming, 114, b);
+        }
+        // the amulet: your life low, its +120 heal on you (or someone else), notifications and texts naming it
+        if self.chance(12) {
+            let hp = self.pick(&[650, 120, 60, 200, 30]);
+            self.tick(vec![status(ME, self.my_pos, &[S::N(1, hp)])]);
+        }
+        if self.chance(10) {
+            let on = self.pick(&[ME, ME, 2000]);
+            let heal = self.pick(&[r#"{"k":"s.plus_symbol","t":{"amount":"120",}}"#, r#"{"k":"s.plus_symbol","t":{"amount":"40",}}"#]);
+            self.send(Direction::Incoming, 67, B::default().i8(6).i8(0).str(heal).i32(on).i32(0x00ff00));
+        }
+        if self.chance(2) {
+            let on = self.pick(&[ME, 2001]);
+            self.send(Direction::Incoming, 67, B::default().i8(6).i8(0).str("Your Amulet of Restoration saved you!").i32(on).i32(0));
+        }
+        if self.chance(2) {
+            let name = self.pick(&["", "*Help*", "Friend0"]);
+            let t = lg_protocol::packets::Text {
+                name: name.into(),
+                object_id: 0,
+                num_stars: -1,
+                bubble_time: 0,
+                recipient: String::new(),
+                text: "The Amulet of Restoration protects you".into(),
+                clean_text: String::new(),
+                is_supporter: false,
+                star_background: 0,
+            };
+            self.out.push((Direction::Incoming, Plain { id: 44, body: t.encode() }));
         }
         // someone dies; the dungeon is done
         if self.chance(3) {

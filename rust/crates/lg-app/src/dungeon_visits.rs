@@ -3,8 +3,8 @@
 //! second, the quick slot items you used, your death, and a link to its run in the run history when you fought a
 //! boss.
 //!
-//! Moonlight Village's lantern and phases are kept here by [`crate::moonlight`]. Not ported yet: amulet saves
-//! (`AmuletSaves`).
+//! Moonlight Village's lantern and phases are kept here by [`crate::moonlight`], amulet saves by
+//! [`crate::amulet_saves`].
 
 use crate::characters::{Char, Characters};
 use crate::dps_history::DpsHistory;
@@ -94,6 +94,8 @@ pub struct Visit {
     pub lantern_near_ms: i64,
     /// Moonlight Village: its boss phases in order.
     pub mv_phases: Vec<MvPhase>,
+    /// When your amulet saved you, ms after entering.
+    pub amulet_saves: Vec<i32>,
     /// The consumables you used from a quick slot, and when (ms after entering).
     pub quick_item: Vec<i32>,
     pub quick_time: Vec<i32>,
@@ -127,6 +129,7 @@ impl Visit {
             lantern_range_ms: 0,
             lantern_near_ms: 0,
             mv_phases: Vec::new(),
+            amulet_saves: Vec::new(),
             quick_item: Vec::new(),
             quick_time: Vec::new(),
             died_at: -1,
@@ -352,6 +355,13 @@ impl DungeonVisits {
         v.moved[s] = v.moved[s].wrapping_add(tenths);
     }
 
+    /// Java `amuletSaved`: marked on the visit in progress.
+    pub fn amulet_saved(&mut self, now: i64) {
+        if let Some(v) = self.current.as_mut() {
+            v.amulet_saves.push((now - v.start).max(0) as i32);
+        }
+    }
+
     /// Java `notification`: the game's "Victory" marks the visit.
     pub fn victory(&mut self) {
         if let Some(v) = self.current.as_mut() {
@@ -382,7 +392,7 @@ fn visit_line(v: &Visit) -> String {
     let q = |s: &str| lg_protocol::dump::to_string(&s.to_string());
     let look = v.look.as_ref().map_or("null".into(), |l| format!("{}/{}/{}/{}/{}", q(&l.player), l.class_type, l.skin, l.tex1, l.tex2));
     format!(
-        "{} start={} ms={} run={} late={} hidden={} exalts=[{}] hits={}/{}/{} maxHp={} dealt={} quick={}/{} died={}/{} moved={} judged={} victory={} look={} lantern={}/{}/{} phases=[{}]",
+        "{} start={} ms={} run={} late={} hidden={} exalts=[{}] hits={}/{}/{} maxHp={} dealt={} quick={}/{} died={}/{} moved={} judged={} victory={} look={} lantern={}/{}/{} phases=[{}] amulet={}",
         q(&v.dungeon),
         v.start,
         v.duration_ms,
@@ -423,6 +433,7 @@ fn visit_line(v: &Visit) -> String {
                 p.beats_max
             ))
             .collect::<Vec<_>>()
-            .join(",")
+            .join(","),
+        arr(&v.amulet_saves)
     )
 }

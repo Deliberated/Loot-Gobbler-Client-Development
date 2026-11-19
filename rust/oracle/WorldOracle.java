@@ -298,6 +298,21 @@ final class WorldOracle {
         dps(b);
         visits(b);
         moonlight(b);
+        amulet(b);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void amulet(StringBuilder b) throws ReflectiveOperationException {
+        lootgobbler.AmuletSaves a = lootgobbler.AmuletSaves.get();
+        List<String> saves = new ArrayList<>(), life = new ArrayList<>();
+        for (lootgobbler.AmuletSaves.Save x : (List<lootgobbler.AmuletSaves.Save>) get(a, "saves")) {
+            saves.add(x.t + "/" + x.charId + "/" + quote(x.amulet) + "/" + quote(x.dungeon) + "/" + quote(x.message) + "/" + x.removed);
+        }
+        for (long[] l : (java.util.ArrayDeque<long[]>) get(a, "life")) life.add(l[0] + "/" + l[1] + "/" + l[2]);
+        String pending = (String) get(a, "pendingMessage");
+        b.append("amulet saves=[").append(String.join(",", saves)).append("] heal=").append(get(a, "lastHealAt"))
+                .append(" pending=").append(get(a, "pendingAt")).append('/').append(pending == null ? "null" : quote(pending))
+                .append(" was=").append(get(a, "wasInvulnerable")).append(" life=[").append(String.join(",", life)).append("]\n");
     }
 
     @SuppressWarnings("unchecked")
@@ -388,7 +403,7 @@ final class WorldOracle {
                 + " died=" + v.diedAt + "/" + (v.killedBy == null ? "null" : quote(v.killedBy)) + " moved=" + arr(v.moved)
                 + " judged=" + v.judged + " victory=" + v.victory + " look="
                 + (l == null ? "null" : quote(l.player) + "/" + l.classType + "/" + l.skin + "/" + l.tex1 + "/" + l.tex2)
-                + " lantern=" + v.lanternActiveMs + "/" + v.lanternRangeMs + "/" + v.lanternNearMs + " phases=[" + phases(v) + "]";
+                + " lantern=" + v.lanternActiveMs + "/" + v.lanternRangeMs + "/" + v.lanternNearMs + " phases=[" + phases(v) + "] amulet=" + arr(v.amuletSaves);
     }
 
     @SuppressWarnings("unchecked")

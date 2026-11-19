@@ -4,6 +4,7 @@
 //! to the app's own listeners, in the order the app registers them; where one throws, the rest are skipped. What the
 //! world tells the app while it works ([`lg_world::Event`]) is taken right after, in order.
 
+pub mod amulet_saves;
 pub mod characters;
 pub mod collection;
 pub mod dps_history;
@@ -45,6 +46,7 @@ pub struct App {
     pub dungeon_visits: dungeon_visits::DungeonVisits,
     pub exalts: exalt_store::ExaltStore,
     pub moonlight: moonlight::Moonlight,
+    pub amulet_saves: amulet_saves::AmuletSaves,
     /// Tomato's exaltation progress per class (`RealmCharacter.exalts`): from the login's fetch (not ported yet),
     /// then from the game's exaltation packets.
     pub realm_exalts: std::collections::HashMap<i32, Vec<i32>>,
@@ -77,9 +79,11 @@ impl App {
         App::importing(world, now, None)
     }
 
-    /// The same, taking over what the Java app kept in its folder (only read, never changed): so far the exalts.
+    /// The same, taking over what the Java app kept in its folder (only read, never changed): so far the exalts and
+    /// the amulet saves.
     pub fn importing(world: World, now: i64, java_data: Option<&std::path::Path>) -> App {
         let exalts = java_data.map(exalt_store::ExaltStore::import).unwrap_or_default();
+        let amulet_saves = java_data.map(amulet_saves::AmuletSaves::import).unwrap_or_default();
         let mut profile = profile::Profile::default();
         profile.start(&exalts.changes, now);
         App {
@@ -96,6 +100,7 @@ impl App {
             dungeon_visits: dungeon_visits::DungeonVisits::default(),
             exalts,
             moonlight: moonlight::Moonlight::default(),
+            amulet_saves,
             realm_exalts: std::collections::HashMap::new(),
             zone: localtime::Zone::system(),
         }
@@ -156,6 +161,7 @@ impl App {
                 self.dps_history.live_tick(&f, now);
                 self.dungeon_visits.hits(&f, &self.characters, false, now);
                 self.moonlight.tick(&self.world, &mut self.dungeon_visits, now);
+                self.amulet_saves.tick(&self.world, &mut self.dungeon_visits, now);
                 let me = self.world.me().cloned();
                 let mut r = records!(self, &time, me.is_some());
                 self.loot_events.inventory_tick(&mut r, me.as_ref());
@@ -283,6 +289,12 @@ impl App {
                     self.dungeon_visits.moved(&way, now);
                 }
             }
+            // TomatoData.text: AmuletSaves (MoonlightLog only logs texts)
+            Decoded::Text(t) => {
+                self.world.packet(p)?;
+                self.events(now);
+                self.amulet_saves.text(&self.world, &mut self.dungeon_visits, t, now);
+            }
             Decoded::ExaltationUpdate(x) => {
                 self.world.packet(p)?;
                 self.events(now);
@@ -293,6 +305,7 @@ impl App {
                 self.world.packet(p)?;
                 self.events(now);
                 self.moonlight.notification(&self.world, &mut self.dungeon_visits, n, now);
+                self.amulet_saves.notification(&self.world, &mut self.dungeon_visits, n, now);
                 if n.effect == lg_protocol::packets::NotificationEffect::Victory {
                     self.dungeon_visits.victory();
                 }
@@ -395,6 +408,7 @@ impl App {
         s.push_str(&self.dps_history.dump());
         s.push_str(&self.dungeon_visits.dump());
         s.push_str(&self.moonlight.dump());
+        s.push_str(&self.amulet_saves.dump());
         s
     }
 }

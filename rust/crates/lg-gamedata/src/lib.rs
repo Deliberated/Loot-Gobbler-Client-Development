@@ -10,6 +10,7 @@
 //! - `xml/enchantments.xml`: what enchantments do ([`enchants`])
 
 pub mod abilities;
+pub mod amulets;
 pub mod char_stats;
 pub mod dungeons;
 pub mod dyes;
@@ -125,6 +126,8 @@ pub struct GameData {
     pub dyes: HashMap<i32, i32>,
     /// The items as Loot Gobbler knows them (Java: `ItemDb`).
     pub items: items::Items,
+    /// The amulets that save you (Java: `Amulets`).
+    pub amulets: amulets::Amulets,
     /// What went wrong while reading, for the log.
     pub problems: Vec<String>,
 }
@@ -153,6 +156,7 @@ impl GameData {
             d.problems.extend(problem);
         }
         d.dyes = dyes::load(&assets.join("xml"));
+        d.amulets = amulets::Amulets::load(&assets.join("xml"));
         let (items, problems) = items::Items::load(&assets.join("xml"));
         d.items = items;
         d.problems.extend(problems);
