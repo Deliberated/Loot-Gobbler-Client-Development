@@ -71,3 +71,6 @@ upe.json
 # --- Recorded game sessions: the HELLO packet in them carries your game login token. Never commit them. ---
 *.pcap
 *.pcapng
+
+# --- Exception: made-up app files the Rust comparison feeds to Java and Rust (no personal data) ---
+!/rust/oracle/seed/*.json
