@@ -12,7 +12,7 @@
 
 pub mod damage;
 pub mod fight;
-mod json;
+pub mod json;
 pub mod loot;
 pub mod stats;
 

@@ -35,10 +35,15 @@ check() { # name, rust flag, then java args
     if [ "$what" = world ]; then
         mkdir -p "$work/run/assets"
         if [ -n "$assets" ]; then cp -r "$assets/ObjectID.list" "$assets/TileID.list" "$assets/xml" "$work/run/assets/"; fi
+        # the Java app's own files from an earlier start (made up: oracle/seed): Java finds them next to itself, Rust
+        # takes them over from a copy (Java changes its own as it runs)
+        mkdir -p "$work/seed"
+        cp "$here"/seed/*.json "$work/seed/"
+        cp "$here"/seed/*.json "$work/run/"
         (cd "$work/run" && java -javaagent:"$work/clock-agent.jar" -Djava.awt.headless=true -Djava.net.useSystemProxies=false \
             -Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=9 -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=9 \
             -cp "$jar:$work" oracle.ReplayOracle "$pcap" "$@") > "$work/java.txt" 2> "$work/java.log"
-        "$replay" "$pcap" "$flag" "$work/run/assets" > "$work/rust.txt" 2> "$work/rust.log"
+        "$replay" "$pcap" "$flag" "$work/run/assets" --java-data "$work/seed" > "$work/rust.txt" 2> "$work/rust.log"
     else
         java -cp "$jar:$work" oracle.ReplayOracle "$pcap" "$@" > "$work/java.txt" 2> "$work/java.log"
         "$replay" "$pcap" "$flag" > "$work/rust.txt" 2> "$work/rust.log"

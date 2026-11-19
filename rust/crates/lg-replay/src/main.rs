@@ -6,7 +6,8 @@
 //!   lg-replay decoded-ids               the ids of the packets that have a decoder, for oracle/compare.sh
 //!   lg-replay gamedata <assets>         the game data read from an assets folder, to compare with Java
 //!   lg-replay <session.pcap> --stats    only the summary
-//!   lg-replay <session.pcap> --world <assets>   the world state after each packet the world is fed, to compare
+//!   lg-replay <session.pcap> --world <assets> [--java-data <dir>]
+//!                                       the world state after each packet the world is fed, to compare
 //!                                       with Java (oracle/compare.sh): a checksum, the whole state on map changes
 //!   lg-replay synth <out.pcap> [seed]   writes a made-up session, for testing without a recording
 //!   lg-replay synth-fight <out.pcap> [seed]   writes a made-up fight, for testing the damage logic
@@ -68,10 +69,19 @@ fn main() -> ExitCode {
         }
         [file, flags @ ..] if !file.starts_with('-') => {
             let has = |f: &str| flags.iter().any(|x| x == f);
-            if let [flag, assets] = flags
+            if let [flag, assets, rest @ ..] = flags
                 && flag == "--world"
             {
-                return world(file, std::path::Path::new(assets));
+                // --java-data <dir>: what the Java app kept in its folder, taken over (read only)
+                let java = match rest {
+                    [f, dir] if f == "--java-data" => Some(std::path::Path::new(dir)),
+                    [] => None,
+                    _ => {
+                        eprintln!("usage: lg-replay <session.pcap> --world <assets> [--java-data <dir>]");
+                        return ExitCode::FAILURE;
+                    }
+                };
+                return world(file, std::path::Path::new(assets), java);
             }
             let mode = if has("--oracle") {
                 Mode::Oracle
@@ -310,7 +320,7 @@ fn summary(w: &lg_world::World) -> String {
 }
 
 /// The world state after each packet it is fed, as `oracle/WorldOracle.java` prints Java's.
-fn world(file: &str, assets: &std::path::Path) -> ExitCode {
+fn world(file: &str, assets: &std::path::Path, java_data: Option<&std::path::Path>) -> ExitCode {
     let data = match std::fs::read(file) {
         Ok(d) => d,
         Err(e) => {
@@ -329,7 +339,7 @@ fn world(file: &str, assets: &std::path::Path) -> ExitCode {
     for p in &game.problems {
         eprintln!("{p}");
     }
-    let mut w = lg_app::App::new(lg_world::World::new(game), 0);
+    let mut w = lg_app::App::importing(lg_world::World::new(game), 0, java_data);
     let mut out = BufWriter::new(std::io::stdout().lock());
     let full = |out: &mut BufWriter<_>, when: &str, state: &str| {
         line(out, format_args!("state {when}"));

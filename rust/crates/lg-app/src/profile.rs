@@ -1,6 +1,6 @@
 //! Your player profile (Java: `lootgobbler.PlayerProfile`): name, guild and rank, for the Loot Gobbler server.
 //!
-//! Not yet: the ST sets and exaltations it also tracks, syncing, the file.
+//! Not yet: syncing, the file.
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Profile {
@@ -12,8 +12,8 @@ pub struct Profile {
     pub updated_at: i64,
     /// When each completed ST set was completed (from the collection); None until counted.
     pub st_sets_done: Option<Vec<i64>>,
-    /// How many exaltation changes of the last days it carries (from the exalts record); None until copied.
-    pub exalt_changes: Option<usize>,
+    /// The exaltation changes of the last week (copied from the exalts record); None until copied.
+    pub exalt_changes: Option<Vec<crate::exalt_store::Change>>,
     /// Set when the file should be written.
     pub dirty: bool,
 }
@@ -37,19 +37,25 @@ impl Profile {
         self.dirty = true;
     }
 
-    /// Java `trackExalts` and `trackStSets` at startup: copies what the exalts record and the collection hold (both
-    /// not ported yet: nothing), which counts as a change the first time.
-    pub fn start(&mut self, now: i64) {
-        if self.exalt_changes.is_none() {
-            self.exalt_changes = Some(0);
-            self.updated_at = now;
-            self.dirty = true;
-        }
+    /// Java `trackExalts` and `trackStSets` at startup: copies what the exalts record and the collection hold (the
+    /// collection: nothing yet), which counts as a change the first time.
+    pub fn start(&mut self, exalt_changes: &[crate::exalt_store::Change], now: i64) {
+        self.track_exalts(exalt_changes, now);
         if self.st_sets_done.as_deref() != Some(&[]) {
             self.st_sets_done = Some(Vec::new());
             self.updated_at = now;
             self.dirty = true;
         }
+    }
+
+    /// Java `trackExalts`' copy, whenever the exalts record changed: a different list counts as an update.
+    pub fn track_exalts(&mut self, changes: &[crate::exalt_store::Change], now: i64) {
+        if self.exalt_changes.as_deref() == Some(changes) {
+            return;
+        }
+        self.exalt_changes = Some(changes.to_vec());
+        self.updated_at = now;
+        self.dirty = true;
     }
 
     /// Java `trackStSets`'s count: when each ST set was completed (all four pieces in the collection; the latest
@@ -89,7 +95,7 @@ impl Profile {
             .st_sets_done
             .as_ref()
             .map_or("null".into(), |v| format!("[{}]", v.iter().map(i64::to_string).collect::<Vec<_>>().join(",")));
-        let ex = self.exalt_changes.map_or("null".into(), |n| n.to_string());
+        let ex = self.exalt_changes.as_ref().map_or("null".into(), |n| n.len().to_string());
         format!(
             "profile ign={} guild={} rank={} at={} sts={sts} exalts={ex}\n",
             q(&self.ign),

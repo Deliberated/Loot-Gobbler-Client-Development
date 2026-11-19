@@ -3,8 +3,7 @@
 //! second, the quick slot items you used, your death, and a link to its run in the run history when you fought a
 //! boss.
 //!
-//! Not ported yet: exaltation progress (needs `ExaltStore`), Moonlight Village's lantern and phases (`MoonlightLog`),
-//! amulet saves (`AmuletSaves`).
+//! Not ported yet: Moonlight Village's lantern and phases (`MoonlightLog`), amulet saves (`AmuletSaves`).
 
 use crate::characters::{Char, Characters};
 use crate::dps_history::DpsHistory;
@@ -25,6 +24,19 @@ const QUICK_SLOT_ID: i32 = 1_000_000;
 const QUICKSLOTS: [u8; 3] = [stats::POTION_ONE_TYPE, stats::POTION_TWO_TYPE, stats::POTION_THREE_TYPE];
 /// A jump of more tiles than this is a teleport, not walked.
 const MAX_STEP: f64 = 2.5;
+/// Exaltation progress reported just after leaving still counts...
+const EXALT_LATE_MS: i64 = 120_000;
+/// ... also as the next map loads, within this time.
+const EXALT_ENTRY_MS: i64 = 90_000;
+
+/// Exaltation progress the game reported during a visit: one stat of one class, from before to after.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Exalt {
+    pub class_type: i32,
+    pub stat: i32,
+    pub before: i32,
+    pub after: i32,
+}
 
 /// A character's look in a visit.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -46,6 +58,8 @@ pub struct Visit {
     /// The sniffer started inside it: what happened before is missing.
     pub late: bool,
     pub hidden: bool,
+    /// Exaltation progress the game reported in this dungeon.
+    pub exalts: Vec<Exalt>,
     /// Every hit you took, oldest first: ms after entering, damage (after your defense), the enemy's object type
     /// (0 = none, below 0 a damaging tile's type, negated).
     pub hit_time: Vec<i32>,
@@ -78,6 +92,7 @@ impl Visit {
             run_start: 0,
             late: false,
             hidden: false,
+            exalts: Vec::new(),
             hit_time: Vec::new(),
             hit_damage: Vec::new(),
             hit_enemy: Vec::new(),
@@ -172,6 +187,25 @@ impl DungeonVisits {
         }
         self.visits.insert(0, left);
         self.visits.truncate(MAX_VISITS);
+    }
+
+    /// Java `exaltProgress`: new progress for a class. The game sends it right after a dungeon is left, while the
+    /// next map loads: within the first 90 s of a map entered straight after a dungeon it belongs to that dungeon;
+    /// later in a dungeon, to that one; outside dungeons, to the one left at most 2 minutes ago.
+    pub fn exalt_progress(&mut self, class_type: i32, before: &[i32], after: &[i32], now: i64) {
+        let last_end = self.visits.first().map(|l| l.start + l.duration_ms);
+        let to_last = match (&self.current, last_end) {
+            (Some(c), end) => now - c.start < EXALT_ENTRY_MS && end.is_some_and(|e| c.start - e < EXALT_ENTRY_MS),
+            (None, Some(e)) => now - e < EXALT_LATE_MS,
+            (None, None) => false,
+        };
+        let v = if to_last { self.visits.first_mut() } else { self.current.as_mut() };
+        let Some(v) = v else { return };
+        for (i, (&b, &a)) in before.iter().zip(after).enumerate() {
+            if a > b {
+                v.exalts.push(Exalt { class_type, stat: i as i32, before: b, after: a });
+            }
+        }
     }
 
     /// Java `hits`: the hits you took and the damage you dealt per second, into the visit in progress; once a
@@ -319,13 +353,14 @@ fn visit_line(v: &Visit) -> String {
     let q = |s: &str| lg_protocol::dump::to_string(&s.to_string());
     let look = v.look.as_ref().map_or("null".into(), |l| format!("{}/{}/{}/{}/{}", q(&l.player), l.class_type, l.skin, l.tex1, l.tex2));
     format!(
-        "{} start={} ms={} run={} late={} hidden={} hits={}/{}/{} maxHp={} dealt={} quick={}/{} died={}/{} moved={} judged={} victory={} look={}",
+        "{} start={} ms={} run={} late={} hidden={} exalts=[{}] hits={}/{}/{} maxHp={} dealt={} quick={}/{} died={}/{} moved={} judged={} victory={} look={}",
         q(&v.dungeon),
         v.start,
         v.duration_ms,
         v.run_start,
         v.late,
         v.hidden,
+        v.exalts.iter().map(|e| format!("{}/{}/{}/{}", e.class_type, e.stat, e.before, e.after)).collect::<Vec<_>>().join(","),
         arr(&v.hit_time),
         arr(&v.hit_damage),
         arr(&v.hit_enemy),

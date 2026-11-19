@@ -294,8 +294,18 @@ final class WorldOracle {
         collection(b);
         holdings(b);
         upe(b);
+        exalts(b);
         dps(b);
         visits(b);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void exalts(StringBuilder b) throws ReflectiveOperationException {
+        lootgobbler.ExaltStore x = lootgobbler.ExaltStore.get();
+        List<String> p = new ArrayList<>(), c = new ArrayList<>();
+        for (Map.Entry<Integer, int[]> e : ((Map<Integer, int[]>) get(x, "progress")).entrySet()) p.add(e.getKey() + "=" + arr(e.getValue()));
+        for (lootgobbler.ExaltStore.Change ch : x.recentChanges()) c.add(ch.t + "/" + ch.classType + "/" + ch.stat + "/" + ch.before + "/" + ch.after);
+        b.append("exalts [").append(String.join(",", p)).append("] changes [").append(String.join(",", c)).append("]\n");
     }
 
     @SuppressWarnings("unchecked")
@@ -339,10 +349,16 @@ final class WorldOracle {
                 .append(String.format("%016x", Double.doubleToRawLongBits((double) get(d, "unsaved")))).append('\n');
     }
 
+    private static String exalts(lootgobbler.DungeonVisits.Visit v) {
+        List<String> l = new ArrayList<>();
+        if (v.exalts != null) for (lootgobbler.DungeonVisits.Exalt e : v.exalts) l.add(e.classType + "/" + e.stat + "/" + e.before + "/" + e.after);
+        return String.join(",", l);
+    }
+
     private static String visit(lootgobbler.DungeonVisits.Visit v) {
         lootgobbler.DungeonVisits.Look l = v.look;
         return quote(v.dungeon) + " start=" + v.start + " ms=" + v.durationMs + " run=" + v.runStart + " late=" + v.late
-                + " hidden=" + v.hidden + " hits=" + arr(v.hitTime) + "/" + arr(v.hitDamage) + "/" + arr(v.hitEnemy)
+                + " hidden=" + v.hidden + " exalts=[" + exalts(v) + "] hits=" + arr(v.hitTime) + "/" + arr(v.hitDamage) + "/" + arr(v.hitEnemy)
                 + " maxHp=" + v.maxHp + " dealt=" + arr(v.dealt) + " quick=" + arr(v.quickItem) + "/" + arr(v.quickTime)
                 + " died=" + v.diedAt + "/" + (v.killedBy == null ? "null" : quote(v.killedBy)) + " moved=" + arr(v.moved)
                 + " judged=" + v.judged + " victory=" + v.victory + " look="

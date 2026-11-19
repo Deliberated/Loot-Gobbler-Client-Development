@@ -8,6 +8,7 @@ pub mod characters;
 pub mod collection;
 pub mod dps_history;
 pub mod dungeon_visits;
+pub mod exalt_store;
 pub mod holdings;
 pub mod item_use;
 pub mod localtime;
@@ -41,6 +42,10 @@ pub struct App {
     pub tinkerer: tinkerer::Tinkerer,
     pub dps_history: dps_history::DpsHistory,
     pub dungeon_visits: dungeon_visits::DungeonVisits,
+    pub exalts: exalt_store::ExaltStore,
+    /// Tomato's exaltation progress per class (`RealmCharacter.exalts`): from the login's fetch (not ported yet),
+    /// then from the game's exaltation packets.
+    pub realm_exalts: std::collections::HashMap<i32, Vec<i32>>,
     pub zone: localtime::Zone,
 }
 
@@ -67,8 +72,14 @@ macro_rules! upe_ctx {
 impl App {
     /// The app started at `now` (ms since 1970; 0 for a replay, whose clock only starts with its packets).
     pub fn new(world: World, now: i64) -> App {
+        App::importing(world, now, None)
+    }
+
+    /// The same, taking over what the Java app kept in its folder (only read, never changed): so far the exalts.
+    pub fn importing(world: World, now: i64, java_data: Option<&std::path::Path>) -> App {
+        let exalts = java_data.map(exalt_store::ExaltStore::import).unwrap_or_default();
         let mut profile = profile::Profile::default();
-        profile.start(now);
+        profile.start(&exalts.changes, now);
         App {
             world,
             characters: characters::Characters::default(),
@@ -81,6 +92,8 @@ impl App {
             tinkerer: tinkerer::Tinkerer::default(),
             dps_history: dps_history::DpsHistory::default(),
             dungeon_visits: dungeon_visits::DungeonVisits::default(),
+            exalts,
+            realm_exalts: std::collections::HashMap::new(),
             zone: localtime::Zone::system(),
         }
     }
@@ -266,6 +279,11 @@ impl App {
                     self.dungeon_visits.moved(&way, now);
                 }
             }
+            Decoded::ExaltationUpdate(x) => {
+                self.world.packet(p)?;
+                self.events(now);
+                self.exalt_update(x, now);
+            }
             Decoded::Notification(n) => {
                 self.world.packet(p)?;
                 self.events(now);
@@ -279,6 +297,30 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    /// Java `TomatoData.exaltUpdate`: the game's new progress for a class, against what Tomato has (else what was
+    /// kept from earlier; nothing known: ignored).
+    fn exalt_update(&mut self, x: &lg_protocol::packets::ExaltationUpdate, now: i64) {
+        let cls = i32::from(x.obj_type);
+        let Some(before) = self.realm_exalts.get(&cls).or_else(|| self.exalts.progress(cls)).cloned() else { return };
+        let update = vec![
+            x.dexterity_progress,
+            x.speed_progress,
+            x.vitality_progress,
+            x.wisdom_progress,
+            x.defense_progress,
+            x.attack_progress,
+            x.mana_progress,
+            x.health_progress,
+        ];
+        if before == update {
+            return;
+        }
+        self.dungeon_visits.exalt_progress(cls, &before, &update, now);
+        self.realm_exalts.insert(cls, update.clone());
+        self.exalts.update(&[(cls, update)], now);
+        self.profile.track_exalts(&self.exalts.changes, now);
     }
 
     /// What the world told while it worked, in order.
@@ -334,6 +376,7 @@ impl App {
         s.push_str(&self.collection.dump());
         s.push_str(&self.holdings.dump());
         s.push_str(&self.upe.dump());
+        s.push_str(&self.exalts.dump());
         s.push_str(&self.dps_history.dump());
         s.push_str(&self.dungeon_visits.dump());
         s

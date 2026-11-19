@@ -117,6 +117,8 @@ struct Fight {
     next_id: i32,
     /// Bags to come next round: where.
     bags_due: Vec<(f32, f32)>,
+    /// Exaltation progress per class, as the game last sent it (starting as `oracle/seed/exalts.json` has it).
+    exalts: Vec<(i16, [i32; 8])>,
 }
 
 /// Skins: none, two of the game's, one an ability turns you into (Evolutionary Boar...).
@@ -398,6 +400,21 @@ impl Fight {
             let b = B::default().i32(0).i32(obj).i32(slot).i32(item).pos(self.my_pos).i8(0).i32(0);
             self.send(Direction::Outgoing, 13, b);
         }
+        // exaltation progress for one of your classes (one the app has never seen, too); sometimes nothing new
+        if self.chance(4) {
+            let k = self.rng.below(self.exalts.len());
+            for i in 0..8 {
+                if self.chance(30) {
+                    self.exalts[k].1[i] += 1 + self.small(2);
+                }
+            }
+            let (cls, v) = self.exalts[k];
+            let mut b = B::default().i16(cls);
+            for x in v {
+                b = b.ci(x);
+            }
+            self.send(Direction::Incoming, 114, b);
+        }
         // someone dies; the dungeon is done
         if self.chance(3) {
             let name = self.pick(&DEAD);
@@ -524,6 +541,7 @@ pub fn fight(seed: u64) -> Session {
         enemy_bullets: Vec::new(),
         next_id: 5000,
         bags_due: Vec::new(),
+        exalts: vec![(768, [4, 14, 29, 49, 74, 0, 3, 10]), (775, [0; 8]), (799, [1; 8])],
     };
     for _ in 0..3 {
         f.tick(Vec::new());
