@@ -185,7 +185,174 @@ pub fn look_now(chars: &Characters) -> Option<Look> {
     Some(Look { player: name.clone(), class_type: c.class_type, skin: c.skin, tex1: c.tex1, tex2: c.tex2 })
 }
 
+/// The reconnect's data may come just before the visit ends...
+const EXALT_EARLY_MS: i64 = 5_000;
+
+fn read_visit(v: &lg_world::json::Json) -> Result<Visit, crate::java::Thrown> {
+    use crate::gson;
+    let v = gson::object(v)?;
+    let mut x = Visit::new("", 0);
+    x.judged = false; // Java's default (a visit begun live sets it)
+    if let Some(n) = gson::string(v.get("dungeon"))? {
+        x.dungeon = n.unwrap_or_default();
+    }
+    for (f, k) in [
+        (&mut x.start, "start"),
+        (&mut x.duration_ms, "durationMs"),
+        (&mut x.run_start, "runStart"),
+        (&mut x.lantern_active_ms, "lanternActiveMs"),
+        (&mut x.lantern_range_ms, "lanternRangeMs"),
+        (&mut x.lantern_near_ms, "lanternNearMs"),
+    ] {
+        if let Some(n) = gson::long(v.get(k))? {
+            *f = n;
+        }
+    }
+    for (f, k) in [(&mut x.late, "late"), (&mut x.hidden, "hidden"), (&mut x.judged, "judged"), (&mut x.victory, "victory")] {
+        if let Some(n) = gson::boolean(v.get(k))? {
+            *f = n;
+        }
+    }
+    for (f, k) in [(&mut x.max_hp, "maxHp"), (&mut x.died_at, "diedAt")] {
+        if let Some(n) = gson::int(v.get(k))? {
+            *f = n;
+        }
+    }
+    for (f, k) in [
+        (&mut x.hit_time, "hitTime"),
+        (&mut x.hit_damage, "hitDamage"),
+        (&mut x.hit_enemy, "hitEnemy"),
+        (&mut x.dealt, "dealt"),
+        (&mut x.amulet_saves, "amuletSaves"),
+        (&mut x.quick_item, "quickItem"),
+        (&mut x.quick_time, "quickTime"),
+        (&mut x.moved, "moved"),
+    ] {
+        if let Some(n) = gson::ints(v.get(k))? {
+            *f = n.unwrap_or_default();
+        }
+    }
+    if let Some(n) = gson::string(v.get("killedBy"))? {
+        x.killed_by = n;
+    }
+    if let Some(e) = gson::objects(v.get("exalts"), |e| {
+        let e = gson::object(e)?;
+        let g = |k: &str| gson::int(e.get(k)).map(|n| n.unwrap_or(0));
+        Ok(Exalt { class_type: g("classType")?, stat: g("stat")?, before: g("before")?, after: g("after")? })
+    })? {
+        x.exalts = e;
+    }
+    if let Some(p) = gson::objects(v.get("mvPhases"), |p| {
+        let p = gson::object(p)?;
+        let i = |k: &str| gson::int(p.get(k)).map(|n| n.unwrap_or(0));
+        let l = |k: &str| gson::long(p.get(k)).map(|n| n.unwrap_or(0));
+        Ok(MvPhase {
+            boss: i("boss")?,
+            title: gson::string(p.get("title"))?.map_or(String::new(), Option::unwrap_or_default),
+            start_ms: l("startMs")?,
+            duration_ms: l("durationMs")?,
+            lantern: gson::boolean(p.get("lantern"))?.unwrap_or(false),
+            lantern_ms: l("lanternMs")?,
+            range_ms: l("rangeMs")?,
+            near_ms: l("nearMs")?,
+            flames: i("flames")?,
+            beats: i("beats")?,
+            beats_max: i("beatsMax")?,
+        })
+    })? {
+        x.mv_phases = p;
+    }
+    x.look = match v.get("look") {
+        None | Some(lg_world::json::Json::Null) => None,
+        Some(l) => {
+            let l = gson::object(l)?;
+            let i = |k: &str| gson::int(l.get(k)).map(|n| n.unwrap_or(0));
+            Some(Look {
+                player: gson::string(l.get("player"))?.map_or(String::new(), Option::unwrap_or_default),
+                class_type: i("classType")?,
+                skin: i("skin")?,
+                tex1: i("tex1")?,
+                tex2: i("tex2")?,
+            })
+        }
+    };
+    Ok(x)
+}
+
 impl DungeonVisits {
+    /// What the Java app kept (`dungeon_visits.json`), read only, then Java's checks at loading: late visits linked to
+    /// their runs, late exaltations recovered. Without the file (Java's first start): a visit for every run kept.
+    pub fn import(dir: &std::path::Path, dps: &DpsHistory, exalts: &crate::exalt_store::ExaltStore) -> DungeonVisits {
+        let mut d = DungeonVisits::default();
+        match std::fs::read_to_string(dir.join("dungeon_visits.json")) {
+            Ok(text) => {
+                d.visits = crate::gson::root_list(&text, read_visit).unwrap_or_default();
+                d.link_late_runs(dps);
+                d.late_exalts(exalts);
+            }
+            Err(_) => d.first_start(dps),
+        }
+        d
+    }
+
+    /// A new app with this record (no file): the runs kept, so the list does not begin empty.
+    pub fn first_start(&mut self, dps: &DpsHistory) {
+        for run in dps.runs.iter().filter(|r| !r.hidden && !r.guild_hall) {
+            let mut v = Visit::new(&run.dungeon, run.start);
+            v.judged = false;
+            v.duration_ms = run.duration_ms.max(1);
+            v.run_start = run.start;
+            self.visits.push(v);
+        }
+    }
+
+    /// Java `linkLateRuns`.
+    fn link_late_runs(&mut self, dps: &DpsHistory) {
+        let mut linked: std::collections::HashSet<i64> = self.visits.iter().filter(|v| v.run_start != 0).map(|v| v.run_start).collect();
+        for v in &mut self.visits {
+            if !v.late || v.run_start != 0 {
+                continue;
+            }
+            for r in &dps.runs {
+                if r.guild_hall || r.dungeon != v.dungeon || linked.contains(&r.start) {
+                    continue;
+                }
+                if r.start < v.start - LINK_SLACK_MS || r.start > v.start + v.duration_ms {
+                    continue;
+                }
+                v.run_start = r.start;
+                linked.insert(r.start);
+                break;
+            }
+        }
+    }
+
+    /// Java `lateExalts`: late visits without exaltations get the progress seen going up as they ended.
+    fn late_exalts(&mut self, exalts: &crate::exalt_store::ExaltStore) {
+        let changes = &exalts.changes;
+        if changes.is_empty() {
+            return;
+        }
+        let key = |c: i32, s: i32, b: i32, a: i32| format!("{c}:{s}:{b}:{a}");
+        let mut credited: std::collections::HashSet<String> =
+            self.visits.iter().flat_map(|v| v.exalts.iter().map(|e| key(e.class_type, e.stat, e.before, e.after))).collect();
+        for v in &mut self.visits {
+            if !v.late || !v.exalts.is_empty() {
+                continue;
+            }
+            let end = v.start + v.duration_ms;
+            for c in changes {
+                if c.t < end - EXALT_EARLY_MS || c.t > end + EXALT_ENTRY_MS {
+                    continue;
+                }
+                if !credited.insert(key(c.class_type, c.stat, c.before, c.after)) {
+                    continue;
+                }
+                v.exalts.push(Exalt { class_type: c.class_type, stat: c.stat, before: c.before, after: c.after });
+            }
+        }
+    }
+
     /// Java `entered`, on every map change after the run history saved the run of the map left: ends the visit in
     /// progress and starts one if the new map is a dungeon.
     pub fn entered(&mut self, data: &lg_gamedata::GameData, map: Option<&Map>, chars: &Characters, dps: &DpsHistory, now: i64) {

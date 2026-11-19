@@ -102,7 +102,116 @@ pub fn live_texture(data: &lg_gamedata::GameData, v: i32) -> i32 {
     if v == 0 || (v as u32 >> 24) != 0 { v } else { data.dye_texture(v) }
 }
 
+/// A run starting before this (2017) has a broken start.
+const SANE_START: i64 = 1_500_000_000_000;
+
+/// Java `repair`: runs saved when the sniffer started inside a dungeon counted from 1970: their start becomes the
+/// first boss hit, their end stays. Whether the run was changed.
+pub fn repair(r: &mut Run) -> bool {
+    if r.start >= SANE_START {
+        return false;
+    }
+    let end = r.start + r.duration_ms;
+    let first = r.bosses.iter().map(|b| b.fight_start).filter(|&f| f >= SANE_START).min();
+    let Some(first) = first.filter(|&f| end >= f) else { return false };
+    r.start = first;
+    r.duration_ms = end - first;
+    true
+}
+
+fn read_run(v: &lg_world::json::Json) -> Result<Run, crate::java::Thrown> {
+    use crate::gson;
+    let v = gson::object(v)?;
+    let mut r = Run::default();
+    if let Some(x) = gson::string(v.get("dungeon"))? {
+        r.dungeon = x.unwrap_or_default();
+    }
+    if let Some(x) = gson::long(v.get("start"))? {
+        r.start = x;
+    }
+    if let Some(x) = gson::long(v.get("durationMs"))? {
+        r.duration_ms = x;
+    }
+    if let Some(x) = gson::boolean(v.get("guildHall"))? {
+        r.guild_hall = x;
+    }
+    if let Some(x) = gson::boolean(v.get("hidden"))? {
+        r.hidden = x;
+    }
+    r.bosses = gson::objects(v.get("bosses"), |b| {
+        let b = gson::object(b)?;
+        let mut x = Boss { name: Some(String::new()), end_hp: -1, ..Default::default() };
+        if let Some(n) = gson::string(b.get("name"))? {
+            x.name = n;
+        }
+        for (f, k) in [(&mut x.id, "id"), (&mut x.object_type, "objectType"), (&mut x.max_hp, "maxHp"), (&mut x.end_hp, "endHp")] {
+            if let Some(n) = gson::int(b.get(k))? {
+                *f = n;
+            }
+        }
+        if let Some(l) = gson::ints(b.get("loadout"))? {
+            x.loadout = l.and_then(|l| <[i32; 4]>::try_from(l).ok());
+        }
+        if let Some(n) = gson::long(b.get("fightMs"))? {
+            x.fight_ms = n;
+        }
+        if let Some(n) = gson::long(b.get("fightStart"))? {
+            x.fight_start = n;
+        }
+        x.players = gson::objects(b.get("players"), |p| {
+            let p = gson::object(p)?;
+            let mut y = PlayerRow::default();
+            if let Some(n) = gson::string(p.get("name"))? {
+                y.name = n.unwrap_or_default();
+            }
+            for (f, k) in [
+                (&mut y.class_type, "classType"),
+                (&mut y.damage, "damage"),
+                (&mut y.taken, "taken"),
+                (&mut y.skin, "skin"),
+                (&mut y.tex1, "tex1"),
+                (&mut y.tex2, "tex2"),
+            ] {
+                if let Some(n) = gson::int(p.get(k))? {
+                    *f = n;
+                }
+            }
+            if let Some(n) = gson::boolean(p.get("died"))? {
+                y.died = n;
+            }
+            if let Some(n) = gson::boolean(p.get("me"))? {
+                y.me = n;
+            }
+            if let Some(n) = gson::string(p.get("guild"))? {
+                y.guild = n;
+            }
+            Ok(y)
+        })?
+        .unwrap_or_default();
+        Ok(x)
+    })?
+    .unwrap_or_default();
+    Ok(r)
+}
+
 impl DpsHistory {
+    /// What the Java app kept (`dps_history.json`), read only, with Java's repair of broken starts (then newest
+    /// first again). Unreadable: nothing.
+    pub fn import(dir: &std::path::Path) -> DpsHistory {
+        let mut h = DpsHistory::default();
+        if let Ok(text) = std::fs::read_to_string(dir.join("dps_history.json")) {
+            h.runs = crate::gson::root_list(&text, read_run).unwrap_or_default();
+        }
+        let mut repaired = false;
+        for r in &mut h.runs {
+            repaired |= repair(r);
+        }
+        if repaired {
+            h.runs.sort_by_key(|r| std::cmp::Reverse(r.start));
+        }
+        h
+    }
+
     /// The newest saved run.
     pub fn latest(&self) -> Option<&Run> {
         self.runs.first()

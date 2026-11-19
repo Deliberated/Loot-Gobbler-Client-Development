@@ -99,6 +99,28 @@ pub fn ints2(v: Option<&Json>) -> Result<Option<Option<Ints2>>, Thrown> {
     }
 }
 
+/// Reads an object's fields: `None` from `of` when the value is not an object (`null` is the caller's).
+pub fn object(v: &Json) -> Result<&Json, Thrown> {
+    match v {
+        Json::Object(_) => Ok(v),
+        _ => Err(Thrown),
+    }
+}
+
+/// The value of a list of objects, `null` elements and a `null` list left out (Java-written files have none).
+pub fn objects<T>(v: Option<&Json>, item: impl Fn(&Json) -> Result<T, Thrown>) -> Result<Option<Vec<T>>, Thrown> {
+    Ok(list(v, item)?.map(|l| l.unwrap_or_default().into_iter().flatten().collect()))
+}
+
+/// A list root (`fromJson(..., ArrayList<T>)`): `null` or nothing is no list.
+pub fn root_list<T>(text: &str, item: impl Fn(&Json) -> Result<T, Thrown>) -> Result<Vec<T>, Thrown> {
+    if crate::java::is_blank(text) {
+        return Ok(Vec::new());
+    }
+    let v = lg_world::json::parse(text).map_err(|_| Thrown)?;
+    Ok(objects(Some(&v), item)?.unwrap_or_default())
+}
+
 /// A `List<T>` field: Some(None) for `null`, else each element read by `item` (None for a `null` element).
 pub fn list<T>(v: Option<&Json>, item: impl Fn(&Json) -> Result<T, Thrown>) -> Result<Option<Option<Vec<Option<T>>>>, Thrown> {
     match v {

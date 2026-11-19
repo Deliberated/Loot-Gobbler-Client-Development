@@ -113,6 +113,12 @@ impl App {
     pub fn importing(world: World, now: i64, java_data: Option<&std::path::Path>) -> App {
         let exalts = java_data.map(exalt_store::ExaltStore::import).unwrap_or_default();
         let amulet_saves = java_data.map(amulet_saves::AmuletSaves::import).unwrap_or_default();
+        let dps_history = java_data.map(dps_history::DpsHistory::import).unwrap_or_default();
+        // Java's DungeonVisits without a file makes a visit for every run kept (none in a new app)
+        let dungeon_visits = match java_data {
+            Some(d) => dungeon_visits::DungeonVisits::import(d, &dps_history, &exalts),
+            None => dungeon_visits::DungeonVisits::default(),
+        };
         let mut profile = java_data.map(profile::Profile::import).unwrap_or_default();
         profile.start(&exalts.changes, now);
         let mut characters = java_data.map(characters::Characters::import).unwrap_or_default();
@@ -128,8 +134,8 @@ impl App {
             upe: upe::Upe::default(),
             item_use: item_use::ItemUse::default(),
             tinkerer: tinkerer::Tinkerer::default(),
-            dps_history: dps_history::DpsHistory::default(),
-            dungeon_visits: dungeon_visits::DungeonVisits::default(),
+            dps_history,
+            dungeon_visits,
             exalts,
             moonlight: moonlight::Moonlight::default(),
             amulet_saves,
