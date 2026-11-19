@@ -79,7 +79,7 @@ fn a_made_up_fight_comes_out_as_sent() {
                 let _ = w.packet(&d.packet);
             }
         }
-        assert_eq!(w.map.as_ref().map(|m| m.name.as_str()), Some("Second Room"));
+        assert_eq!(w.map.as_ref().map(|m| m.name.as_str()), Some("Nexus"));
         assert!(w.damage.rng.is_some());
         assert!(w.entities.values().any(|e| !e.damage_list.is_empty()), "seed {seed}");
     }

@@ -178,6 +178,17 @@ impl Characters {
         self.dirty = true;
     }
 
+    /// Java `lastPlayedChar`: the living character played most recently (the first seen of equal ones).
+    pub fn last_played_char(&self) -> Option<&Char> {
+        let mut best: Option<&Char> = None;
+        for c in self.all() {
+            if c.alive && c.class_type > 0 && best.is_none_or(|b| c.last_played > b.last_played) {
+                best = Some(c);
+            }
+        }
+        best
+    }
+
     /// The character you play now (Java `playing`).
     pub fn playing(&self) -> Option<&Char> {
         self.chars.get(&self.current_char_id)

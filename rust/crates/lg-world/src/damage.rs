@@ -72,6 +72,8 @@ impl Projectile {
 pub struct DamageRecord {
     /// Who did it (an object id), if known.
     pub owner: Option<i32>,
+    /// The clock (Java `timePc`) when it happened; 0 for a sum per player.
+    pub time: i64,
     /// What did it when no owner is known: the object behind an area attack, minus the tile type for ground damage.
     pub source_type: i32,
     pub owner_object_type: i32,
@@ -309,15 +311,7 @@ impl World {
     /// Java `Entity.name()`: a player's name stat (before the first comma), else the object's name. Java throws for a
     /// name stat of only commas.
     pub fn display_name(&self, e: &Entity) -> Result<Option<String>, Abort> {
-        if self.data.is_player_class(e.object_type)
-            && let Some(n) = e.text(stats::NAME)
-        {
-            if !n.is_empty() && n.chars().all(|c| c == ',') {
-                return Err(Abort("a name of only commas"));
-            }
-            return Ok(Some(n.split(',').next().unwrap_or("").to_string()));
-        }
-        Ok(e.name.clone())
+        crate::fight::name(&self.data, e)
     }
 
     fn class_max(&self, e: &Entity, attack: bool) -> i32 {
@@ -484,6 +478,7 @@ impl World {
     fn hit(&mut self, target: i32, owner: Option<i32>, shot: &Projectile, dmg: i32) -> Result<(), Abort> {
         let mut r = self.record_of(owner)?;
         r.damage = dmg;
+        r.time = self.time_pc;
         if shot.container_type != -1
             && let Some(o) = owner.and_then(|id| self.entities.get(&id))
             && let Some(s) = self.data.abilities.scaling(shot.container_type)
@@ -506,6 +501,9 @@ impl World {
         let t = self.entities.get_mut(&target).expect("hit object");
         t.damage_list.push(r.clone());
         if let Some(o) = owner {
+            if !t.damage_player.contains_key(&o) {
+                t.damage_player_order.push(o);
+            }
             let sum = t.damage_player.entry(o).or_insert_with(|| first.expect("new sum"));
             sum.damage = sum.damage.wrapping_add(r.damage);
             if r.oryx_guard || r.walled_garden_reflectors || r.chancellor_dammah {
@@ -568,7 +566,8 @@ impl World {
         let attacker = self.player_list.contains(&shooter).then_some(shooter);
         self.shot_hit(h.target_id, attacker, shot.as_ref())?;
         self.first_hit(h.target_id, attacker);
-        self.entity(h.target_id).fought = true;
+        let now = self.time_pc;
+        self.entity(h.target_id).damage_taken_at(now);
         Ok(())
     }
 
@@ -588,14 +587,18 @@ impl World {
             self.hit(d.target_id, attacker, &shot, shot.damage)?;
             self.first_hit(d.target_id, attacker);
         }
-        self.entity(d.target_id).fought = true;
+        let now = self.time_pc;
+        self.entity(d.target_id).damage_taken_at(now);
         Ok(())
     }
 
     /// The first hit on an object: it is on the hit list, and if it was yours, counted for the dungeon.
     fn first_hit(&mut self, target: i32, attacker: Option<i32>) {
-        if self.entity_hit_list.insert(target)
-            && attacker.and_then(|a| self.entities.get(&a)).is_some_and(|a| a.is_user)
+        if !self.entity_hit_list.insert(target) {
+            return;
+        }
+        self.hit_order.push(target);
+        if attacker.and_then(|a| self.entities.get(&a)).is_some_and(|a| a.is_user)
             && let Some(m) = &self.map
         {
             let (name, t) = (m.name.clone(), self.entities[&target].object_type);
@@ -633,7 +636,7 @@ impl World {
     fn taken(&mut self, from: Option<i32>, shot: Projectile, source_type: i32) {
         let Some(id) = self.player else { return };
         let dmg = self.damage_to_you(&self.entities[&id], shot.damage, shot.armor_piercing);
-        let r = DamageRecord { owner: from, source_type, damage: dmg, ..Default::default() };
+        let r = DamageRecord { owner: from, time: self.time_pc, source_type, damage: dmg, ..Default::default() };
         self.entities.get_mut(&id).expect("you").damage_list.push(r);
     }
 
@@ -698,7 +701,8 @@ impl World {
 
     /// A player in view left it: every object they hit notes its hp then (Java `addPlayerDrop`).
     pub(crate) fn player_left(&mut self, dropped: i32) -> Result<(), Abort> {
-        let hit: Vec<i32> = self.entity_hit_list.iter().copied().filter(|k| !self.dropped.contains(k)).collect();
+        // Java walks its hit list in HashMap order, and throws partway at a name of only commas
+        let hit: Vec<i32> = self.hit_list().into_iter().filter(|k| !self.dropped.contains(k)).collect();
         for k in hit {
             let Some(e) = self.entities.get(&k) else { continue };
             let d = Dropped { hp: e.value(stats::HP).unwrap_or(0), max: e.value(stats::MAX_HP).unwrap_or(0), name: self.display_name(e)? };

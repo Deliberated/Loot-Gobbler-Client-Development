@@ -6,6 +6,8 @@
 
 pub mod characters;
 pub mod collection;
+pub mod dps_history;
+pub mod dungeon_visits;
 pub mod holdings;
 pub mod item_use;
 pub mod localtime;
@@ -37,6 +39,8 @@ pub struct App {
     pub upe: upe::Upe,
     pub item_use: item_use::ItemUse,
     pub tinkerer: tinkerer::Tinkerer,
+    pub dps_history: dps_history::DpsHistory,
+    pub dungeon_visits: dungeon_visits::DungeonVisits,
     pub zone: localtime::Zone,
 }
 
@@ -75,6 +79,8 @@ impl App {
             upe: upe::Upe::default(),
             item_use: item_use::ItemUse::default(),
             tinkerer: tinkerer::Tinkerer::default(),
+            dps_history: dps_history::DpsHistory::default(),
+            dungeon_visits: dungeon_visits::DungeonVisits::default(),
             zone: localtime::Zone::system(),
         }
     }
@@ -129,6 +135,10 @@ impl App {
             Decoded::NewTick(_) => {
                 self.world.tick_part(p)?;
                 self.events(now);
+                // DpsGUI.updateNewTickPacket: the run history's live snapshot, the visit's hits, then the rest
+                let f = self.world.fight();
+                self.dps_history.live_tick(&f, now);
+                self.dungeon_visits.hits(&f, &self.characters, false, now);
                 let me = self.world.me().cloned();
                 let mut r = records!(self, &time, me.is_some());
                 self.loot_events.inventory_tick(&mut r, me.as_ref());
@@ -169,10 +179,11 @@ impl App {
                 r.holdings.seed_once(&r.ctx, &self.characters.living());
                 self.loot_events.inv_result(&mut r, &mut self.upe, &c, &self.world, s);
             }
-            // TomatoPacketCapture: the world, DungeonVisits (not ported yet), LootEvents for the UPE rules
+            // TomatoPacketCapture: the world, DungeonVisits, LootEvents for the UPE rules
             Decoded::UseItem(u) => {
                 self.world.packet(p)?;
                 self.events(now);
+                self.dungeon_visits.item_used(&self.world.fight(), u, now);
                 let me = self.world.me().cloned();
                 // Java looks the container up (Holdings.get()) only for an item used from something else than you
                 let lookup = me.as_ref().is_some_and(|m| u.slot_object.object_id != m.id);
@@ -192,10 +203,11 @@ impl App {
                     self.upe.traded(&c, cid, name.as_deref());
                 }
             }
-            // the world (DungeonVisits.died, not ported yet), then CharacterStore's listener
+            // the world, DungeonVisits.died, then CharacterStore's listener
             Decoded::Death(d) => {
                 self.world.packet(p)?;
                 self.events(now);
+                self.dungeon_visits.died(&self.world.fight(), &self.characters, &d.killed_by, now);
                 self.characters.died(d.char_id, now);
             }
             Decoded::QuestFetchResponse(q) => {
@@ -245,6 +257,22 @@ impl App {
                 );
             }
             Decoded::QuestRedeemResponse(q) => self.upe.quest_answer(q.ok, now),
+            // TomatoData.updatePlayersPos: the way you walked, once you are known
+            Decoded::Move(m) => {
+                self.world.packet(p)?;
+                self.events(now);
+                if self.world.player.is_some() && !m.records.is_empty() {
+                    let way: Vec<_> = m.records.iter().map(|r| r.pos).collect();
+                    self.dungeon_visits.moved(&way, now);
+                }
+            }
+            Decoded::Notification(n) => {
+                self.world.packet(p)?;
+                self.events(now);
+                if n.effect == lg_protocol::packets::NotificationEffect::Victory {
+                    self.dungeon_visits.victory();
+                }
+            }
             _ => {
                 self.world.packet(p)?;
                 self.events(now);
@@ -258,7 +286,21 @@ impl App {
         let time = self.zone.local_date_time(now);
         for e in std::mem::take(&mut self.world.events) {
             match e {
+                // setNewRealm: the visit's last hits, then clear() saves the run of the map left
+                Event::Left(left) => {
+                    let f = left.fight(self.world.data());
+                    self.dungeon_visits.hits(&f, &self.characters, true, now);
+                    if f.map.is_some_and(|m| dps_history::is_logged_dungeon(&m.display_name)) || dps_history::is_guild_hall(f.map) {
+                        self.dps_history.record(&f, now);
+                    }
+                }
+                Event::Guessed => {
+                    let (data, m) = (self.world.data(), self.world.map.as_ref());
+                    self.dungeon_visits.entered_late(data, m, &self.characters, &self.dps_history, now);
+                }
                 Event::Entered { vault, map } => {
+                    let (data, m) = (self.world.data(), self.world.map.as_ref());
+                    self.dungeon_visits.entered(data, m, &self.characters, &self.dps_history, now);
                     let r = records!(self, &time);
                     r.holdings.entered(&r.ctx, vault);
                     self.upe.in_vault(vault);
@@ -292,6 +334,8 @@ impl App {
         s.push_str(&self.collection.dump());
         s.push_str(&self.holdings.dump());
         s.push_str(&self.upe.dump());
+        s.push_str(&self.dps_history.dump());
+        s.push_str(&self.dungeon_visits.dump());
         s
     }
 }

@@ -173,6 +173,12 @@ final class WorldOracle {
             b.append("dropped ").append(ids(((Map<?, ?>) get(data, "dropList")).keySet())).append('\n');
             b.append("crystals ").append(ids((Collection<?>) get(data, "crystalTracker"))).append('\n');
             b.append("bags ").append(ids((Collection<?>) get(data, "lootBags"))).append('\n');
+            List<String> hits = new ArrayList<>(), deaths = new ArrayList<>();
+            for (Object k : ((Map<?, ?>) get(data, "entityHitList")).keySet()) hits.add(String.valueOf(k));   // HashMap order
+            for (packets.incoming.NotificationPacket n : data.getDeathNotifications()) deaths.add(n.message == null ? "null" : quote(n.message));
+            b.append("fight timePc=").append(data.timePc).append(" first=").append(get(data, "timePcFirst"))
+                    .append(" hits=[").append(String.join(",", hits)).append("] deaths=[").append(String.join(",", deaths))
+                    .append("]\n");
             List<String>[] bags = new List[2];
             ArrayList<?>[] containers = (ArrayList<?>[]) get(data, "lootTickContainer");
             for (int i = 0; i < 2; i++) {
@@ -288,6 +294,59 @@ final class WorldOracle {
         collection(b);
         holdings(b);
         upe(b);
+        dps(b);
+        visits(b);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void dps(StringBuilder b) throws ReflectiveOperationException {
+        lootgobbler.DpsHistory h = lootgobbler.DpsHistory.get();
+        for (lootgobbler.DpsHistory.Run r : h.allRuns()) b.append("dps run ").append(run(r)).append('\n');
+        b.append("dps live ").append(h.live() == null ? "null" : run(h.live())).append(" at=").append(get(h, "lastLive"))
+                .append(" hits=").append(get(h, "liveHits")).append('\n');
+        Field f = lootgobbler.DpsHistory.class.getDeclaredField("LOOKS");
+        f.setAccessible(true);
+        List<String> looks = new ArrayList<>();
+        for (Map.Entry<String, int[]> e : new TreeMap<>((Map<String, int[]>) f.get(null)).entrySet()) {
+            looks.add(quote(e.getKey()) + "=" + e.getValue()[0] + "/" + e.getValue()[1] + "/" + e.getValue()[2]);
+        }
+        b.append("dps looks [").append(String.join(",", looks)).append("]\n");
+    }
+
+    private static String run(lootgobbler.DpsHistory.Run r) {
+        List<String> bosses = new ArrayList<>();
+        for (lootgobbler.DpsHistory.Boss x : r.bosses) {
+            List<String> players = new ArrayList<>();
+            for (lootgobbler.DpsHistory.PlayerRow p : x.players) {
+                players.add(quote(p.name) + "/" + p.classType + "/" + p.damage + "/" + p.taken + "/" + p.died + "/" + p.me + "/"
+                        + (p.guild == null ? "null" : quote(p.guild)) + "/" + p.skin + "/" + p.tex1 + "/" + p.tex2);
+            }
+            bosses.add("{" + (x.name == null ? "null" : quote(x.name)) + " id=" + x.id + " t=" + x.objectType + " load="
+                    + arr(x.loadout) + " hp=" + x.endHp + "/" + x.maxHp + " ms=" + x.fightMs + " at=" + x.fightStart + " ["
+                    + String.join(",", players) + "]}");
+        }
+        return quote(r.dungeon) + " start=" + r.start + " ms=" + r.durationMs + " gh=" + r.guildHall + " hidden=" + r.hidden
+                + " [" + String.join(",", bosses) + "]";
+    }
+
+    private static void visits(StringBuilder b) throws ReflectiveOperationException {
+        lootgobbler.DungeonVisits d = lootgobbler.DungeonVisits.get();
+        for (lootgobbler.DungeonVisits.Visit v : d.allVisits()) b.append("visit ").append(visit(v)).append('\n');
+        b.append("visit current ").append(d.current() == null ? "null" : visit(d.current())).append(" hitsAt=")
+                .append(get(d, "lastHits")).append(" last=")
+                .append(String.format("%08x", Float.floatToRawIntBits((float) get(d, "lastX")))).append('/')
+                .append(String.format("%08x", Float.floatToRawIntBits((float) get(d, "lastY")))).append(" unsaved=")
+                .append(String.format("%016x", Double.doubleToRawLongBits((double) get(d, "unsaved")))).append('\n');
+    }
+
+    private static String visit(lootgobbler.DungeonVisits.Visit v) {
+        lootgobbler.DungeonVisits.Look l = v.look;
+        return quote(v.dungeon) + " start=" + v.start + " ms=" + v.durationMs + " run=" + v.runStart + " late=" + v.late
+                + " hidden=" + v.hidden + " hits=" + arr(v.hitTime) + "/" + arr(v.hitDamage) + "/" + arr(v.hitEnemy)
+                + " maxHp=" + v.maxHp + " dealt=" + arr(v.dealt) + " quick=" + arr(v.quickItem) + "/" + arr(v.quickTime)
+                + " died=" + v.diedAt + "/" + (v.killedBy == null ? "null" : quote(v.killedBy)) + " moved=" + arr(v.moved)
+                + " judged=" + v.judged + " victory=" + v.victory + " look="
+                + (l == null ? "null" : quote(l.player) + "/" + l.classType + "/" + l.skin + "/" + l.tex1 + "/" + l.tex2);
     }
 
     @SuppressWarnings("unchecked")
@@ -399,7 +458,8 @@ final class WorldOracle {
     /** Its name and the damage it took, as lg-world's dump writes them; null when there is nothing to tell. */
     private static String fights(Entity e) throws ReflectiveOperationException {
         String name = (String) get(e, "name");
-        boolean fought = (long) get(e, "firstDamageTaken") != -1;
+        long first = (long) get(e, "firstDamageTaken"), last = (long) get(e, "lastDamageTaken");
+        boolean fought = first != -1;
         java.util.List<?> damage = (java.util.List<?>) get(e, "damageList");
         if (name == null && !fought && !e.dammahCountered && damage.isEmpty() && e.playerDropped.isEmpty()) return null;
         List<String> records = new ArrayList<>();
@@ -413,14 +473,14 @@ final class WorldOracle {
             dropped.add(d.getKey() + ":" + d.getValue().hp + "/" + d.getValue().max + "/"
                     + (d.getValue().name == null ? "null" : quote(d.getValue().name)));
         }
-        return "  name=" + (name == null ? "null" : quote(name)) + " fought=" + fought + " dammah=" + e.dammahCountered
+        return "  name=" + (name == null ? "null" : quote(name)) +  " fought=" + first + "/" + last + " dammah=" + e.dammahCountered
                 + " damage=[" + String.join(",", records) + "] byplayer=[" + String.join(",", sums) + "] dropped=["
                 + String.join(",", dropped) + "]";
     }
 
     private static String record(tomato.backend.data.Damage d) {
         StringBuilder b = new StringBuilder("{o=").append(d.owner == null ? "null" : String.valueOf(d.owner.id))
-                .append(",src=").append(d.sourceType).append(",t=").append(d.ownerObjectType)
+                .append(",tm=").append(d.time).append(",src=").append(d.sourceType).append(",t=").append(d.ownerObjectType)
                 .append(",n=").append(d.ownerObjectName == null ? "null" : quote(d.ownerObjectName)).append(",inv=");
         if (d.ownerInvntory == null) b.append("null");
         else b.append(java.util.Arrays.toString(d.ownerInvntory).replace(" ", ""));

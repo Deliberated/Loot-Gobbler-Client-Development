@@ -11,13 +11,14 @@
 //! the map by the enemies coming into view.
 
 pub mod damage;
+pub mod fight;
 mod json;
 pub mod loot;
 pub mod stats;
 
 use lg_gamedata::GameData;
 use lg_protocol::packets::data::{ObjectStatus, Stat, WorldPos};
-use lg_protocol::packets::{Decoded, MapInfo, Move, NewTick, Update, UseItem, VaultContent};
+use lg_protocol::packets::{Decoded, MapInfo, Move, NewTick, Notification, NotificationEffect, Update, UseItem, VaultContent};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 
@@ -29,6 +30,10 @@ pub const FED: &[u8] = &[101, 25, 30, 75, 90, 35, 103, 64, 62, 13, 46, 12, 42, 1
 /// order it does): the app takes them right after the packet, those before a throw too.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
+    /// A map is left (Java `setNewRealm`, before `clear`): its fight data, as it was.
+    Left(Box<fight::LeftMap>),
+    /// The map you are in was told by its enemies (Java `guessMap`): it is in `map` now.
+    Guessed,
     /// A new map (Java `setNewRealm`): the vault or not, and its name as the app shows it (`LootEvents.mapName`).
     Entered { vault: bool, map: String },
     /// What the game sent of your character: on entering a map (every stat), and in ticks (only those that
@@ -77,8 +82,11 @@ pub struct Entity {
     pub damage_player: BTreeMap<i32, damage::DamageRecord>,
     /// Its hp when a player who hit it left the view, by that player.
     pub player_dropped: BTreeMap<i32, damage::Dropped>,
-    /// It was hit at least once.
-    pub fought: bool,
+    /// The clock (Java `timePc`) at its first and last hit; -1 before (Java `firstDamageTaken`, `lastDamageTaken`).
+    pub first_damage: i64,
+    pub last_damage: i64,
+    /// The players in `damage_player`, in the order they first hit it (for Java's `HashMap` order).
+    pub damage_player_order: Vec<i32>,
     /// Chancellor Dammah was countered (its damage counts again).
     pub dammah_countered: bool,
 }
@@ -98,9 +106,19 @@ impl Entity {
             damage_list: Vec::new(),
             damage_player: BTreeMap::new(),
             player_dropped: BTreeMap::new(),
-            fought: false,
+            first_damage: -1,
+            last_damage: -1,
+            damage_player_order: Vec::new(),
             dammah_countered: false,
         }
+    }
+
+    /// Java `updateDamageTaken`: a hit at this clock (which is -1 between a map change and its first tick).
+    pub(crate) fn damage_taken_at(&mut self, time_pc: i64) {
+        if self.first_damage == -1 {
+            self.first_damage = time_pc;
+        }
+        self.last_damage = time_pc;
     }
 
     pub fn stat(&self, stat_type: u8) -> Option<&Stat> {
@@ -215,8 +233,14 @@ pub struct World {
     pub loot_bags: BTreeSet<i32>,
     loot_tick_toggle: usize,
     loot_tick_bags: [Vec<loot::Held>; 2],
-    /// Object types that left the view while hit by you (the damage part is not ported yet, so empty).
+    /// The objects hit in this map, in the order first hit (Java `entityHitList`, a `HashMap`: see
+    /// [`fight::java_hash_order`]).
     entity_hit_list: HashSet<i32>,
+    hit_order: Vec<i32>,
+    /// The game's notifications of players dying in this map (Java `deathNotifications`).
+    pub death_notifications: Vec<Notification>,
+    /// Java `timePc`: the clock at the last tick; 0 before the first, -1 after a map change until the next tick.
+    pub time_pc: i64,
     killed: Vec<loot::Held>,
     tiles: Vec<u16>,
     petyard: bool,
@@ -267,6 +291,9 @@ impl World {
             loot_tick_toggle: 0,
             loot_tick_bags: [Vec::new(), Vec::new()],
             entity_hit_list: HashSet::new(),
+            hit_order: Vec::new(),
+            death_notifications: Vec::new(),
+            time_pc: 0,
             killed: Vec::new(),
             tiles: vec![0; MAP_SIZE * MAP_SIZE],
             petyard: false,
@@ -374,6 +401,7 @@ impl World {
                 }
             }
             Decoded::CrucibleResponse(c) => self.crucible_response(&c.crucible_jsons),
+            Decoded::Notification(n) if n.effect == NotificationEffect::PlayerDeath => self.death_notifications.push(n.clone()),
             _ => {}
         }
         Ok(())
@@ -396,7 +424,16 @@ impl World {
         self.map_guess_failed = false;
         self.guess_votes.clear();
         self.loot_new_map();
-        // clear()
+        // clear(): what the app's run history and dungeon visit read of the map left
+        let left = fight::LeftMap {
+            map: self.map.clone(),
+            entities: std::mem::take(&mut self.entities),
+            hit_order: std::mem::take(&mut self.hit_order),
+            deaths: std::mem::take(&mut self.death_notifications),
+            player: self.player,
+            dungeon_time: self.dungeon_time_ms(),
+        };
+        self.events.push(Event::Left(Box::new(left)));
         self.world_player_id = -1;
         self.char_id = -1;
         self.time = -1;
@@ -408,6 +445,9 @@ impl World {
         self.dropped.clear();
         self.loot_bags.clear();
         self.entity_hit_list.clear();
+        self.hit_order.clear();
+        self.death_notifications.clear();
+        self.time_pc = -1;
         self.tiles.fill(0);
         self.petyard = false;
         self.first_tick_ms = None;
@@ -443,6 +483,7 @@ impl World {
         let now = self.now;
         self.last_tick_ms = Some(now);
         self.first_tick_ms.get_or_insert(now);
+        self.time_pc = now;
         for status in &t.status {
             let id = status.object_id;
             self.entity(id).update_stats(status)?;
@@ -641,6 +682,7 @@ impl World {
         }
         self.map_guessed = true;
         self.map = Some(Map { name: dungeon.clone(), display_name: dungeon, width: 0, height: 0, seed: -1 });
+        self.events.push(Event::Guessed);
     }
 
     /// The whole state as text, as `oracle/WorldOracle.java` writes Java's: one line per part and per object.
@@ -662,6 +704,15 @@ impl World {
         let _ = writeln!(b, "dropped {}", ids(&self.dropped));
         let _ = writeln!(b, "crystals {}", ids(&self.crystals));
         let _ = writeln!(b, "bags {}", ids(&self.loot_bags));
+        let deaths: Vec<String> = self.death_notifications.iter().map(|n| n.message.as_deref().map_or("null".into(), quote)).collect();
+        let _ = writeln!(
+            b,
+            "fight timePc={} first={} hits=[{}] deaths=[{}]",
+            self.time_pc,
+            self.first_tick_ms.unwrap_or(-1),
+            self.hit_list().iter().map(i32::to_string).collect::<Vec<_>>().join(","),
+            deaths.join(",")
+        );
         let held = |l: &[loot::Held]| {
             l.iter()
                 .map(|h| match h {
@@ -728,16 +779,18 @@ impl World {
                 e.char_id,
                 stats.join(",")
             );
-            if e.name.is_some() || e.fought || e.dammah_countered || !e.damage_list.is_empty() || !e.player_dropped.is_empty() {
+            let fought = e.first_damage != -1;
+            if e.name.is_some() || fought || e.dammah_countered || !e.damage_list.is_empty() || !e.player_dropped.is_empty() {
                 let records: Vec<String> = e.damage_list.iter().map(record).collect();
                 let sums: Vec<String> = e.damage_player.iter().map(|(k, r)| format!("{k}:{}", record(r))).collect();
                 let dropped: Vec<String> =
                     e.player_dropped.iter().map(|(k, d)| format!("{k}:{}/{}/{}", d.hp, d.max, opt(&d.name))).collect();
                 let _ = writeln!(
                     b,
-                    "  name={} fought={} dammah={} damage=[{}] byplayer=[{}] dropped=[{}]",
+                    "  name={} fought={}/{} dammah={} damage=[{}] byplayer=[{}] dropped=[{}]",
                     opt(&e.name),
-                    e.fought,
+                    e.first_damage,
+                    e.last_damage,
                     e.dammah_countered,
                     records.join(","),
                     sums.join(","),
@@ -770,8 +823,9 @@ fn record(r: &damage::DamageRecord) -> String {
     let num = |v: Option<i32>| v.map_or("null".into(), |v| v.to_string());
     let list = |v: &[String]| format!("[{}]", v.join(","));
     format!(
-        "{{o={},src={},t={},n={},inv={},ench={},ss={},sv={},d={},cd={},ch={},f={}{}{}}}",
+        "{{o={},tm={},src={},t={},n={},inv={},ench={},ss={},sv={},d={},cd={},ch={},f={}{}{}}}",
         num(r.owner),
+        r.time,
         r.source_type,
         r.owner_object_type,
         opt(&r.owner_name),

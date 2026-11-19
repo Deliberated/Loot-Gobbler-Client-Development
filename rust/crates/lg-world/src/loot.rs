@@ -279,7 +279,7 @@ impl World {
     }
 
     /// Java `dungeonTime`: from the map's first tick to its last, by this computer's clock.
-    fn dungeon_time_ms(&self) -> i64 {
+    pub(crate) fn dungeon_time_ms(&self) -> i64 {
         match (self.first_tick_ms, self.last_tick_ms) {
             (Some(f), Some(l)) if l >= f && f > 0 => l - f,
             _ => 0,

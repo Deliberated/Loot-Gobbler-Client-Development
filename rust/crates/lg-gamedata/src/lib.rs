@@ -10,6 +10,7 @@
 //! - `xml/enchantments.xml`: what enchantments do ([`enchants`])
 
 pub mod abilities;
+pub mod char_stats;
 pub mod dungeons;
 pub mod dyes;
 pub mod enchants;

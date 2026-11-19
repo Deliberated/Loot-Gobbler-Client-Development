@@ -15,7 +15,7 @@ work with the current Loot Gobbler server and its data as they are.
 | `lg-protocol` | RC4, cutting the stream into packets, finding the cipher's position from tick packets, the packet type table, decoders for the 45 packet types the app reads | `PacketConstructor`, `ROTMGPacketConstructor`, `RC4`, `TickAligner`, `RC4Aligner`, `PacketType`, `BufferReader`, `packets.incoming.*`, `packets.outgoing.*`, `packets.data.*` |
 | `lg-gamedata` | the game data the app extracts from the game: objects, tiles, character classes, loot bags, abilities scaling with a stat, enchantments, dungeon portals and modifiers, the enemies of each dungeon | `IdToAsset`, `CharacterClass`, `LootBags`, `AbilityScalingManager`, `ParseEnchants`, `ParseDungeon`, `GameFileEnemies` |
 | `lg-world` | the world as the packets tell it: the map, every object in view and its stats, which one is you (also when the sniffer starts inside a map), players, loot bags; damage: your shots rolled with the map's seed, hits, damage per player, damage you take, boss phases, crucible bonuses; loot: which enemy (or boss, by its last words) dropped which bag, and per dungeon what you hit and what dropped | the core of `TomatoData` and `Entity`, `Projectile`, `Damage`, `RNG`, `CrucibleBonusManager`, `LootAttributionManager`, `DungeonStatData` |
-| `lg-app` | Loot Gobbler's own records, built from the world in the order the Java app's listeners run: characters, profile, collection, holdings and their journal, the game mode (UPE) rules, items forged, fed, dropped and used up, the Tinkerer's quests | `CharacterStore`, `PlayerProfile`, `CollectionStore`, `Holdings`, `LootEvents`, `Upe`, `ItemUse`, `TinkererQuests` |
+| `lg-app` | Loot Gobbler's own records, built from the world in the order the Java app's listeners run: characters, profile, collection, holdings and their journal, the game mode (UPE) rules, items forged, fed, dropped and used up, the Tinkerer's quests, the boss damage of each run (DPS history), every dungeon visit (hits taken, damage dealt, way walked, quick slot items, your death, its run) | `CharacterStore`, `PlayerProfile`, `CollectionStore`, `Holdings`, `LootEvents`, `Upe`, `ItemUse`, `TinkererQuests`, `DpsHistory`, `DungeonVisits` |
 | `lg-replay` | the command-line tool below, and made-up sessions for tests | - |
 
 Where it differs from Java on purpose (each one is a bug in Java):
@@ -120,7 +120,8 @@ here, and the tests use made-up sessions only.
   inside a map (by your own stats, where you moved, your ability), guessing the map by its enemies, the places
   where Java throws.
 - Made-up fights (12 seeds, with the real game data): the same world as Java's after every packet, damage and loot
-  included.
+  included, and the same run history and dungeon visits (real dungeon names, the guild hall's shooting range,
+  deaths, victories, quick slot items, skins and dyes, transformations).
 - A real 46-second recording (not in the repository): Rust and Java agree on all 1391 packets, the fields of all 946
   decoded ones, and the world state after each of the 935 packets the world is fed. The game data read from a real
   assets folder is the same too (36858 objects, 10399 tiles, 19 classes).

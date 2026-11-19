@@ -119,6 +119,15 @@ struct Fight {
     bags_due: Vec<(f32, f32)>,
 }
 
+/// Skins: none, two of the game's, one an ability turns you into (Evolutionary Boar...).
+const SKINS: [i32; 4] = [0, 312, 7467, 884];
+/// Dye values: none, a clothing and an accessory dye (their textures by the game data), a texture itself.
+const TEXTURES: [i32; 4] = [0, 0x1000, 0x1100, 0x0100_0005];
+/// What your quick slots hold.
+const QUICK: [i32; 2] = [2594, 2595];
+/// The names the death notifications tell (one never in view).
+const DEAD: [&str; 5] = ["Friend0", "Friend1", "Friend2", "Tester", "Nobody"];
+
 const BAGS: [u16; 8] = [1287, 1289, 1291, 1292, 1294, 1295, 1708, 1724];
 /// Last words that open a boss's loot window.
 const LAST_WORDS: [(&str, &str); 4] = [
@@ -154,12 +163,12 @@ impl Fight {
         self.send(Direction::Outgoing, 62, B::default().i32(self.tick).i32(self.tick * 200).raw(&records.0));
     }
 
-    fn map(&mut self, name: &str, seed: i32) {
+    fn map(&mut self, name: &str, display_name: &str, seed: i32) {
         let b = B::default()
             .i32(64)
             .i32(64)
             .str(name)
-            .str(name)
+            .str(display_name)
             .str("")
             .i32(seed)
             .i32(0)
@@ -197,8 +206,13 @@ impl Fight {
             S::N(28, 50),
             S::N(24, 0),
             S::N(113, if self.chance(50) { 1000 } else { 1050 }),
-            S::N(25, 0),
+            S::N(25, self.pick(&SKINS)),
+            S::N(32, self.pick(&TEXTURES)),
+            S::N(33, self.pick(&TEXTURES)),
         ];
+        if let Some((_, guild)) = name.split_once(',') {
+            v.push(S::T(62, guild.into()));
+        }
         for (k, t) in [46u8, 47, 48, 49, 50, 51, 52, 53].iter().enumerate() {
             v.push(S::N(*t, k as i32));
         }
@@ -220,6 +234,7 @@ impl Fight {
         let mut objects = Vec::new();
         let mut me = self.player_stats("Tester", [i32::from(DAGGER), i32::from(CLOAK), i32::from(ARMOR), -1]);
         me.push(S::N(35, 100)); // gold: yours only
+        me.extend([S::N(116, QUICK[0]), S::N(117, QUICK[1]), S::N(118, -1)]); // quick slots
         if self.chance(50) {
             me.push(S::T(128, "A".into()));
             me.push(S::T(155, "B".into()));
@@ -363,7 +378,46 @@ impl Fight {
             };
             self.out.push((Direction::Incoming, Plain { id: 44, body: text.encode() }));
         }
+        // a player turns into something (their skin changes), and back
+        if self.chance(8) {
+            let who = self.pick(&[ME, 2000, 2001, 2002]);
+            let skin = self.pick(&SKINS);
+            let tex = self.pick(&TEXTURES);
+            self.tick(vec![status(who, (10.0, 10.0), &[S::N(25, skin), S::N(32, tex)])]);
+        }
+        // a quick slot used, by its quick slot id or from a slot; or an item from the inventory
+        if self.chance(6) {
+            let (slot, item) = match self.small(5) {
+                0 => (1_000_000 + self.small(3), self.pick(&QUICK)),
+                1 => (2, QUICK[0]),
+                2 => (0, i32::from(DAGGER)),
+                3 => (1_000_005, QUICK[1]),
+                _ => (14, QUICK[1]),
+            };
+            let obj = if self.chance(80) { ME } else { 2000 };
+            let b = B::default().i32(0).i32(obj).i32(slot).i32(item).pos(self.my_pos).i8(0).i32(0);
+            self.send(Direction::Outgoing, 13, b);
+        }
+        // someone dies; the dungeon is done
+        if self.chance(3) {
+            let name = self.pick(&DEAD);
+            let message = format!(r#"{{"k":"s.death","t":{{"player":"{name}","enemy":"Something"}}}}"#);
+            let picture = self.small(5);
+            self.send(Direction::Incoming, 67, B::default().i8(7).i8(0).str(&message).i32(picture));
+        }
+        if self.chance(2) {
+            self.send(Direction::Incoming, 67, B::default().i8(14).i8(0));
+        }
         self.my_pos.0 += 0.25;
+        if self.chance(4) {
+            self.my_pos.1 += 6.0; // a teleport: not walked
+        }
+    }
+
+    /// You die (DEATH).
+    fn die(&mut self) {
+        let b = B::default().str("account").ci(42).str("Pirate King").i32(0).ci(100).ci(0).ci(0).ci(0).str("");
+        self.send(Direction::Incoming, 46, b);
     }
 
     fn object(&mut self, kind: u16, id: i32, pos: (f32, f32), st: &[S]) -> Vec<u8> {
@@ -442,6 +496,14 @@ impl Fight {
         }
     }
 
+    fn new_room(&mut self) {
+        self.players.clear();
+        self.enemies.clear();
+        self.minions.clear();
+        self.enemy_bullets.clear();
+        self.setup();
+    }
+
     fn leave(&mut self) {
         let gone = self.players.remove(0);
         self.send(Direction::Incoming, 42, B::default().pos(self.my_pos).i8(0).ci(0).ci(0).ci(1).ci(gone));
@@ -467,7 +529,8 @@ pub fn fight(seed: u64) -> Session {
         f.tick(Vec::new());
     }
     let seed1 = f.rng.next() as i32;
-    f.map("Made-up Dungeon", seed1);
+    let first = f.pick(&["Made-up Dungeon", "Snake Pit", "Undead Lair"]);
+    f.map(first, first, seed1);
     f.setup();
     f.crucible();
     for r in 0..120 {
@@ -478,12 +541,18 @@ pub fn fight(seed: u64) -> Session {
         }
         if r == 80 {
             let seed2 = f.rng.next() as i32;
-            f.map("Second Room", seed2);
-            f.players.clear();
-            f.enemies.clear();
-            f.minions.clear();
-            f.enemy_bullets.clear();
-            f.setup();
+            let (name, display) =
+                f.pick(&[("Second Room", "Second Room"), ("Guild Hall", "{s.guildhall}"), ("Pirate Cave", "Pirate Cave")]);
+            f.map(name, display, seed2);
+            f.new_room();
+        }
+        if r == 100 && f.chance(50) {
+            f.die();
+        }
+        if r == 110 {
+            let seed3 = f.rng.next() as i32;
+            f.map("Nexus", "{s.nexus}", seed3);
+            f.new_room();
         }
     }
     write(&mut f.rng, &f.out, 3000)
