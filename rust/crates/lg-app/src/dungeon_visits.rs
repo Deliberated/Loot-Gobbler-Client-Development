@@ -3,7 +3,8 @@
 //! second, the quick slot items you used, your death, and a link to its run in the run history when you fought a
 //! boss.
 //!
-//! Not ported yet: Moonlight Village's lantern and phases (`MoonlightLog`), amulet saves (`AmuletSaves`).
+//! Moonlight Village's lantern and phases are kept here by [`crate::moonlight`]. Not ported yet: amulet saves
+//! (`AmuletSaves`).
 
 use crate::characters::{Char, Characters};
 use crate::dps_history::DpsHistory;
@@ -38,6 +39,24 @@ pub struct Exalt {
     pub after: i32,
 }
 
+/// One Moonlight Village phase: a dance (damage) or a lantern phase of one boss, named after its song. Times are ms
+/// after entering; `lantern_ms` how long the lantern was there, `range_ms` / `near_ms` how long of that you were
+/// within 3.5 / 1.75 tiles of it; `flames` what the phase scored; `beats` the song's beats you were in range.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MvPhase {
+    pub boss: i32,
+    pub title: String,
+    pub start_ms: i64,
+    pub duration_ms: i64,
+    pub lantern: bool,
+    pub lantern_ms: i64,
+    pub range_ms: i64,
+    pub near_ms: i64,
+    pub flames: i32,
+    pub beats: i32,
+    pub beats_max: i32,
+}
+
 /// A character's look in a visit.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Look {
@@ -69,6 +88,12 @@ pub struct Visit {
     pub max_hp: i32,
     /// The damage you dealt, per second after entering.
     pub dealt: Vec<i32>,
+    /// Moonlight Village: how long its lantern was there, and you within 3.5 / 1.75 tiles of it.
+    pub lantern_active_ms: i64,
+    pub lantern_range_ms: i64,
+    pub lantern_near_ms: i64,
+    /// Moonlight Village: its boss phases in order.
+    pub mv_phases: Vec<MvPhase>,
     /// The consumables you used from a quick slot, and when (ms after entering).
     pub quick_item: Vec<i32>,
     pub quick_time: Vec<i32>,
@@ -98,6 +123,10 @@ impl Visit {
             hit_enemy: Vec::new(),
             max_hp: 0,
             dealt: Vec::new(),
+            lantern_active_ms: 0,
+            lantern_range_ms: 0,
+            lantern_near_ms: 0,
+            mv_phases: Vec::new(),
             quick_item: Vec::new(),
             quick_time: Vec::new(),
             died_at: -1,
@@ -353,7 +382,7 @@ fn visit_line(v: &Visit) -> String {
     let q = |s: &str| lg_protocol::dump::to_string(&s.to_string());
     let look = v.look.as_ref().map_or("null".into(), |l| format!("{}/{}/{}/{}/{}", q(&l.player), l.class_type, l.skin, l.tex1, l.tex2));
     format!(
-        "{} start={} ms={} run={} late={} hidden={} exalts=[{}] hits={}/{}/{} maxHp={} dealt={} quick={}/{} died={}/{} moved={} judged={} victory={} look={}",
+        "{} start={} ms={} run={} late={} hidden={} exalts=[{}] hits={}/{}/{} maxHp={} dealt={} quick={}/{} died={}/{} moved={} judged={} victory={} look={} lantern={}/{}/{} phases=[{}]",
         q(&v.dungeon),
         v.start,
         v.duration_ms,
@@ -373,6 +402,27 @@ fn visit_line(v: &Visit) -> String {
         arr(&v.moved),
         v.judged,
         v.victory,
-        look
+        look,
+        v.lantern_active_ms,
+        v.lantern_range_ms,
+        v.lantern_near_ms,
+        v.mv_phases
+            .iter()
+            .map(|p| format!(
+                "{}/{}/{}/{}/{}/{}/{}/{}/{}/{}/{}",
+                p.boss,
+                q(&p.title),
+                p.start_ms,
+                p.duration_ms,
+                p.lantern,
+                p.lantern_ms,
+                p.range_ms,
+                p.near_ms,
+                p.flames,
+                p.beats,
+                p.beats_max
+            ))
+            .collect::<Vec<_>>()
+            .join(",")
     )
 }

@@ -32,17 +32,45 @@ pub const FED: &[u8] = &[101, 25, 30, 75, 90, 35, 103, 64, 62, 13, 46, 12, 42, 1
 pub enum Event {
     /// A map is left (Java `setNewRealm`, before `clear`): its fight data, as it was.
     Left(Box<fight::LeftMap>),
+    /// In Moonlight Village (Java calls `MoonlightLog` there): an object came into view, left it, or had its
+    /// condition sent (not yours: `condition` holds each condition stat of the status, as text and value).
+    MoonAdded {
+        id: i32,
+        object_type: i32,
+    },
+    MoonRemoved {
+        id: i32,
+    },
+    MoonConditions {
+        id: i32,
+        conditions: Vec<(String, i32)>,
+    },
     /// The map you are in was told by its enemies (Java `guessMap`): it is in `map` now.
     Guessed,
     /// A new map (Java `setNewRealm`): the vault or not, and its name as the app shows it (`LootEvents.mapName`).
-    Entered { vault: bool, map: String },
+    Entered {
+        vault: bool,
+        map: String,
+    },
     /// What the game sent of your character: on entering a map (every stat), and in ticks (only those that
     /// changed); `pack`: your backpack slots stat then (Java `LootEvents.playerStatus`).
-    PlayerStatus { char_id: i32, pack: Option<i32>, status: ObjectStatus, entering: bool },
+    PlayerStatus {
+        char_id: i32,
+        pack: Option<i32>,
+        status: ObjectStatus,
+        entering: bool,
+    },
     /// What the game sent of another object (Java `LootEvents.objectStatus`).
-    ObjectStatus { id: i32, status: ObjectStatus },
+    ObjectStatus {
+        id: i32,
+        status: ObjectStatus,
+    },
     /// A bag matched to who dropped it (Java `LootEvents.bagDropped`): the bag as it is now, your seasonal stat.
-    BagDropped { map: String, bag: Box<Entity>, seasonal: Option<bool> },
+    BagDropped {
+        map: String,
+        bag: Box<Entity>,
+        seasonal: Option<bool>,
+    },
 }
 
 /// Java threw here: the rest of the packet was not handled.
@@ -57,6 +85,7 @@ const MAP_SIZE: usize = 2048;
 const CRYSTALS: [i32; 4] = [46721, 46771, 29501, 33656];
 /// Different enemies of one dungeon needed to say you are in it (a boss alone is enough).
 const GUESS_VOTES: usize = 3;
+pub const MOONLIGHT_VILLAGE: &str = "Moonlight Village";
 /// Where your client said it moved lately: this many positions are kept.
 const OWN_POSITIONS: usize = 30;
 
@@ -411,6 +440,11 @@ impl World {
         self.entities.entry(id).or_insert_with(|| Entity::new(id))
     }
 
+    /// Java `MoonlightLog.inDungeon`.
+    pub fn in_moonlight(&self) -> bool {
+        self.map.as_ref().is_some_and(|m| m.name == MOONLIGHT_VILLAGE)
+    }
+
     /// Whether the map is unknown, as on starting inside one (or only guessed).
     fn map_unknown(&self) -> bool {
         self.map.is_none() || self.map_guessed
@@ -497,6 +531,20 @@ impl World {
             } else {
                 self.events.push(Event::ObjectStatus { id, status: status.clone() });
             }
+            if self.in_moonlight() && self.player != Some(id) {
+                let conditions: Vec<(String, i32)> = status
+                    .stats
+                    .iter()
+                    .filter(|s| s.stat_type_num == stats::CONDITION)
+                    .map(|s| match s.string_stat_value.as_deref() {
+                        Some(t) if !t.is_empty() => (format!("\"{t}\""), s.stat_value),
+                        _ => (s.stat_value.to_string(), s.stat_value),
+                    })
+                    .collect();
+                if !conditions.is_empty() {
+                    self.events.push(Event::MoonConditions { id, conditions });
+                }
+            }
         }
         self.loot_tick();
         Ok(())
@@ -511,10 +559,17 @@ impl World {
                 _ => return Err(Abort("tile outside the map array")),
             }
         }
+        let moon = self.in_moonlight();
         for o in &u.new_objects {
             self.entity_update(i32::from(o.object_type), &o.status)?;
+            if moon {
+                self.events.push(Event::MoonAdded { id: o.status.object_id, object_type: i32::from(o.object_type) });
+            }
         }
         for &id in &u.drops {
+            if moon {
+                self.events.push(Event::MoonRemoved { id });
+            }
             self.crystals.remove(&id);
             self.dropped.insert(id);
             self.damage.minion_owner.remove(&id);

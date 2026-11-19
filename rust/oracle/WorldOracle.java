@@ -297,6 +297,20 @@ final class WorldOracle {
         exalts(b);
         dps(b);
         visits(b);
+        moonlight(b);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void moonlight(StringBuilder b) throws ReflectiveOperationException {
+        lootgobbler.MoonlightLog m = lootgobbler.MoonlightLog.get();
+        List<String> tracked = new ArrayList<>();
+        for (Map.Entry<Integer, String> e : ((Map<Integer, String>) get(m, "tracked")).entrySet()) tracked.add(e.getKey() + ":" + quote(e.getValue()));
+        java.util.Collections.sort(tracked);
+        b.append("moonlight active=").append(get(m, "active")).append(" tracked=[").append(String.join(",", tracked))
+                .append("] lanterns=").append(ids((Collection<?>) get(m, "lanterns")).replace(" ", "")).append(" flames=")
+                .append(((Collection<?>) get(m, "flames")).size()).append(" tick=").append(get(m, "lastTick"))
+                .append(" phase=").append(get(m, "phase") != null).append('/').append(get(m, "phaseOpen"))
+                .append(" boss=").append(get(m, "currentBoss")).append('\n');
     }
 
     @SuppressWarnings("unchecked")
@@ -355,6 +369,17 @@ final class WorldOracle {
         return String.join(",", l);
     }
 
+    private static String phases(lootgobbler.DungeonVisits.Visit v) {
+        List<String> l = new ArrayList<>();
+        if (v.mvPhases != null) {
+            for (lootgobbler.DungeonVisits.MvPhase p : v.mvPhases) {
+                l.add(p.boss + "/" + quote(p.title) + "/" + p.startMs + "/" + p.durationMs + "/" + p.lantern + "/" + p.lanternMs + "/"
+                        + p.rangeMs + "/" + p.nearMs + "/" + p.flames + "/" + p.beats + "/" + p.beatsMax);
+            }
+        }
+        return String.join(",", l);
+    }
+
     private static String visit(lootgobbler.DungeonVisits.Visit v) {
         lootgobbler.DungeonVisits.Look l = v.look;
         return quote(v.dungeon) + " start=" + v.start + " ms=" + v.durationMs + " run=" + v.runStart + " late=" + v.late
@@ -362,7 +387,8 @@ final class WorldOracle {
                 + " maxHp=" + v.maxHp + " dealt=" + arr(v.dealt) + " quick=" + arr(v.quickItem) + "/" + arr(v.quickTime)
                 + " died=" + v.diedAt + "/" + (v.killedBy == null ? "null" : quote(v.killedBy)) + " moved=" + arr(v.moved)
                 + " judged=" + v.judged + " victory=" + v.victory + " look="
-                + (l == null ? "null" : quote(l.player) + "/" + l.classType + "/" + l.skin + "/" + l.tex1 + "/" + l.tex2);
+                + (l == null ? "null" : quote(l.player) + "/" + l.classType + "/" + l.skin + "/" + l.tex1 + "/" + l.tex2)
+                + " lantern=" + v.lanternActiveMs + "/" + v.lanternRangeMs + "/" + v.lanternNearMs + " phases=[" + phases(v) + "]";
     }
 
     @SuppressWarnings("unchecked")

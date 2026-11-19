@@ -119,12 +119,20 @@ struct Fight {
     bags_due: Vec<(f32, f32)>,
     /// Exaltation progress per class, as the game last sent it (starting as `oracle/seed/exalts.json` has it).
     exalts: Vec<(i16, [i32; 8])>,
+    /// In Moonlight Village: its lantern's id (it moves, and now and then is replaced).
+    moon: Option<i32>,
 }
 
 /// Skins: none, two of the game's, one an ability turns you into (Evolutionary Boar...).
 const SKINS: [i32; 4] = [0, 312, 7467, 884];
 /// Dye values: none, a clothing and an accessory dye (their textures by the game data), a texture itself.
 const TEXTURES: [i32; 4] = [0, 0x1000, 0x1100, 0x0100_0005];
+/// Moonlight Village: its lantern, its flames (the score), its four bosses, their conditions while active.
+const MOON_LANTERN: u16 = 20454;
+const MOON_FLAME: u16 = 20518;
+const MOON_BOSSES: [u16; 4] = [20450, 20451, 20452, 20493];
+const DANCING: i32 = 67_108_864;
+const LANTERN_UP: i32 = 16_777_216;
 /// What your quick slots hold.
 const QUICK: [i32; 2] = [2594, 2595];
 /// The names the death notifications tell (one never in view).
@@ -513,6 +521,72 @@ impl Fight {
         }
     }
 
+    /// Moonlight Village's lantern and its four bosses come into view.
+    fn moonlight(&mut self) {
+        let lantern = 6000;
+        self.moon = Some(lantern);
+        let mut objects = vec![self.object(MOON_LANTERN, lantern, (self.my_pos.0 + 1.0, self.my_pos.1), &[])];
+        for (k, t) in MOON_BOSSES.iter().enumerate() {
+            objects.push(self.object(*t, 6001 + k as i32, (20.0, 20.0 + k as f32), &[S::N(0, 9000), S::N(1, 9000), S::N(29, 0)]));
+        }
+        let mut b = B::default().pos(self.my_pos).i8(0).ci(0).ci(objects.len() as i32);
+        for o in &objects {
+            b = b.raw(o);
+        }
+        self.send(Direction::Incoming, 42, b.ci(0));
+    }
+
+    /// Its phases: song bars and their beats, the bosses turning active and idle, the lantern moving (and being
+    /// replaced), flames scoring a phase.
+    fn moon_round(&mut self) {
+        let Some(lantern) = self.moon else { return };
+        if self.chance(10) {
+            let title = self.pick(&["Tutorial Song", "Song of the Sage", "Moonlit Drums", "Umi's Lullaby"]);
+            self.send(Direction::Incoming, 67, B::default().i8(11).i8(42).str(title).i32(16).i16(0));
+        }
+        if self.chance(25) {
+            let max = self.pick(&[0, 8, 16]);
+            let at = self.small(16) as i16;
+            self.send(Direction::Incoming, 67, B::default().i8(11).i8(40).i32(max).i16(at));
+        }
+        let mut changes = Vec::new();
+        if self.chance(12) {
+            let k = self.small(4);
+            let cond = self.pick(&[0, DANCING, LANTERN_UP, LANTERN_UP | 0x100_0000, DANCING | 0x8, 0]);
+            changes.push(status(6001 + k, (20.0, 20.0), &[S::N(29, cond)]));
+        }
+        if self.chance(30) {
+            let near = self.pick(&[0.5f32, 1.5, 3.0, 6.0]);
+            changes.push(status(lantern, (self.my_pos.0 + near, self.my_pos.1), &[]));
+        }
+        if !changes.is_empty() {
+            self.tick(changes);
+        }
+        let mut new_objects = Vec::new();
+        let mut drops = Vec::new();
+        if self.chance(5) {
+            self.next_id += 1;
+            new_objects.push(self.object(MOON_FLAME, self.next_id, (20.0, 25.0), &[]));
+        }
+        if self.chance(3) {
+            drops.push(lantern);
+            self.next_id += 1;
+            self.moon = Some(self.next_id);
+            new_objects.push(self.object(MOON_LANTERN, self.next_id, (self.my_pos.0 + 2.0, self.my_pos.1), &[]));
+        }
+        if !new_objects.is_empty() || !drops.is_empty() {
+            let mut b = B::default().pos(self.my_pos).i8(0).ci(0).ci(new_objects.len() as i32);
+            for o in &new_objects {
+                b = b.raw(o);
+            }
+            b = b.ci(drops.len() as i32);
+            for d in drops {
+                b = b.ci(d);
+            }
+            self.send(Direction::Incoming, 42, b);
+        }
+    }
+
     fn new_room(&mut self) {
         self.players.clear();
         self.enemies.clear();
@@ -542,22 +616,28 @@ pub fn fight(seed: u64) -> Session {
         next_id: 5000,
         bags_due: Vec::new(),
         exalts: vec![(768, [4, 14, 29, 49, 74, 0, 3, 10]), (775, [0; 8]), (799, [1; 8])],
+        moon: None,
     };
     for _ in 0..3 {
         f.tick(Vec::new());
     }
     let seed1 = f.rng.next() as i32;
-    let first = f.pick(&["Made-up Dungeon", "Snake Pit", "Undead Lair"]);
+    let first = f.pick(&["Made-up Dungeon", "Snake Pit", "Undead Lair", "Moonlight Village"]);
     f.map(first, first, seed1);
     f.setup();
+    if first == "Moonlight Village" {
+        f.moonlight();
+    }
     f.crucible();
     for r in 0..120 {
         f.round();
         f.loot();
+        f.moon_round();
         if r == 60 {
             f.leave();
         }
         if r == 80 {
+            f.moon = None;
             let seed2 = f.rng.next() as i32;
             let (name, display) =
                 f.pick(&[("Second Room", "Second Room"), ("Guild Hall", "{s.guildhall}"), ("Pirate Cave", "Pirate Cave")]);

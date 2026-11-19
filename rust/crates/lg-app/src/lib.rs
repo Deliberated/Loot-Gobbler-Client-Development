@@ -13,6 +13,7 @@ pub mod holdings;
 pub mod item_use;
 pub mod localtime;
 pub mod loot_events;
+pub mod moonlight;
 pub mod profile;
 pub mod tinkerer;
 pub mod upe;
@@ -43,6 +44,7 @@ pub struct App {
     pub dps_history: dps_history::DpsHistory,
     pub dungeon_visits: dungeon_visits::DungeonVisits,
     pub exalts: exalt_store::ExaltStore,
+    pub moonlight: moonlight::Moonlight,
     /// Tomato's exaltation progress per class (`RealmCharacter.exalts`): from the login's fetch (not ported yet),
     /// then from the game's exaltation packets.
     pub realm_exalts: std::collections::HashMap<i32, Vec<i32>>,
@@ -93,6 +95,7 @@ impl App {
             dps_history: dps_history::DpsHistory::default(),
             dungeon_visits: dungeon_visits::DungeonVisits::default(),
             exalts,
+            moonlight: moonlight::Moonlight::default(),
             realm_exalts: std::collections::HashMap::new(),
             zone: localtime::Zone::system(),
         }
@@ -152,6 +155,7 @@ impl App {
                 let f = self.world.fight();
                 self.dps_history.live_tick(&f, now);
                 self.dungeon_visits.hits(&f, &self.characters, false, now);
+                self.moonlight.tick(&self.world, &mut self.dungeon_visits, now);
                 let me = self.world.me().cloned();
                 let mut r = records!(self, &time, me.is_some());
                 self.loot_events.inventory_tick(&mut r, me.as_ref());
@@ -284,9 +288,11 @@ impl App {
                 self.events(now);
                 self.exalt_update(x, now);
             }
+            // TomatoData.notification: MoonlightLog first, then DungeonVisits (the world keeps the deaths)
             Decoded::Notification(n) => {
                 self.world.packet(p)?;
                 self.events(now);
+                self.moonlight.notification(&self.world, &mut self.dungeon_visits, n, now);
                 if n.effect == lg_protocol::packets::NotificationEffect::Victory {
                     self.dungeon_visits.victory();
                 }
@@ -339,10 +345,19 @@ impl App {
                 Event::Guessed => {
                     let (data, m) = (self.world.data(), self.world.map.as_ref());
                     self.dungeon_visits.entered_late(data, m, &self.characters, &self.dps_history, now);
+                    let name = m.map_or(String::new(), |m| m.name.clone());
+                    self.moonlight.entered(&name);
+                }
+                Event::MoonAdded { id, object_type } => self.moonlight.added(&self.world, &mut self.dungeon_visits, id, object_type, now),
+                Event::MoonRemoved { id } => self.moonlight.removed(id),
+                Event::MoonConditions { id, conditions } => {
+                    self.moonlight.conditions(&self.world, &mut self.dungeon_visits, id, &conditions, now)
                 }
                 Event::Entered { vault, map } => {
                     let (data, m) = (self.world.data(), self.world.map.as_ref());
                     self.dungeon_visits.entered(data, m, &self.characters, &self.dps_history, now);
+                    let name = m.map_or(String::new(), |m| m.name.clone());
+                    self.moonlight.entered(&name);
                     let r = records!(self, &time);
                     r.holdings.entered(&r.ctx, vault);
                     self.upe.in_vault(vault);
@@ -379,6 +394,7 @@ impl App {
         s.push_str(&self.exalts.dump());
         s.push_str(&self.dps_history.dump());
         s.push_str(&self.dungeon_visits.dump());
+        s.push_str(&self.moonlight.dump());
         s
     }
 }
