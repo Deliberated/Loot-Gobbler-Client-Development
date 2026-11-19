@@ -10,6 +10,7 @@ pub mod collection;
 pub mod dps_history;
 pub mod dungeon_visits;
 pub mod exalt_store;
+pub mod friends;
 pub mod holdings;
 pub mod item_cooldowns;
 pub mod item_use;
@@ -52,6 +53,7 @@ pub struct App {
     pub cooldowns: item_cooldowns::ItemCooldowns,
     pub vitals: item_cooldowns::Vitals,
     pub pets: pet_store::PetStore,
+    pub friends: friends::Friends,
     /// Tomato's exaltation progress per class (`RealmCharacter.exalts`): from the login's fetch (not ported yet),
     /// then from the game's exaltation packets.
     pub realm_exalts: std::collections::HashMap<i32, Vec<i32>>,
@@ -85,7 +87,7 @@ impl App {
     }
 
     /// The same, taking over what the Java app kept in its folder (only read, never changed): so far the exalts,
-    /// the amulet saves and the pets.
+    /// the amulet saves, the pets and the friends.
     pub fn importing(world: World, now: i64, java_data: Option<&std::path::Path>) -> App {
         let exalts = java_data.map(exalt_store::ExaltStore::import).unwrap_or_default();
         let amulet_saves = java_data.map(amulet_saves::AmuletSaves::import).unwrap_or_default();
@@ -109,6 +111,7 @@ impl App {
             cooldowns: item_cooldowns::ItemCooldowns::new(),
             vitals: item_cooldowns::Vitals::default(),
             pets: java_data.map(pet_store::PetStore::import).unwrap_or_default(),
+            friends: java_data.map(friends::Friends::import).unwrap_or_default(),
             realm_exalts: std::collections::HashMap::new(),
             zone: localtime::Zone::system(),
         }
