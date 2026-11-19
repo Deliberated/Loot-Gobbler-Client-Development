@@ -35,7 +35,7 @@ fn full_stats() -> Vec<Stat> {
         )
         // what the security panel shows: equipment, level, skin
         .chain((INVENTORY_0..INVENTORY_0 + 4).map(|t| stat(t, -1)))
-        .chain([stat(LEVEL, 20), stat(SKIN_ID, 0)])
+        .chain([stat(LEVEL, 20), stat(SKIN_ID, 0), stat(EXALTATION_BONUS_DAMAGE, 1000)])
         .collect()
 }
 

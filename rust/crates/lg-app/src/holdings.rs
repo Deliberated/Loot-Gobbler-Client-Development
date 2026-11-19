@@ -100,6 +100,16 @@ struct Move {
     at: i64,
 }
 
+/// A vault seen anew, for the UPE rules: what it held at the last look and now.
+#[derive(Debug, Clone)]
+pub struct VaultChange {
+    pub key: String,
+    pub before_at: i64,
+    pub before: Vec<Slot>,
+    pub now_at: i64,
+    pub now: Vec<Slot>,
+}
+
 /// A character as Holdings needs it: alive, seasonal, its slots.
 pub struct Living {
     pub char_id: i32,
@@ -125,8 +135,8 @@ pub struct Holdings {
     pub journal: Vec<String>,
     seeded: bool,
     pub dirty: bool,
-    /// A vault visit replaced a vault: (key, before, now) for the UPE rules (not ported yet).
-    pub vault_changes: Vec<(String, Vec<Slot>, Vec<Slot>)>,
+    /// A vault visit replaced a vault, for the UPE rules: (key, seen before, slots before, seen now, slots now).
+    pub vault_changes: Vec<VaultChange>,
 }
 
 /// What the holdings need to know of the world around them.
@@ -533,7 +543,13 @@ impl Holdings {
             && (key == VAULT || key == SEASONAL_VAULT)
         {
             let all = |p: &Place| p.sections.iter().flat_map(|(_, s)| s.iter().filter(|s| !s.empty()).cloned()).collect::<Vec<_>>();
-            self.vault_changes.push((key.to_string(), all(b), all(&now)));
+            self.vault_changes.push(VaultChange {
+                key: key.to_string(),
+                before_at: b.seen_at,
+                before: all(b),
+                now_at: now.seen_at,
+                now: all(&now),
+            });
         }
         let (was, is) = (collectibles(c, before.as_ref()), collectibles(c, Some(&now)));
         let ids: HashSet<i32> = was.keys().chain(is.keys()).copied().collect();

@@ -137,6 +137,19 @@ final class WorldOracle {
         if (packet instanceof MapInfoPacket) full("after " + name, state);
     }
 
+    /** A packet unknown to the packet table, as PacketProcessor hands it to the app (PacketDebug.problem). */
+    void raw(String direction, int type, int size, byte[] data) {
+        String problem = "";
+        try {
+            lootgobbler.PacketDebug.problem(type, size, data, "unknown id");
+        } catch (Throwable e) {
+            problem = " exception";
+        }
+        CRC32 crc = new CRC32();
+        crc.update(state().getBytes(StandardCharsets.UTF_8));
+        out.printf("%s %d %s %08x%s%n", direction, type, "UNKNOWN", crc.getValue(), problem);
+    }
+
     void end() {
         full("end", state());
     }
@@ -274,6 +287,42 @@ final class WorldOracle {
                 .append(" exalts=").append(p.exaltChanges == null ? "null" : String.valueOf(p.exaltChanges.size())).append('\n');
         collection(b);
         holdings(b);
+        upe(b);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void upe(StringBuilder b) throws ReflectiveOperationException {
+        lootgobbler.Upe u = lootgobbler.Upe.get();
+        Object state = get(u, "state");
+        b.append("upe forged=").append(get(u, "forgedAt")).append('/').append(get(u, "forgedOrigin"))
+                .append(" traded=").append(get(u, "tradedAt")).append(" reward=").append(get(u, "rewardAt"))
+                .append(" quest=").append(get(u, "questAt")).append('/').append(get(u, "questOrigin"))
+                .append(" vaultmap=").append(get(u, "inVaultMap")).append(" where=").append(quote((String) get(u, "where")))
+                .append(" pending=").append(((List<?>) get(u, "pending")).size()).append(" left=").append(((List<?>) get(state, "left")).size())
+                .append(" missions=").append(((Map<?, ?>) get(state, "missions")).size()).append('\n');
+        for (lootgobbler.Upe.Run r : new TreeMap<>((Map<Integer, lootgobbler.Upe.Run>) get(state, "runs")).values()) {
+            List<String> notes = new ArrayList<>();
+            for (String n : r.notes) notes.add(quote(n));
+            List<String> ench = new ArrayList<>();
+            for (int[] e : r.enchants) ench.add(arr(e));
+            List<String> allowed = new ArrayList<>();
+            for (int[] a : r.allowed) allowed.add(arr(a));
+            List<String> gathered = new ArrayList<>();
+            for (lootgobbler.Upe.Gathered g : r.gathered) gathered.add(g.item + "/" + arr(g.enchants) + "/" + g.at + "/" + g.how + "/" + quote(g.where));
+            List<String> trades = new ArrayList<>();
+            for (lootgobbler.Upe.Trade t : r.trades) trades.add(t.at + "/" + quote(t.partner) + "/" + t.gave.size() + "/" + t.got.size() + "/" + t.status);
+            b.append("run ").append(r.charId).append(" mode=").append(r.mode).append(" fresh=").append(r.fresh)
+                    .append(" marked=").append(r.marked).append('@').append(r.markedAt)
+                    .append(" broken=").append(r.broken == null ? "null" : quote(r.broken)).append('@').append(r.brokenAt)
+                    .append(" notes=").append(String.join("|", notes)).append(" seen=").append(r.lastSeen)
+                    .append(" items=").append(arr(r.items)).append(" ench=[").append(String.join(",", ench)).append(']')
+                    .append(" origin=[").append(String.join(",", r.origin)).append(']')
+                    .append(" since=").append(java.util.Arrays.toString(r.since)).append(" lvl=").append(r.level)
+                    .append(" base=").append(arr(r.baseStats)).append(" allowed=").append(String.join(";", allowed))
+                    .append(" gathered=[").append(String.join(",", gathered)).append("] locked=").append(r.guildLocked)
+                    .append(" trades=[").append(String.join(",", trades)).append("] t0=").append(r.t0Start)
+                    .append(" pet=").append(r.pet).append(" nopet=").append(r.noPet).append('\n');
+        }
     }
 
     private static String ints(java.util.List<Integer> l) {

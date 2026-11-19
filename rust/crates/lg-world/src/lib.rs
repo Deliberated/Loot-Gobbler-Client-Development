@@ -524,6 +524,15 @@ impl World {
                 let pack = e.value(stats::BACKPACK_SLOTS);
                 self.player = Some(id);
                 self.events.push(Event::PlayerStatus { char_id, pack, status: status.clone(), entering: true });
+                // Java MyInfoGUI.updatePlayer: with your dexterity sent, it reads attack, wisdom, the exaltation
+                // bonus and the four equipment slots, throwing while one is missing
+                let me = &self.entities[&id];
+                if me.stat(stats::DEXTERITY).is_some() {
+                    let needed = [stats::ATTACK, stats::WISDOM, stats::EXALTATION_BONUS_DAMAGE, 8, 9, 10, 11];
+                    if needed.iter().any(|t| me.stat(*t).is_none()) {
+                        return Err(Abort("your character shown without all its stats"));
+                    }
+                }
             } else {
                 e.set_player()?;
             }

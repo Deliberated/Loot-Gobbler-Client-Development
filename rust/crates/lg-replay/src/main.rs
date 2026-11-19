@@ -10,6 +10,7 @@
 //!                                       with Java (oracle/compare.sh): a checksum, the whole state on map changes
 //!   lg-replay synth <out.pcap> [seed]   writes a made-up session, for testing without a recording
 //!   lg-replay synth-fight <out.pcap> [seed]   writes a made-up fight, for testing the damage logic
+//!   lg-replay synth-items <out.pcap> [seed]   writes a made-up session with items (vault, moves, forge, trades...)
 //!   lg-replay live [--all] [--world <assets>]
 //!                                       the game packets of a live capture piped in, as they happen:
 //!                                       sudo tcpdump -i any -U -w - 'tcp port 2050' | lg-replay live
@@ -43,6 +44,16 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
             eprintln!("{out}: a made-up fight, {} packets in, {} out (seed {seed})", s.incoming.len(), s.outgoing.len());
+            ExitCode::SUCCESS
+        }
+        [cmd, out, rest @ ..] if cmd == "synth-items" => {
+            let seed = rest.first().and_then(|s| s.parse().ok()).unwrap_or(1);
+            let s = lg_replay::items::items(seed);
+            if let Err(e) = std::fs::write(out, &s.pcap) {
+                eprintln!("cannot write {out}: {e}");
+                return ExitCode::FAILURE;
+            }
+            eprintln!("{out}: a made-up session with items, {} packets in, {} out (seed {seed})", s.incoming.len(), s.outgoing.len());
             ExitCode::SUCCESS
         }
         [cmd, dir] if cmd == "gamedata" => gamedata(std::path::Path::new(dir)),
@@ -328,6 +339,21 @@ fn world(file: &str, assets: &std::path::Path) -> ExitCode {
     };
     for item in &r.items {
         let Item::Packet { packet, micros } = item else { continue };
+        if lg_app::RAW.contains(&packet.id) {
+            w.raw(packet.id, &packet.body, (*micros / 1000) as i64);
+            let state = w.dump();
+            line(
+                &mut out,
+                format_args!(
+                    "{} {} {} {:08x}",
+                    packet.direction.short(),
+                    packet.id,
+                    packet.name(),
+                    lg_protocol::dump::crc32(state.as_bytes())
+                ),
+            );
+            continue;
+        }
         if !lg_app::FED.contains(&packet.id) {
             continue;
         }

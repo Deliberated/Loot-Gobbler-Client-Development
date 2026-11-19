@@ -15,6 +15,7 @@ work with the current Loot Gobbler server and its data as they are.
 | `lg-protocol` | RC4, cutting the stream into packets, finding the cipher's position from tick packets, the packet type table, decoders for the 45 packet types the app reads | `PacketConstructor`, `ROTMGPacketConstructor`, `RC4`, `TickAligner`, `RC4Aligner`, `PacketType`, `BufferReader`, `packets.incoming.*`, `packets.outgoing.*`, `packets.data.*` |
 | `lg-gamedata` | the game data the app extracts from the game: objects, tiles, character classes, loot bags, abilities scaling with a stat, enchantments, dungeon portals and modifiers, the enemies of each dungeon | `IdToAsset`, `CharacterClass`, `LootBags`, `AbilityScalingManager`, `ParseEnchants`, `ParseDungeon`, `GameFileEnemies` |
 | `lg-world` | the world as the packets tell it: the map, every object in view and its stats, which one is you (also when the sniffer starts inside a map), players, loot bags; damage: your shots rolled with the map's seed, hits, damage per player, damage you take, boss phases, crucible bonuses; loot: which enemy (or boss, by its last words) dropped which bag, and per dungeon what you hit and what dropped | the core of `TomatoData` and `Entity`, `Projectile`, `Damage`, `RNG`, `CrucibleBonusManager`, `LootAttributionManager`, `DungeonStatData` |
+| `lg-app` | Loot Gobbler's own records, built from the world in the order the Java app's listeners run: characters, profile, collection, holdings and their journal, the game mode (UPE) rules, items forged, fed, dropped and used up, the Tinkerer's quests | `CharacterStore`, `PlayerProfile`, `CollectionStore`, `Holdings`, `LootEvents`, `Upe`, `ItemUse`, `TinkererQuests` |
 | `lg-replay` | the command-line tool below, and made-up sessions for tests | - |
 
 Where it differs from Java on purpose (each one is a bug in Java):
@@ -66,6 +67,12 @@ them), and tick by tick shots, hits, the server's shots, damage, enemy shots hit
 conditions coming and going, a crucible, a player leaving mid-fight, enemies dying and bags dropping, bosses' last
 words, a second map. With the app's assets folder its
 weapons, abilities and enchantments are real ones.
+
+The world comparison covers the app's records as well (after every packet, everything they hold). For those, Java
+runs on the recording's clock: `oracle/ClockAgent.java`, a Java agent, rewrites the app's own clock calls to the
+capture time of the frame being handled (the Java sources stay untouched; it needs Java 24 or newer). So the app's
+"every 5 s", last-played times and find times compare to the millisecond. `lg-replay synth-items` writes a made-up
+session about items for this: vault visits, moves in the vault, bags, potions, forging, trades, quests, purchases.
 
 The assets folder is the one the app extracts the game data into, next to its other files. It is only read, and the
 game's files never go into the repository.

@@ -7,9 +7,12 @@
 pub mod characters;
 pub mod collection;
 pub mod holdings;
+pub mod item_use;
 pub mod localtime;
 pub mod loot_events;
 pub mod profile;
+pub mod tinkerer;
+pub mod upe;
 
 use lg_protocol::packets::Decoded;
 use lg_world::{Abort, Event, World};
@@ -21,6 +24,9 @@ pub const FED: &[u8] = &[
     172, 149, 150, 115, 86, 36, 14, 58, 96,
 ];
 
+/// Packets unknown to the packet table the app still reads, raw (Java: `PacketDebug.problem` -> `ItemUse.raw`).
+pub const RAW: &[u8] = &[item_use::USE_REQUEST, item_use::USE_RESULT];
+
 pub struct App {
     pub world: World,
     pub characters: characters::Characters,
@@ -28,10 +34,13 @@ pub struct App {
     pub collection: collection::Collection,
     pub holdings: holdings::Holdings,
     pub loot_events: loot_events::LootEvents,
+    pub upe: upe::Upe,
+    pub item_use: item_use::ItemUse,
+    pub tinkerer: tinkerer::Tinkerer,
     pub zone: localtime::Zone,
 }
 
-/// Borrows what LootEvents writes into, seeding the holdings on their first use as Java's `Holdings.get()` does.
+/// Borrows what LootEvents writes into; seeding the holdings on their first use, as Java's `Holdings.get()` does.
 macro_rules! records {
     ($app:ident, $time:expr) => {
         records!($app, $time, true)
@@ -43,6 +52,12 @@ macro_rules! records {
         }
         loot_events::Records { ctx, characters: &$app.characters, collection: &mut $app.collection, holdings: &mut $app.holdings }
     }};
+}
+
+macro_rules! upe_ctx {
+    ($app:ident) => {
+        upe::Ctx { data: $app.world.data(), zone: &$app.zone, now: $app.world.now() }
+    };
 }
 
 impl App {
@@ -57,22 +72,54 @@ impl App {
             collection: collection::Collection::default(),
             holdings: holdings::Holdings::default(),
             loot_events: loot_events::LootEvents::default(),
+            upe: upe::Upe::default(),
+            item_use: item_use::ItemUse::default(),
+            tinkerer: tinkerer::Tinkerer::default(),
             zone: localtime::Zone::system(),
         }
+    }
+
+    fn playing(&self) -> i32 {
+        self.characters.playing().map_or(0, |c| c.char_id)
     }
 
     /// One packet captured at `now` (ms since 1970).
     pub fn packet(&mut self, p: &Decoded, now: i64) -> Result<(), Abort> {
         self.world.set_time(now);
         let r = self.handle(p, now);
-        if !r.is_ok() {
+        if r.is_err() {
             self.events(now);
         }
+        self.after(now);
+        r
+    }
+
+    /// A packet the packet table doesn't know (Java hands 195 and 196 to `ItemUse.raw`).
+    pub fn raw(&mut self, id: u8, body: &[u8], now: i64) {
+        self.world.set_time(now);
+        let time = self.zone.local_date_time(now);
+        let playing = self.playing();
+        let c = upe_ctx!(self);
+        self.item_use.raw(&c, &self.loot_events, &mut self.collection, &mut self.upe, playing, id, body, &time);
+        self.after(now);
+    }
+
+    /// What the records' listeners do after a change (Java: the UPE rules hear of vault changes as they happen, the
+    /// profile counts the ST sets on a thread of its own).
+    fn after(&mut self, now: i64) {
+        self.vault_changes();
         if std::mem::take(&mut self.collection.changed) {
             let sets = &self.world.data().st_sets;
             self.profile.count_st_sets(sets, &self.collection, &self.zone, now);
         }
-        r
+    }
+
+    fn vault_changes(&mut self) {
+        let c = upe_ctx!(self);
+        for v in std::mem::take(&mut self.holdings.vault_changes) {
+            let held = |v: Vec<holdings::Slot>| v.into_iter().map(|s| (s.item, s.enchant_ids)).collect::<Vec<_>>();
+            self.upe.vault_changed(&c, &v.key, v.before_at, &held(v.before), v.now_at, &held(v.now));
+        }
     }
 
     fn handle(&mut self, p: &Decoded, now: i64) -> Result<(), Abort> {
@@ -85,7 +132,12 @@ impl App {
                 let me = self.world.me().cloned();
                 let mut r = records!(self, &time, me.is_some());
                 self.loot_events.inventory_tick(&mut r, me.as_ref());
-                self.characters.live(&self.world, now, &mut self.profile)?;
+                self.vault_changes();
+                let look = self.characters.live(&self.world, now, &mut self.profile)?;
+                if let Some(l) = look {
+                    let c = upe_ctx!(self);
+                    self.upe.seen(&c, l.char_id, l.level, &l.slots, l.enchants.as_ref(), l.base, l.first);
+                }
                 self.world.after_tick();
             }
             // TomatoData.vaultPacketUpdate: LootEvents first
@@ -93,29 +145,52 @@ impl App {
                 let me = self.world.me().cloned();
                 let mut r = records!(self, &time);
                 self.loot_events.vault_packet(&mut r, v, me.as_ref());
+                self.vault_changes();
                 self.world.packet(p)?;
                 self.events(now);
             }
             Decoded::InvSwap(s) => {
                 self.world.packet(p)?;
                 self.events(now);
-                let (pid, cid) = self.world.me().map_or((0, 0), |m| (m.id, m.char_id));
-                let r = records!(self, &time);
-                let (f, t) = (&s.slot_from, &s.slot_to);
-                r.holdings.swap(now, pid, cid, (f.object_id, f.slot_id, f.object_type), (t.object_id, t.slot_id, t.object_type));
+                let me = self.world.me().cloned();
+                let mut r = records!(self, &time);
+                self.loot_events.inv_swap(&mut r, s, me.as_ref());
             }
             Decoded::InvResult(s) => {
                 self.world.packet(p)?;
                 self.events(now);
-                let r = records!(self, &time);
-                let (f, t) = (&s.slot_from, &s.slot_to);
-                r.holdings.swap_result(
-                    &r.ctx,
-                    s.result,
-                    s.result_type,
-                    (f.object_id, f.slot_id, f.object_type),
-                    (t.object_id, t.slot_id, t.object_type),
-                );
+                let c = upe::Ctx { data: self.world.data(), zone: &self.zone, now };
+                let mut r = loot_events::Records {
+                    ctx: holdings::Ctx { data: self.world.data(), now, time: &time },
+                    characters: &self.characters,
+                    collection: &mut self.collection,
+                    holdings: &mut self.holdings,
+                };
+                r.holdings.seed_once(&r.ctx, &self.characters.living());
+                self.loot_events.inv_result(&mut r, &mut self.upe, &c, &self.world, s);
+            }
+            // TomatoPacketCapture: the world, DungeonVisits (not ported yet), LootEvents for the UPE rules
+            Decoded::UseItem(u) => {
+                self.world.packet(p)?;
+                self.events(now);
+                let me = self.world.me().cloned();
+                // Java looks the container up (Holdings.get()) only for an item used from something else than you
+                let lookup = me.as_ref().is_some_and(|m| u.slot_object.object_id != m.id);
+                let c = upe::Ctx { data: self.world.data(), zone: &self.zone, now };
+                let r = records!(self, &time, lookup);
+                self.loot_events.item_used(&r, &mut self.upe, &c, me.as_ref(), u);
+            }
+            Decoded::TradeDone(t) => {
+                self.world.packet(p)?;
+                self.events(now);
+                if t.code == Some(lg_protocol::packets::TradeResult::Successful)
+                    && let Some(me) = self.world.me()
+                {
+                    let name = self.world.display_name(me)?;
+                    let cid = me.char_id;
+                    let c = upe_ctx!(self);
+                    self.upe.traded(&c, cid, name.as_deref());
+                }
             }
             // the world (DungeonVisits.died, not ported yet), then CharacterStore's listener
             Decoded::Death(d) => {
@@ -123,6 +198,53 @@ impl App {
                 self.events(now);
                 self.characters.died(d.char_id, now);
             }
+            Decoded::QuestFetchResponse(q) => {
+                self.world.packet(p)?;
+                self.events(now);
+                self.tinkerer.received(&q.quests, now);
+            }
+            // ItemUse's listeners
+            Decoded::ForgeRequest(f) => {
+                let playing = self.playing();
+                self.item_use.forge_request(self.world.data(), &self.loot_events, &mut self.upe, playing, f);
+            }
+            Decoded::ForgeResult(f) => {
+                let playing = self.playing();
+                let c = upe_ctx!(self);
+                self.item_use.forge_result(&c, &mut self.collection, &mut self.upe, playing, f, &time);
+            }
+            Decoded::PetUpgradeRequest(f) => {
+                self.item_use.pet_upgrade(self.world.data(), &self.loot_events, &mut self.collection, f, now, &time);
+            }
+            Decoded::InvDrop(f) => {
+                self.item_use.dropped(self.world.data(), &self.loot_events, &mut self.collection, f, now, &time);
+            }
+            Decoded::BuyResult(b) => {
+                if b.result == 0 {
+                    self.upe.rewarded(now);
+                }
+            }
+            Decoded::ClaimDailyRewardResponse(_)
+            | Decoded::ChestRewardResult(_)
+            | Decoded::ClaimBattlePassItem(_)
+            | Decoded::ClaimBpMilestoneResult(_)
+            | Decoded::RedeemExaltationReward(_) => self.upe.rewarded(now),
+            Decoded::TradeStart(t) => loot_events::LootEvents::trade_start(&mut self.upe, t),
+            Decoded::AcceptTrade(a) => self.upe.trade_offers(&a.client_offer, &a.partner_offer),
+            Decoded::TradeAccepted(a) => self.upe.trade_offers(&a.client_offer, &a.partner_offer),
+            Decoded::QuestRedeem(q) => {
+                let slots: Vec<i32> = q.slots.iter().map(|s| s.slot_id).collect();
+                let quest = self.tinkerer.quests.iter().find(|x| x.id == q.quest_id_string);
+                let playing = self.playing();
+                self.upe.quest_hand_in(
+                    playing,
+                    q.quest_id_int,
+                    &slots,
+                    quest.map(|x| x.rewards.as_slice()),
+                    quest.is_some_and(|x| x.item_of_choice),
+                );
+            }
+            Decoded::QuestRedeemResponse(q) => self.upe.quest_answer(q.ok, now),
             _ => {
                 self.world.packet(p)?;
                 self.events(now);
@@ -136,9 +258,11 @@ impl App {
         let time = self.zone.local_date_time(now);
         for e in std::mem::take(&mut self.world.events) {
             match e {
-                Event::Entered { vault, .. } => {
+                Event::Entered { vault, map } => {
                     let r = records!(self, &time);
                     r.holdings.entered(&r.ctx, vault);
+                    self.upe.in_vault(vault);
+                    self.upe.set_where(&map);
                 }
                 Event::PlayerStatus { char_id, pack, status, entering } => {
                     if char_id <= 0 {
@@ -156,6 +280,7 @@ impl App {
                     self.loot_events.bag_dropped(&mut r, &map, &bag, seasonal);
                 }
             }
+            self.vault_changes();
         }
     }
 
@@ -166,6 +291,7 @@ impl App {
         s.push_str(&self.profile.dump());
         s.push_str(&self.collection.dump());
         s.push_str(&self.holdings.dump());
+        s.push_str(&self.upe.dump());
         s
     }
 }

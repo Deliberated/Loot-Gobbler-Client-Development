@@ -66,6 +66,10 @@ public final class ReplayOracle {
             crc.update(a, 5, a.length - 5);
             String name = PacketType.containsKey(type) ? PacketType.byOrdinal(type).name() : "UNKNOWN";
             if (world != null) {
+                if (type == 195 || type == 196) {   // unknown to the packet table: the app reads them raw
+                    world.raw(direction, type, size, data.array());
+                    return;
+                }
                 if (!WorldOracle.fed(type)) return;
                 Packet packet = PacketType.getPacket(type).factory();   // as PacketProcessor.processPackets
                 packet.setData(data.array());

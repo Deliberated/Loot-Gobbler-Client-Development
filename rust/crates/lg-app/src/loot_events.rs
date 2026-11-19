@@ -26,6 +26,8 @@ pub struct LootEvents {
     slot_items: HashMap<usize, i32>,
     /// Bags that dropped for you: items taken out of them are drops.
     pub loot_bags: HashSet<i32>,
+    /// The last move you asked for.
+    last_swap: Option<lg_protocol::packets::InvSwap>,
 }
 
 /// The records LootEvents writes into, and the moment.
@@ -71,6 +73,101 @@ fn bag_name(data: &lg_gamedata::GameData, kind: i32) -> String {
 }
 
 impl LootEvents {
+    /// Java `copyInSlot`: the copy seen in a slot at the last scan, if that item is still there.
+    pub fn copy_in_slot(&self, slot: i32, item: i32) -> Option<Find> {
+        let s = usize::try_from(slot).ok()?;
+        (self.slot_items.get(&s) == Some(&item)).then(|| self.slot_copies.get(&s).cloned()).flatten()
+    }
+
+    /// Java `isLootBag`.
+    fn is_loot_bag(&self, w: &lg_world::World, obj: i32) -> bool {
+        self.loot_bags.contains(&obj)
+            || w.entities.get(&obj).is_some_and(|e| lg_gamedata::LOOT_BAGS.iter().any(|(id, _)| *id == e.object_type))
+    }
+
+    /// Java `invSwap`: a move you asked for.
+    pub fn inv_swap(&mut self, r: &mut Records, p: &lg_protocol::packets::InvSwap, me: Option<&Entity>) {
+        self.last_swap = Some(p.clone());
+        let (pid, cid) = me.map_or((0, 0), |m| (m.id, m.char_id));
+        let (f, t) = (&p.slot_from, &p.slot_to);
+        r.holdings.swap(r.ctx.now, pid, cid, (f.object_id, f.slot_id, f.object_type), (t.object_id, t.slot_id, t.object_type));
+    }
+
+    /// Java `invResult`: the game's answer to a move; then where items of your character came from (UPE runs).
+    pub fn inv_result(
+        &mut self,
+        r: &mut Records,
+        u: &mut crate::upe::Upe,
+        uc: &crate::upe::Ctx,
+        w: &lg_world::World,
+        p: &lg_protocol::packets::InvResult,
+    ) {
+        let (f, t) = (&p.slot_from, &p.slot_to);
+        r.holdings.swap_result(
+            &r.ctx,
+            p.result,
+            p.result_type,
+            (f.object_id, f.slot_id, f.object_type),
+            (t.object_id, t.slot_id, t.object_type),
+        );
+        let Some(me) = w.me() else { return };
+        if !p.result {
+            return;
+        }
+        if p.result_type == 1 {
+            for s in [f, t] {
+                let (Some(sec), Some(asked)) = (r.holdings.section(s.object_id).cloned(), self.last_swap.as_ref()) else { continue };
+                let was = if asked.slot_from.object_id == s.object_id && asked.slot_from.slot_id == s.slot_id {
+                    Some(&asked.slot_from)
+                } else if asked.slot_to.object_id == s.object_id && asked.slot_to.slot_id == s.slot_id {
+                    Some(&asked.slot_to)
+                } else {
+                    None
+                };
+                if let Some(was) = was {
+                    u.used(uc, me.char_id, -1, was.object_type, Some(&sec));
+                }
+            }
+            return;
+        }
+        let (a, b) = (f.object_id, t.object_id);
+        let (sa, sb) = (r.holdings.section(a).cloned(), r.holdings.section(b).cloned());
+        u.moved(
+            uc,
+            me.char_id,
+            me.id,
+            (a, f.slot_id, f.object_type),
+            (b, t.slot_id, t.object_type),
+            sa.as_deref(),
+            self.is_loot_bag(w, a),
+            sb.as_deref(),
+            self.is_loot_bag(w, b),
+        );
+    }
+
+    /// Java `itemUsed`: an item used, for the UPE rules.
+    pub fn item_used(
+        &self,
+        r: &Records,
+        u: &mut crate::upe::Upe,
+        uc: &crate::upe::Ctx,
+        me: Option<&Entity>,
+        p: &lg_protocol::packets::UseItem,
+    ) {
+        let Some(me) = me else { return };
+        let obj = p.slot_object.object_id;
+        let section = if obj == me.id { None } else { r.holdings.section(obj).cloned() };
+        u.used(uc, me.char_id, p.slot_object.slot_id, p.slot_object.object_type, section.as_deref());
+    }
+
+    /// Java `tradeStart`.
+    pub fn trade_start(u: &mut crate::upe::Upe, p: &lg_protocol::packets::TradeStart) {
+        let items = |v: &[lg_protocol::packets::data::TradeItem]| v.iter().map(|i| i.item).collect::<Vec<_>>();
+        let ench =
+            |v: &[lg_protocol::packets::data::TradeItem]| v.iter().map(|i| Some(enchant_ids(Some(&i.unique_data)))).collect::<Vec<_>>();
+        u.trade_start(&p.partner_name, items(&p.client_items), ench(&p.client_items), items(&p.partner_items), ench(&p.partner_items));
+    }
+
     /// Java `vaultPacket`: a vault packet (there can be several per visit).
     pub fn vault_packet(&mut self, r: &mut Records, p: &lg_protocol::packets::VaultContent, player: Option<&Entity>) {
         if r.holdings.vault_packet(&r.ctx, p) {

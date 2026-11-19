@@ -12,49 +12,49 @@ use lg_protocol::rc4::{INCOMING_KEY, OUTGOING_KEY, Rc4};
 
 /// A packet body, field by field (big-endian, as the game).
 #[derive(Default)]
-struct B(Vec<u8>);
+pub(crate) struct B(pub(crate) Vec<u8>);
 
 impl B {
-    fn i8(mut self, v: i8) -> Self {
+    pub(crate) fn i8(mut self, v: i8) -> Self {
         self.0.push(v as u8);
         self
     }
-    fn u8(mut self, v: u8) -> Self {
+    pub(crate) fn u8(mut self, v: u8) -> Self {
         self.0.push(v);
         self
     }
-    fn bool(self, v: bool) -> Self {
+    pub(crate) fn bool(self, v: bool) -> Self {
         self.u8(u8::from(v))
     }
-    fn i16(mut self, v: i16) -> Self {
+    pub(crate) fn i16(mut self, v: i16) -> Self {
         self.0.extend(v.to_be_bytes());
         self
     }
-    fn u16(mut self, v: u16) -> Self {
+    pub(crate) fn u16(mut self, v: u16) -> Self {
         self.0.extend(v.to_be_bytes());
         self
     }
-    fn i32(mut self, v: i32) -> Self {
+    pub(crate) fn i32(mut self, v: i32) -> Self {
         self.0.extend(v.to_be_bytes());
         self
     }
-    fn f32(mut self, v: f32) -> Self {
+    pub(crate) fn f32(mut self, v: f32) -> Self {
         self.0.extend(v.to_be_bytes());
         self
     }
-    fn pos(self, (x, y): (f32, f32)) -> Self {
+    pub(crate) fn pos(self, (x, y): (f32, f32)) -> Self {
         self.f32(x).f32(y)
     }
-    fn str(mut self, s: &str) -> Self {
+    pub(crate) fn str(mut self, s: &str) -> Self {
         self.0.extend((s.len() as i16).to_be_bytes());
         self.0.extend(s.as_bytes());
         self
     }
-    fn ci(mut self, v: i32) -> Self {
+    pub(crate) fn ci(mut self, v: i32) -> Self {
         self.0.extend(lg_protocol::packets::data::compressed(v));
         self
     }
-    fn raw(mut self, b: &[u8]) -> Self {
+    pub(crate) fn raw(mut self, b: &[u8]) -> Self {
         self.0.extend(b);
         self
     }
@@ -62,12 +62,12 @@ impl B {
 
 /// A stat: a number, or a string for the string stats.
 #[derive(Clone)]
-enum S {
+pub(crate) enum S {
     N(u8, i32),
     T(u8, String),
 }
 
-fn stats(list: &[S]) -> Vec<u8> {
+pub(crate) fn stats(list: &[S]) -> Vec<u8> {
     let mut b = B::default().ci(list.len() as i32);
     for s in list {
         b = match s {
@@ -78,7 +78,7 @@ fn stats(list: &[S]) -> Vec<u8> {
     b.0
 }
 
-fn status(id: i32, pos: (f32, f32), list: &[S]) -> Vec<u8> {
+pub(crate) fn status(id: i32, pos: (f32, f32), list: &[S]) -> Vec<u8> {
     B::default().ci(id).pos(pos).raw(&stats(list)).0
 }
 
@@ -91,7 +91,7 @@ const ARMOR: u16 = 0x0a78;
 const ENEMY_TYPES: [u16; 6] = [45363, 9635, 29039, 33656, 0x0600, 0x0650];
 const ORYX_ANIMATIONS: [i32; 3] = [-935_464_302, -918_686_683, 0];
 /// The game's base64 variant, for enchant codes.
-fn six_bit(b: &[u8]) -> String {
+pub(crate) fn six_bit(b: &[u8]) -> String {
     const A: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     let mut s = String::new();
     for chunk in b.chunks(3) {
@@ -486,11 +486,11 @@ pub fn fight(seed: u64) -> Session {
             f.setup();
         }
     }
-    write(&mut f.rng, &f.out)
+    write(&mut f.rng, &f.out, 3000)
 }
 
 /// The packets encrypted, each in a TCP segment of its own, in order.
-fn write(rng: &mut Rng, packets: &[(Direction, Plain)]) -> Session {
+pub(crate) fn write(rng: &mut Rng, packets: &[(Direction, Plain)], step_micros: u64) -> Session {
     let mut w = pcap::Writer::new(link::DLT_EN10MB);
     let mut micros = 1_763_000_000_000_000u64;
     let mut ip_id = 1u16;
@@ -516,7 +516,7 @@ fn write(rng: &mut Rng, packets: &[(Direction, Plain)]) -> Session {
         let seg = tcp::Segment::build(sp, dp, isn[k].wrapping_add(seq[k]), tcp::FLAG_ACK | tcp::FLAG_PSH, &bytes);
         seq[k] = seq[k].wrapping_add(bytes.len() as u32);
         w.frame(micros, &frame(src, dst, ip_id, &seg));
-        micros += 3000;
+        micros += step_micros;
         ip_id = ip_id.wrapping_add(1);
         if k == 0 { incoming.push(p.clone()) } else { outgoing.push(p.clone()) }
     }

@@ -7,6 +7,17 @@ use crate::profile::Profile;
 use lg_world::{Abort, Entity, World, stats};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+/// What the UPE rules look at after a live update (Java: `Upe.seen`'s arguments).
+#[derive(Debug, Clone)]
+pub struct UpeLook {
+    pub char_id: i32,
+    pub level: i32,
+    pub slots: Vec<i32>,
+    pub enchants: Option<Vec<Vec<i32>>>,
+    pub base: Option<[i32; 8]>,
+    pub first: bool,
+}
+
 /// A fame reading.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sample {
@@ -167,16 +178,21 @@ impl Characters {
         self.dirty = true;
     }
 
-    /// Java `live`, on every tick: at most every 5 s, what you are playing. Java throws (and nothing after it runs
-    /// for that tick) when your name stat is only commas.
-    pub fn live(&mut self, w: &World, now: i64, profile: &mut Profile) -> Result<(), Abort> {
-        let Some(p) = w.me() else { return Ok(()) };
+    /// The character you play now (Java `playing`).
+    pub fn playing(&self) -> Option<&Char> {
+        self.chars.get(&self.current_char_id)
+    }
+
+    /// Java `live`, on every tick: at most every 5 s, what you are playing; what the UPE rules then look at. Java
+    /// throws (and nothing after it runs for that tick) when your name stat is only commas.
+    pub fn live(&mut self, w: &World, now: i64, profile: &mut Profile) -> Result<Option<UpeLook>, Abort> {
+        let Some(p) = w.me() else { return Ok(None) };
         if now - self.last_live < LIVE_INTERVAL_MS {
-            return Ok(());
+            return Ok(None);
         }
         let id = p.char_id;
         if id <= 0 {
-            return Ok(());
+            return Ok(None);
         }
         self.last_live = now;
         self.current_char_id = id;
@@ -189,7 +205,15 @@ impl Characters {
         }
         profile.update(name.as_deref(), p.text(stats::GUILD_NAME), p.value(stats::GUILD_RANK), now);
         self.update(w, p, id, name, now);
-        Ok(())
+        let c = &self.chars[&id];
+        Ok(c.slots.as_ref().map(|s| UpeLook {
+            char_id: id,
+            level: c.level,
+            slots: s.clone(),
+            enchants: c.slot_enchant_ids.clone(),
+            base: p.base_stats,
+            first: self.never_seen.contains(&id),
+        }))
     }
 
     fn update(&mut self, w: &World, p: &Entity, id: i32, name: Option<String>, now: i64) {
