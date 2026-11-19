@@ -249,6 +249,7 @@ final class WorldOracle {
             records(b);
             login(b);
             b.append("web [").append(String.join(",", oracle.ClockAgent.WEB)).append("]\n");
+            missions(b);
             return b.toString();
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException(e);
@@ -391,6 +392,34 @@ final class WorldOracle {
         lootgobbler.Missions m = lootgobbler.Missions.get();
         b.append("missions asked=").append(get(m, "asked")).append(" fetching=").append(get(m, "fetching")).append(" seasons=")
                 .append(fileCrc("missions-seasons.json")).append(" player=").append(fileCrc("missions-player.xml")).append('\n');
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void missions(StringBuilder b) throws ReflectiveOperationException {
+        lootgobbler.Missions m = lootgobbler.Missions.get();
+        b.append("missions-state fetched=").append(get(m, "fetched")).append(" problem=").append(get(m, "problem") != null)
+                .append(" locked=[").append(String.join(",", new TreeSet<>((Set<String>) get(m, "locked")))).append("] unlocked=[")
+                .append(String.join(",", new TreeSet<>((Set<String>) get(m, "unlocked")))).append("]\n");
+        lootgobbler.Missions.Seasons defs = (lootgobbler.Missions.Seasons) get(m, "defs");
+        if (defs != null) {
+            for (lootgobbler.Missions.Season x : defs.seasons) {
+                List<String> ms = new ArrayList<>();
+                for (lootgobbler.Missions.Mission y : x.missions) {
+                    ms.add(y.id + "/" + (y.name == null ? "null" : quote(y.name)) + "/" + y.conds.size() + "c/" + y.rewards.size() + "r/"
+                            + (y.parentsStr == null ? "null" : quote(y.parentsStr)) + "/" + String.format("%016x", Double.doubleToRawLongBits(y.interval))
+                            + "/" + y.participants);
+                }
+                b.append("season ").append(x.id).append(" name=").append(x.name == null ? "null" : quote(x.name)).append(" cur=")
+                        .append(x.current).append(" avail=").append(x.available).append(" end=").append(x.endDate).append(" game=")
+                        .append(x.gameData != null).append(" [").append(String.join(",", ms)).append("]\n");
+            }
+        }
+        for (Map.Entry<String, ?> e : new TreeMap<>((Map<String, ?>) get(m, "progs")).entrySet()) {
+            Object p = e.getValue();
+            b.append("prog ").append(e.getKey()).append(" [").append(arr((int[]) get(p, "progress")).replace("[", "").replace("]", ""))
+                    .append("] state=").append(get(p, "state")).append(" claims=").append(get(p, "claims")).append(" at=")
+                    .append(get(p, "claimedAt")).append(" ever=").append(get(p, "everDone")).append('\n');
+        }
     }
 
     private static String bag(lootgobbler.PetStore.Saddlebag s) {

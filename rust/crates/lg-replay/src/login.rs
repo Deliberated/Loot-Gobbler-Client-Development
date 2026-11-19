@@ -266,6 +266,22 @@ pub fn login(seed: u64) -> (Session, Vec<(String, String)>) {
             "<AccountPowerups><ClassPowerup><Class>768</Class><Dex>6</Dex><Spd>15</Spd><Vit>30</Vit><Wis>50</Wis><Def>75</Def><Att>1</Att><Mana>4</Mana><Life>11</Life></ClassPowerup><ClassPowerup><Class>799</Class><Dex>1</Dex></ClassPowerup></AccountPowerups>".into(),
         )),
     }
+    let seasons = r#"{"seasons":[{"id":3,"name":"The Whispers of Skuld","current":1,"available":1,"endDate":1800000000,"isBeginnerTutorial":0,"unlockCost":0,"missionPools":[],"gameData":{"backgroundSprite":"https://example.invalid/bg.png","graph":[{"id":1,"location":{"x":1,"y":2},"children":[{"id":2}]}]},
+"missions":[{"id":1,"name":"First Steps","desc":"d","icon":"lofiObjBig/528","interval":0,"participants":255,"parentsStr":"","locks":"","forceRefresh":0,"wornRestriction":[],"conds":[{"type":3,"target":"PIRATE_CAVE","amount":2}],"rewards":[{"type":2,"target":"2594","amount":1},{"type":1,"target":"","amount":50}]},
+{"id":2,"name":"Repeatable Hunt","desc":"d","icon":"","interval":1.5,"participants":"2","parentsStr":"1","conds":[{"type":1,"target":"BOSS_ADEPT_ENCOUNTER","amount":"3","time":90},{"type":2,"target":null,"amount":5}],"condSpread":"11","rewards":[]}]},
+{"id":4,"name":"Old","current":0,"available":0,"endDate":"1700000000","missions":null}]}"#;
+    match l.below(5) {
+        0 => {}
+        1 => files.push(("missions_getClientSeasons.xml".into(), "<Error>no</Error>".into())),
+        2 => files.push(("missions_getClientSeasons.xml".into(), seasons.replace("\"gameData\":{", "\"gameData\":null,\"x\":{"))),
+        _ => files.push(("missions_getClientSeasons.xml".into(), seasons.into())),
+    }
+    if l.chance(80) {
+        files.push((
+            "missions_getPlayerMissions.xml".into(),
+            "<PlayerMissions><LockedMissions>3,2;4,1</LockedMissions><UnlockedMissions/><Season id=\"3\">1,2,1,1700000000,0,0|2,1:4,0,1700000000,1,1762900000|bad</Season><Season id=\"4\">1,0,2,0,3,1</Season></PlayerMissions>".into(),
+        ));
+    }
     if l.chance(70) {
         files.push((
             "friends_getList.xml".into(),

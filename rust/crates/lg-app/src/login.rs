@@ -3,7 +3,7 @@
 //! `Missions.tokenReady`).
 //!
 //! Java asks on threads of their own; here each fetch runs to its end where Java starts it (the comparison with
-//! Java runs Java's that way too). Missions only ask for now: their answers are read in a later step.
+//! Java runs Java's that way too).
 
 use crate::realm_character::{self, Exalts};
 use crate::{App, holdings};
@@ -11,17 +11,6 @@ use lg_world::Abort;
 
 const FRIENDS_EVERY_MS: i64 = 10 * 60_000;
 const MISSIONS_EVERY_MS: i64 = 5 * 60_000;
-
-/// Missions, as far as ported: when they were asked for (Java: `Missions.token`, `asked`, `fetching`), and the
-/// answers kept.
-#[derive(Debug, Default)]
-pub struct Missions {
-    pub token: Option<String>,
-    pub asked: i64,
-    pub fetching: bool,
-    pub seasons: Option<String>,
-    pub player: Option<String>,
-}
 
 impl App {
     /// HELLO: the game sent your login token (Java `updateToken`). Aborts where Java throws (a refused exaltation
@@ -155,13 +144,7 @@ impl App {
         self.missions.asked = now;
         let seasons = self.web.request(&t, "missions/getClientSeasons", "");
         let player = self.web.request(&t, "missions/getPlayerMissions", "");
-        if let (Some(s), Some(p)) = (seasons, player)
-            && !s.contains("<Error")
-            && !p.contains("<Error")
-        {
-            self.missions.seasons = Some(s);
-            self.missions.player = Some(p);
-        }
+        self.missions.answered(seasons, player, now);
         self.missions.fetching = false;
     }
 
@@ -196,8 +179,8 @@ impl App {
             self.friends_asked,
             self.missions.asked,
             self.missions.fetching,
-            self.missions.seasons.as_ref().map_or("null".into(), |s| format!("{:08x}", lg_protocol::dump::crc32(s.as_bytes()))),
-            self.missions.player.as_ref().map_or("null".into(), |s| format!("{:08x}", lg_protocol::dump::crc32(s.as_bytes()))),
+            self.missions.seasons_file.as_ref().map_or("null".into(), |s| format!("{:08x}", lg_protocol::dump::crc32(s.as_bytes()))),
+            self.missions.player_file.as_ref().map_or("null".into(), |s| format!("{:08x}", lg_protocol::dump::crc32(s.as_bytes()))),
             self.web.requests().join(",")
         )
     }

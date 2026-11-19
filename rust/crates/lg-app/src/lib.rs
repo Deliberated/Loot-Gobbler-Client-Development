@@ -12,6 +12,7 @@ pub mod dps_history;
 pub mod dungeon_visits;
 pub mod exalt_store;
 pub mod friends;
+pub mod gson;
 pub mod holdings;
 pub mod item_cooldowns;
 pub mod item_use;
@@ -19,6 +20,7 @@ pub mod java;
 pub mod localtime;
 pub mod login;
 pub mod loot_events;
+pub mod missions;
 pub mod moonlight;
 pub mod patterns;
 pub mod pc_stats;
@@ -76,7 +78,7 @@ pub struct App {
     /// The exaltations were asked for once (Java: `updatedExaltStats`).
     pub updated_exalts: bool,
     pub friends_asked: i64,
-    pub missions: login::Missions,
+    pub missions: missions::Missions,
     pub zone: localtime::Zone,
 }
 
@@ -140,7 +142,7 @@ impl App {
             token: None,
             updated_exalts: false,
             friends_asked: 0,
-            missions: login::Missions::default(),
+            missions: missions::Missions::default(),
             zone: localtime::Zone::system(),
         }
     }
@@ -480,6 +482,7 @@ impl App {
         s.push_str(&format!("vitals {}/{} at={}\n", self.vitals.mp, self.vitals.max_mp, self.vitals.at));
         s.push_str(&self.pets.dump());
         s.push_str(&self.login_dump());
+        s.push_str(&self.missions.dump());
         s
     }
 }
