@@ -122,7 +122,7 @@ impl App {
             world,
             characters,
             profile,
-            collection: collection::Collection::default(),
+            collection: java_data.map(collection::Collection::import).unwrap_or_default(),
             holdings: holdings::Holdings::default(),
             loot_events: loot_events::LootEvents::default(),
             upe: upe::Upe::default(),
@@ -150,6 +150,9 @@ impl App {
         let time = app.zone.local_date_time(now);
         let ctx = holdings::Ctx { data: app.world.data(), now, time: &time };
         app.holdings.seed_once(&ctx, &app.characters.living());
+        // trackStSets at startup: the ST sets done in the collection kept
+        let sets = &app.world.data().st_sets;
+        app.profile.count_st_sets(sets, &app.collection, &app.zone, now);
         app
     }
 

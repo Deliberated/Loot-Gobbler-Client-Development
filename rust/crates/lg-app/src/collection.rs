@@ -132,6 +132,21 @@ pub struct Collection {
 }
 
 impl Collection {
+    /// What the Java app kept (`collection.json`), read only. Unreadable: nothing.
+    pub fn import(dir: &std::path::Path) -> Collection {
+        let mut c = Collection::default();
+        let Ok(text) = std::fs::read_to_string(dir.join("collection.json")) else { return c };
+        if let Ok(list) = parse_entries(&text) {
+            for (id, e) in list {
+                if !c.entries.contains_key(&id) {
+                    c.order.push(id);
+                }
+                c.entries.insert(id, e);
+            }
+        }
+        c
+    }
+
     pub fn entry(&self, item: i32) -> Option<&Entry> {
         self.entries.get(&item)
     }
@@ -239,4 +254,89 @@ pub fn find(f: &Find) -> String {
         q(&f.bag),
         f.seasonal.map_or("null".into(), |s| s.to_string())
     )
+}
+
+/// Gson reading `LinkedHashMap<Integer, Entry>`.
+fn parse_entries(text: &str) -> Result<Vec<(i32, Entry)>, crate::java::Thrown> {
+    use crate::gson;
+    use crate::java::Thrown;
+    use lg_world::json::Json;
+    let root = lg_world::json::parse(text).map_err(|_| Thrown)?;
+    let Json::Object(o) = root else {
+        return if root == Json::Null { Ok(Vec::new()) } else { Err(Thrown) };
+    };
+    let string = |v: Option<&Json>| -> Result<Option<Option<String>>, Thrown> { gson::string(v) };
+    let seen = |v: &Json| -> Result<Seen, Thrown> {
+        let Json::Object(_) = v else { return Err(Thrown) };
+        let mut s = Seen::default();
+        if let Some(x) = gson::int(v.get("charId"))? {
+            s.char_id = x;
+        }
+        if let Some(x) = string(v.get("place"))? {
+            s.place = x.unwrap_or_default();
+        }
+        for (f, k) in [(&mut s.class_type, "classType"), (&mut s.skin, "skin"), (&mut s.tex1, "tex1"), (&mut s.tex2, "tex2")] {
+            if let Some(x) = gson::int(v.get(k))? {
+                *f = x;
+            }
+        }
+        if let Some(x) = gson::boolean(v.get("seasonal"))? {
+            s.seasonal = x;
+        }
+        Ok(s)
+    };
+    let find = |v: &Json| -> Result<Find, Thrown> {
+        let Json::Object(_) = v else { return Err(Thrown) };
+        let mut f = Find::of(DROP, -1, "", "", 0, "");
+        if let Some(x) = string(v.get("time"))? {
+            f.time = x.unwrap_or_default();
+        }
+        if let Some(x) = gson::long(v.get("at"))? {
+            f.at = x;
+        }
+        if let Some(x) = string(v.get("source"))? {
+            f.source = x.unwrap_or_default();
+        }
+        if let Some(x) = gson::int(v.get("enchants"))? {
+            f.enchants = x;
+        }
+        if let Some(x) = string(v.get("where"))? {
+            f.r#where = x.unwrap_or_default();
+        }
+        if let Some(x) = string(v.get("bag"))? {
+            f.bag = x.unwrap_or_default();
+        }
+        if let Some(x) = gson::list(v.get("enchantIds"), |e| gson::int(Some(e))?.ok_or(Thrown))? {
+            f.enchant_ids = x.map(|l| l.into_iter().map(|i| i.unwrap_or(0)).collect());
+        }
+        f.seasonal = gson::boolean(v.get("seasonal"))?;
+        f.seen = match v.get("seen") {
+            None | Some(Json::Null) => None,
+            Some(s) => Some(seen(s)?),
+        };
+        Ok(f)
+    };
+    let mut out = Vec::new();
+    for (k, v) in &o {
+        let id = crate::java::parse_int(k)?;
+        if *v == Json::Null {
+            continue;
+        }
+        let Json::Object(_) = v else { return Err(Thrown) };
+        let mut e = Entry::default();
+        if let Some(x) = string(v.get("first"))? {
+            e.first = x;
+        }
+        if let Some(x) = string(v.get("last"))? {
+            e.last = x;
+        }
+        if let Some(x) = gson::int(v.get("count"))? {
+            e.count = x;
+        }
+        if let Some(x) = gson::list(v.get("history"), find)? {
+            e.history = x.map(|l| l.into_iter().flatten().collect());
+        }
+        out.push((id, e));
+    }
+    Ok(out)
 }
