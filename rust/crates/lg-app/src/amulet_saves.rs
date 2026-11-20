@@ -37,6 +37,9 @@ pub struct Save {
 
 #[derive(Debug, Default)]
 pub struct AmuletSaves {
+    /// Java would write its file now (its `save()`): the app writes it.
+    pub dirty: bool,
+
     /// Oldest first.
     pub saves: Vec<Save>,
     last_heal_at: i64,
@@ -76,6 +79,7 @@ impl AmuletSaves {
         for s in &mut a.saves {
             if !s.removed && s.message.contains(OLD_RULE) {
                 s.removed = true;
+                a.dirty = true;
             }
         }
         a
@@ -195,6 +199,7 @@ impl AmuletSaves {
             }
         }
         self.saves.push(s);
+        self.dirty = true;
         visits.amulet_saved(now);
     }
 

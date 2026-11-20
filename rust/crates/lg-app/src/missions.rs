@@ -162,6 +162,8 @@ pub struct Missions {
     /// What Java's missions-seasons.json and missions-player.xml hold: the last answers read.
     pub seasons_file: Option<String>,
     pub player_file: Option<String>,
+    /// Java would write its file now (its `save()`): the app writes it.
+    pub dirty: bool,
 }
 
 fn json_field<'a>(o: &'a Json, k: &str) -> Option<&'a Json> {
@@ -442,6 +444,7 @@ impl Missions {
         }
         self.seasons_file = Some(s);
         self.player_file = Some(p);
+        self.dirty = true;
         self.fetched = now;
         self.problem = None;
     }

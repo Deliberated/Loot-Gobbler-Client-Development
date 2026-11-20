@@ -86,6 +86,7 @@ impl App {
         self.holdings.listed_vault(&ctx, holdings::vault_from_char_list(xml));
         let _ = self.pets.import_char_list(xml, now);
         self.characters.saved_list = Some(xml.to_string()); // char-list.xml, read at the first lookup if not yet
+        self.characters.saved_list_dirty = true;
         self.vault_changes();
     }
 

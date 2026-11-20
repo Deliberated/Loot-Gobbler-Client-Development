@@ -144,6 +144,9 @@ impl Visit {
 
 #[derive(Debug)]
 pub struct DungeonVisits {
+    /// Java would write its file now (its `save()`): the app writes it.
+    pub dirty: bool,
+
     /// Finished, newest first.
     pub visits: Vec<Visit>,
     pub current: Option<Visit>,
@@ -157,7 +160,7 @@ pub struct DungeonVisits {
 
 impl Default for DungeonVisits {
     fn default() -> Self {
-        DungeonVisits { visits: Vec::new(), current: None, last_hits: 0, last_x: f32::NAN, last_y: 0.0, unsaved: 0.0 }
+        DungeonVisits { dirty: false, visits: Vec::new(), current: None, last_hits: 0, last_x: f32::NAN, last_y: 0.0, unsaved: 0.0 }
     }
 }
 
@@ -304,11 +307,13 @@ impl DungeonVisits {
             v.run_start = run.start;
             self.visits.push(v);
         }
+        self.dirty = true; // Java saves the list it made
     }
 
     /// Java `linkLateRuns`.
     fn link_late_runs(&mut self, dps: &DpsHistory) {
         let mut linked: std::collections::HashSet<i64> = self.visits.iter().filter(|v| v.run_start != 0).map(|v| v.run_start).collect();
+        let mut changed = false;
         for v in &mut self.visits {
             if !v.late || v.run_start != 0 {
                 continue;
@@ -322,9 +327,11 @@ impl DungeonVisits {
                 }
                 v.run_start = r.start;
                 linked.insert(r.start);
+                changed = true;
                 break;
             }
         }
+        self.dirty |= changed;
     }
 
     /// Java `lateExalts`: late visits without exaltations get the progress seen going up as they ended.
@@ -349,6 +356,7 @@ impl DungeonVisits {
                     continue;
                 }
                 v.exalts.push(Exalt { class_type: c.class_type, stat: c.stat, before: c.before, after: c.after });
+                self.dirty = true;
             }
         }
     }
@@ -386,6 +394,7 @@ impl DungeonVisits {
         }
         self.visits.insert(0, left);
         self.visits.truncate(MAX_VISITS);
+        self.dirty = true;
     }
 
     /// Java `exaltProgress`: new progress for a class. The game sends it right after a dungeon is left, while the
@@ -404,6 +413,9 @@ impl DungeonVisits {
             if a > b {
                 v.exalts.push(Exalt { class_type, stat: i as i32, before: b, after: a });
             }
+        }
+        if to_last {
+            self.dirty = true; // a finished visit: Java saves
         }
     }
 

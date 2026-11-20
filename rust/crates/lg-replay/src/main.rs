@@ -6,7 +6,7 @@
 //!   lg-replay decoded-ids               the ids of the packets that have a decoder, for oracle/compare.sh
 //!   lg-replay gamedata <assets>         the game data read from an assets folder, to compare with Java
 //!   lg-replay <session.pcap> --stats    only the summary
-//!   lg-replay <session.pcap> --world <assets> [--java-data <dir>] [--web <dir>]
+//!   lg-replay <session.pcap> --world <assets> [--java-data <dir>] [--web <dir>] [--save <dir>]
 //!                                       the world state after each packet the world is fed, to compare
 //!                                       with Java (oracle/compare.sh): a checksum, the whole state on map changes
 //!   lg-replay synth <out.pcap> [seed]   writes a made-up session, for testing without a recording
@@ -97,20 +97,21 @@ fn main() -> ExitCode {
             {
                 // --java-data <dir>: what the Java app kept in its folder, taken over (read only); --web <dir>: the
                 // game's web answers from files, and HELLO handed on (nothing reaches the game)
-                let (mut java, mut web) = (None, None);
+                let (mut java, mut web, mut save) = (None, None, None);
                 let mut i = 0;
                 while i < rest.len() {
                     match (rest[i].as_str(), rest.get(i + 1)) {
                         ("--java-data", Some(d)) => java = Some(std::path::Path::new(d)),
                         ("--web", Some(d)) => web = Some(std::path::Path::new(d)),
+                        ("--save", Some(d)) => save = Some(std::path::Path::new(d)),
                         _ => {
-                            eprintln!("usage: lg-replay <session.pcap> --world <assets> [--java-data <dir>] [--web <dir>]");
+                            eprintln!("usage: lg-replay <session.pcap> --world <assets> [--java-data <dir>] [--web <dir>] [--save <dir>]");
                             return ExitCode::FAILURE;
                         }
                     }
                     i += 2;
                 }
-                return world(file, std::path::Path::new(assets), java, web);
+                return world(file, std::path::Path::new(assets), java, web, save);
             }
             let mode = if has("--oracle") {
                 Mode::Oracle
@@ -349,7 +350,13 @@ fn summary(w: &lg_world::World) -> String {
 }
 
 /// The world state after each packet it is fed, as `oracle/WorldOracle.java` prints Java's.
-fn world(file: &str, assets: &std::path::Path, java_data: Option<&std::path::Path>, web: Option<&std::path::Path>) -> ExitCode {
+fn world(
+    file: &str,
+    assets: &std::path::Path,
+    java_data: Option<&std::path::Path>,
+    web: Option<&std::path::Path>,
+    save: Option<&std::path::Path>,
+) -> ExitCode {
     let data = match std::fs::read(file) {
         Ok(d) => d,
         Err(e) => {
@@ -373,6 +380,15 @@ fn world(file: &str, assets: &std::path::Path, java_data: Option<&std::path::Pat
         w.web = Box::new(lg_app::web::Canned::new(dir));
     }
     let fed = |id: u8| lg_app::FED.contains(&id) || (web.is_some() && id == lg_app::HELLO);
+    // taking over the Java folder into the own one: a full copy; then what the app writes on starting
+    if let (Some(_), Some(j)) = (save, java_data) {
+        w.copy_from_java(j);
+    }
+    if let Some(dir) = save
+        && let Err(e) = w.save_changed(dir)
+    {
+        eprintln!("cannot save into {}: {e}", dir.display());
+    }
     let mut out = BufWriter::new(std::io::stdout().lock());
     let full = |out: &mut BufWriter<_>, when: &str, state: &str| {
         line(out, format_args!("state {when}"));
@@ -384,6 +400,11 @@ fn world(file: &str, assets: &std::path::Path, java_data: Option<&std::path::Pat
         let Item::Packet { packet, micros } = item else { continue };
         if lg_app::RAW.contains(&packet.id) {
             w.raw(packet.id, &packet.body, (*micros / 1000) as i64);
+            if let Some(dir) = save
+                && let Err(e) = w.save_changed(dir)
+            {
+                eprintln!("cannot save into {}: {e}", dir.display());
+            }
             let state = w.dump();
             line(
                 &mut out,
@@ -412,6 +433,11 @@ fn world(file: &str, assets: &std::path::Path, java_data: Option<&std::path::Pat
                 " exception"
             }
         };
+        if let Some(dir) = save
+            && let Err(e) = w.save_changed(dir)
+        {
+            eprintln!("cannot save into {}: {e}", dir.display());
+        }
         let state = w.dump();
         line(
             &mut out,

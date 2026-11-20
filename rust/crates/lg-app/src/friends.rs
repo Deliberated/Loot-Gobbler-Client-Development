@@ -9,6 +9,10 @@ use std::path::Path;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Friends {
     pub names: BTreeSet<String>,
+    /// The game's last answer, to write as it came (Java's friends-list.xml), and whether friends.txt changes.
+    pub raw: Option<String>,
+    /// Java would write its file now (its `save()`): the app writes it.
+    pub dirty: bool,
 }
 
 /// Java's `\s`.
@@ -74,7 +78,7 @@ impl Friends {
                     .collect()
             })
             .unwrap_or_default();
-        Friends { names }
+        Friends { names, raw: None, dirty: false }
     }
 
     pub fn is_friend(&self, name: &str) -> bool {
@@ -83,11 +87,13 @@ impl Friends {
 
     /// The game's answer came: its names replace the list; whether it changed.
     pub fn answered(&mut self, xml: &str) -> bool {
+        self.raw = Some(xml.to_string());
         let found = parse(xml);
         if found == self.names {
             return false;
         }
         self.names = found;
+        self.dirty = true;
         true
     }
 }

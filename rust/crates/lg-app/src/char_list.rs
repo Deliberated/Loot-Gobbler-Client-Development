@@ -355,7 +355,8 @@ fn collectibles(data: &GameData, c: &Char, now: i64, time: &str) -> Copies {
         f.seasonal = Some(c.seasonal);
         put(q, f);
     }
-    let order = lg_world::fight::java_hash_order(&out.iter().map(|o| o.0).collect::<Vec<_>>());
+    // out.computeIfAbsent: new items at the head of their bucket
+    let order = lg_world::fight::java_hash_order_computed(&out.iter().map(|o| o.0).collect::<Vec<_>>());
     order.into_iter().map(|k| out.iter().find(|o| o.0 == k).expect("item").clone()).collect()
 }
 

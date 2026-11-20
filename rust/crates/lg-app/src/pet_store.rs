@@ -61,6 +61,9 @@ pub struct Pet {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PetStore {
+    /// Java would write its file now (its `save()`): the app writes it.
+    pub dirty: bool,
+
     /// By instance id, in the order first seen (Java's `LinkedHashMap`).
     pub pets: Vec<(i32, Pet)>,
 }
@@ -76,7 +79,7 @@ impl PetStore {
             }
             return p;
         };
-        PetStore { pets: parse_pets(&text).unwrap_or_default() }
+        PetStore { pets: parse_pets(&text).unwrap_or_default(), dirty: false }
     }
 
     fn pet(&mut self, id: i32) -> &mut Pet {
@@ -120,6 +123,7 @@ impl PetStore {
             p.abilities = abilities;
         }
         p.last_seen = now;
+        self.dirty = true;
     }
 
     /// Java `importCharList`: every character's pet from the raw list, its abilities and the saddlebag that character
@@ -162,6 +166,7 @@ impl PetStore {
                 }
             }
         }
+        self.dirty = true;
         Ok(())
     }
 

@@ -58,6 +58,8 @@ pub struct DungeonInfo {
 /// Java `DungeonStatData`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DungeonStats {
+    /// Java would write its file now (its `save()`): the app writes it.
+    pub dirty: bool,
     pub data: BTreeMap<String, DungeonInfo>,
     /// The dungeon being counted.
     pub info: Option<String>,
@@ -143,6 +145,7 @@ impl DungeonStats {
                 i.entered += 1;
             }
             self.info = None;
+            self.dirty = true;
         }
     }
 }

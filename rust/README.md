@@ -40,6 +40,12 @@ missions, Tinkerer quests, Tomato's dungeon.stats, the saved character list, you
 loading. `LG_SEED=<folder>` hands both sides the same files: those Java wrote in an earlier comparison
 (`LG_KEEP`) give the same records on both sides.
 
+The app's own files (`App::start`, `App::save_changed`; `lg-replay ... --save <dir>`): the Java app's names and formats,
+written when Java would write them (as `new Gson().toJson` writes them: field order, escapes, Java's numbers, the
+collection pretty-printed, Java's HashMap orders), in a folder next to the program. A first start takes the Java
+folder over into it, a full copy (never changing the Java folder). compare.sh checks that every file Rust writes is
+byte for byte the one Java wrote, also when both start from Java-written files.
+
 Logins: `lg-replay synth-login` makes up a login with HELLO and the game's web answers to it (character lists with
 vault, pets, enchantments and statistics; exaltations; friends; refused and unreadable answers), and
 `oracle/compare.sh <pcap> <assets> <answers>` hands both sides HELLO and answers them from those files: Java's web

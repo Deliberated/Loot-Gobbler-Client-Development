@@ -8,22 +8,141 @@ use lg_gamedata::GameData;
 use lg_protocol::packets::Notification;
 use std::collections::HashMap;
 
-/// The order Java's `HashMap<Integer, ...>` walks keys put in this order (none removed): by bucket, then in the
-/// order put. The table starts at 16 buckets and doubles when more than three quarters are used. (A bucket of 8
-/// or more becomes a tree, which can change the order; that needs 8 ids in one bucket of a table of 64 or more,
-/// and is not followed.)
-pub fn java_hash_order(keys: &[i32]) -> Vec<i32> {
-    let mut buckets: usize = 16;
-    while keys.len() > buckets / 4 * 3 {
-        buckets *= 2;
+/// Java's `HashMap` as far as its order goes: the buckets with their keys in chain order. A bucket of 8 grows a table
+/// of fewer than 64 buckets (Java's `treeifyBin`); bigger buckets would become trees, not followed (their iteration
+/// still keeps the chain).
+struct JavaMap<T> {
+    table: Vec<Vec<(T, u32)>>,
+    size: usize,
+}
+
+impl<T: Clone + PartialEq> JavaMap<T> {
+    fn new() -> JavaMap<T> {
+        JavaMap { table: Vec::new(), size: 0 }
     }
-    let bucket = |k: i32| {
-        let h = k as u32;
-        ((h ^ (h >> 16)) as usize) & (buckets - 1)
-    };
-    let mut out = keys.to_vec();
-    out.sort_by_key(|&k| bucket(k)); // stable: the order put within a bucket
-    out
+
+    fn threshold(&self) -> usize {
+        self.table.len() / 4 * 3
+    }
+
+    fn index(&self, h: u32) -> usize {
+        ((h ^ (h >> 16)) as usize) & (self.table.len() - 1)
+    }
+
+    fn resize(&mut self) {
+        let n = if self.table.is_empty() { 16 } else { self.table.len() * 2 };
+        let mut t: Vec<Vec<(T, u32)>> = vec![Vec::new(); n];
+        for bin in std::mem::take(&mut self.table) {
+            for e in bin {
+                let i = ((e.1 ^ (e.1 >> 16)) as usize) & (n - 1);
+                t[i].push(e); // the split keeps each chain's order
+            }
+        }
+        self.table = t;
+    }
+
+    fn treeify_bin(&mut self) {
+        if self.table.len() < 64 {
+            self.resize();
+        }
+    }
+
+    /// `put`: a new key at the end of its chain.
+    fn put(&mut self, k: T, h: u32) {
+        if self.table.is_empty() {
+            self.resize();
+        }
+        let i = self.index(h);
+        if self.table[i].iter().any(|e| e.0 == k) {
+            return;
+        }
+        let before = self.table[i].len();
+        self.table[i].push((k, h));
+        if before >= 8 {
+            self.treeify_bin(); // binCount >= TREEIFY_THRESHOLD - 1, counted from the bin's second node
+        }
+        self.size += 1;
+        if self.size > self.threshold() {
+            self.resize();
+        }
+    }
+
+    /// `computeIfAbsent`: grows first (when already over the threshold), a new key at the head of its chain.
+    fn compute(&mut self, k: T, h: u32) {
+        if self.table.is_empty() || self.size > self.threshold() {
+            self.resize();
+        }
+        let i = self.index(h);
+        if self.table[i].iter().any(|e| e.0 == k) {
+            return;
+        }
+        let bin_count = self.table[i].len();
+        self.table[i].insert(0, (k, h));
+        if bin_count >= 7 {
+            self.treeify_bin();
+        }
+        self.size += 1;
+    }
+
+    fn remove(&mut self, k: &T, h: u32) {
+        if self.table.is_empty() {
+            return;
+        }
+        let i = self.index(h);
+        if let Some(p) = self.table[i].iter().position(|e| e.0 == *k) {
+            self.table[i].remove(p);
+            self.size -= 1;
+        }
+    }
+
+    fn keys(&self) -> Vec<T> {
+        self.table.iter().flatten().map(|e| e.0.clone()).collect()
+    }
+}
+
+/// The order a Java `HashMap` walks keys (with their `hashCode`s) put in this order, by `put` (`computed`: by
+/// `computeIfAbsent`, which puts a new key at the head of its bucket).
+pub fn java_order<T: Clone + PartialEq>(keys: &[(T, i32)], computed: bool) -> Vec<T> {
+    let mut m = JavaMap::new();
+    for (k, h) in keys {
+        if computed {
+            m.compute(k.clone(), *h as u32);
+        } else {
+            m.put(k.clone(), *h as u32);
+        }
+    }
+    m.keys()
+}
+
+/// What was done to a Java `HashMap`, in order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MapOp<T> {
+    Put(T, i32),
+    Computed(T, i32),
+    Removed(T, i32),
+}
+
+/// The order a Java `HashMap` walks its keys after these operations.
+pub fn java_order_after<T: Clone + PartialEq>(ops: &[MapOp<T>]) -> Vec<T> {
+    let mut m = JavaMap::new();
+    for op in ops {
+        match op {
+            MapOp::Put(k, h) => m.put(k.clone(), *h as u32),
+            MapOp::Computed(k, h) => m.compute(k.clone(), *h as u32),
+            MapOp::Removed(k, h) => m.remove(k, *h as u32),
+        }
+    }
+    m.keys()
+}
+
+/// The order a Java `HashMap<Integer, ...>` walks keys `put` in this order.
+pub fn java_hash_order(keys: &[i32]) -> Vec<i32> {
+    java_order(&keys.iter().map(|&k| (k, k)).collect::<Vec<_>>(), false)
+}
+
+/// The same for keys added with `computeIfAbsent`.
+pub fn java_hash_order_computed(keys: &[i32]) -> Vec<i32> {
+    java_order(&keys.iter().map(|&k| (k, k)).collect::<Vec<_>>(), true)
 }
 
 /// Java's `String.hashCode`: over the UTF-16 units, wrapping.
@@ -133,8 +252,10 @@ impl<'a> Fight<'a> {
     /// Java `getPlayerDamageList`: each player's sum, most damage first (equal ones in `HashMap` order), with the
     /// player as Java's sum holds it (`None` when no longer known here).
     pub fn player_damage_list(&self, e: &'a Entity) -> Vec<(&'a DamageRecord, Option<&'a Entity>)> {
-        let mut out: Vec<_> =
-            java_hash_order(&e.damage_player_order).into_iter().map(|id| (&e.damage_player[&id], self.entities.get(&id))).collect();
+        let mut out: Vec<_> = java_hash_order_computed(&e.damage_player_order)
+            .into_iter()
+            .map(|id| (&e.damage_player[&id], self.entities.get(&id)))
+            .collect();
         out.sort_by_key(|(d, _)| std::cmp::Reverse(d.damage));
         out
     }
@@ -199,5 +320,23 @@ mod tests {
         assert_eq!(java_string_hash("hello"), 99_162_322);
         assert_eq!((java_buckets_copied(5), java_buckets_copied(6), java_buckets_copied(19), java_buckets_copied(0)), (8, 8, 32, 1));
         assert_eq!((java_buckets_grown(12), java_buckets_grown(13)), (16, 32));
+        assert_eq!(
+            java_hash_order(&keys_for_put()),
+            vec![2, 66, 130, 194, 3, 14866, 18, 82, 146, 210, 19, 34, 98, 162, 35, 5298, 50, 114, 178],
+            "put: at the end of the bucket"
+        );
+        let ops = [MapOp::Put(1, 1), MapOp::Put(17, 17), MapOp::Removed(1, 1), MapOp::Put(1, 1)];
+        assert_eq!(java_order_after(&ops), vec![17, 1], "a key put again goes to the end");
+        // computeIfAbsent: new keys at the head of their bucket; a bucket of 8 grows the table (as jshell printed)
+        assert_eq!(java_hash_order_computed(&[5298, 14866]), vec![14866, 5298]);
+        let keys = [5298, 14866, 18, 34, 50, 2, 66, 82, 98, 114, 130, 146, 162, 178, 194, 210, 3, 19, 35];
+        assert_eq!(
+            java_hash_order_computed(&keys),
+            vec![194, 130, 66, 2, 3, 210, 146, 82, 18, 14866, 19, 162, 98, 34, 35, 178, 114, 50, 5298]
+        );
+    }
+
+    fn keys_for_put() -> Vec<i32> {
+        vec![5298, 14866, 18, 34, 50, 2, 66, 82, 98, 114, 130, 146, 162, 178, 194, 210, 3, 19, 35]
     }
 }

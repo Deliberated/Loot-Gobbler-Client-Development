@@ -22,6 +22,9 @@ pub struct Change {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ExaltStore {
+    /// Java would write its file now (its `save()`): the app writes it.
+    pub dirty: bool,
+
     /// By class.
     pub progress: BTreeMap<i32, Vec<i32>>,
     pub changes: Vec<Change>,
@@ -78,6 +81,7 @@ impl ExaltStore {
             self.progress.insert(*cls, values.clone());
         }
         self.changes.retain(|c| now - c.t <= KEEP_CHANGES_MS);
+        self.dirty = true;
     }
 
     pub fn progress(&self, class_type: i32) -> Option<&Vec<i32>> {

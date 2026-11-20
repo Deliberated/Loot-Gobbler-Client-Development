@@ -63,6 +63,9 @@ pub struct Run {
 
 #[derive(Debug, Default)]
 pub struct DpsHistory {
+    /// Java would write its file now (its `save()`): the app writes it.
+    pub dirty: bool,
+
     /// Newest first.
     pub runs: Vec<Run>,
     pub live: Option<Run>,
@@ -208,6 +211,7 @@ impl DpsHistory {
         }
         if repaired {
             h.runs.sort_by_key(|r| std::cmp::Reverse(r.start));
+            h.dirty = true;
         }
         h
     }
@@ -226,6 +230,7 @@ impl DpsHistory {
         if let Some(r) = run {
             self.runs.insert(0, r);
             self.runs.truncate(MAX_RUNS);
+            self.dirty = true;
         }
     }
 

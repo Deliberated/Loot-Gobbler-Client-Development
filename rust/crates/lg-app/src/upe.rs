@@ -316,6 +316,11 @@ struct Pending {
 #[derive(Debug)]
 pub struct Upe {
     pub runs: HashMap<i32, Run>,
+    /// The runs' and mission runs' keys in the order put (for Java's `HashMap` order).
+    pub(crate) run_keys: Vec<i32>,
+    pub(crate) mission_keys: Vec<String>,
+    /// Loaded from a file: Gson's maps keep the file's order.
+    pub(crate) runs_linked: bool,
     pub left: Vec<Left>,
     pub missions: HashMap<String, MissionRun>,
     pending: Vec<Pending>,
@@ -348,6 +353,9 @@ impl Default for Upe {
     fn default() -> Self {
         Upe {
             runs: HashMap::new(),
+            run_keys: Vec::new(),
+            mission_keys: Vec::new(),
+            runs_linked: false,
             left: Vec::new(),
             missions: HashMap::new(),
             pending: Vec::new(),
@@ -516,6 +524,7 @@ impl Upe {
                 return Ok(u);
             }
             let root = gson::object(&root)?;
+            u.runs_linked = true;
             if let Some(Json::Object(runs)) = root.get("runs") {
                 for (k, v) in runs {
                     if *v == Json::Null {
@@ -523,7 +532,11 @@ impl Upe {
                     }
                     let (mut run, missing) = read_run(v)?;
                     load_repair(&mut run, missing);
-                    u.runs.insert(crate::java::parse_int(k)?, run);
+                    let id = crate::java::parse_int(k)?;
+                    if !u.runs.contains_key(&id) {
+                        u.run_keys.push(id);
+                    }
+                    u.runs.insert(id, run);
                 }
             }
             if let Some(l) = gson::objects(root.get("left"), |l| {
@@ -541,6 +554,9 @@ impl Upe {
             if let Some(Json::Object(m)) = root.get("missions") {
                 for (k, v) in m {
                     let v = gson::object(v)?;
+                    if !u.missions.contains_key(k) {
+                        u.mission_keys.push(k.clone());
+                    }
                     u.missions.insert(
                         k.clone(),
                         MissionRun {

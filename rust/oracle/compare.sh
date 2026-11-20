@@ -58,7 +58,9 @@ check() { # name, rust flag, then java args
         (cd "$work/run" && $display java -javaagent:"$work/clock-agent.jar" -Djava.net.useSystemProxies=false \
             -Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=9 -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=9 \
             ${web:+-Doracle.web="$web"} -cp "$jar:$work" oracle.ReplayOracle "$pcap" "$@") > "$work/java.txt" 2> "$work/java.log"
-        "$replay" "$pcap" "$flag" "$work/run/assets" --java-data "$work/seed" ${web:+--web "$web"} > "$work/rust.txt" 2> "$work/rust.log"
+        mkdir -p "$work/rustfiles"
+        "$replay" "$pcap" "$flag" "$work/run/assets" --java-data "$work/seed" ${web:+--web "$web"} --save "$work/rustfiles" \
+            > "$work/rust.txt" 2> "$work/rust.log"
     else
         java -cp "$jar:$work" oracle.ReplayOracle "$pcap" "$@" > "$work/java.txt" 2> "$work/java.log"
         "$replay" "$pcap" "$flag" > "$work/rust.txt" 2> "$work/rust.log"
@@ -74,4 +76,18 @@ check() { # name, rust flag, then java args
 check packets --oracle
 check fields --fields --fields "$ids"
 check world --world --world
+# the files: every file Rust wrote is the one Java wrote, byte for byte
+files_same=0
+for f in "$work"/rustfiles/*; do
+    [ -e "$f" ] || continue
+    n=$(basename "$f")
+    if cmp -s "$f" "$work/run/$n"; then
+        files_same=$((files_same + 1))
+    else
+        echo "DIFFERENT file $n ($(basename "$pcap"))"
+        diff <(tr ',' '\n' < "$work/run/$n" 2>/dev/null) <(tr ',' '\n' < "$f") | head -10
+        status=1
+    fi
+done
+echo "same files: $files_same written ($(basename "$pcap"))"
 exit $status

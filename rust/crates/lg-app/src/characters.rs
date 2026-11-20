@@ -136,6 +136,8 @@ pub struct Characters {
     /// whether it was read yet (Java reads it on the first enchantment lookup).
     pub saved_list: Option<String>,
     pub(crate) saved_list_read: bool,
+    /// A new list to save as char-list.xml.
+    pub saved_list_dirty: bool,
     /// Set when the file should be written (the app writes it; nothing here touches files).
     pub dirty: bool,
 }

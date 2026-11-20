@@ -139,10 +139,17 @@ pub struct Holdings {
     pub vault_changes: Vec<VaultChange>,
     /// The places' keys in the order put (for Java's `HashMap` order), and the most there ever were.
     place_keys: Vec<String>,
-    place_most: usize,
+    place_ops: Vec<lg_world::fight::MapOp<String>>,
+    /// Loaded from a file: Gson's maps keep the file's order (then new keys at the end), not a `HashMap`'s.
+    places_linked: bool,
+    pub(crate) gone_linked: bool,
+    pub(crate) gone_ops: Vec<lg_world::fight::MapOp<String>>,
     /// An earlier version's record of the vaults (Java's `whereabouts.json`), for the first start; Java deletes it
     /// once taken over (here only forgotten: the Java folder is never changed).
     whereabouts: Option<String>,
+    /// The places gone in the order put (Java's `HashMap` order), and the journal lines already in the file.
+    pub(crate) gone_keys: Vec<String>,
+    pub(crate) journal_written: usize,
 }
 
 /// What the character list says a character holds (Java: `Holdings.Listed`).
@@ -192,11 +199,14 @@ impl Holdings {
                 }
                 h.places.insert(k, p);
             }
-            h.place_most = h.places.len();
-            h.gone = gone;
+            h.places_linked = true;
+            h.gone_linked = gone.2;
+            h.gone_keys = gone.0;
+            h.gone = gone.1;
         }
         if let Ok(text) = std::fs::read_to_string(dir.join("holdings-journal.txt")) {
             h.journal = text.lines().map(str::to_string).collect();
+            h.journal_written = h.journal.len();
         }
         h.whereabouts = std::fs::read_to_string(dir.join("whereabouts.json")).ok();
         h
@@ -651,19 +661,16 @@ impl Holdings {
     fn track(&mut self, key: &str) {
         if !self.place_keys.iter().any(|k| k == key) {
             self.place_keys.push(key.to_string());
-            self.place_most = self.place_most.max(self.places.len());
+            self.place_ops.push(lg_world::fight::MapOp::Put(key.to_string(), lg_world::fight::java_string_hash(key)));
         }
     }
 
     /// The places' keys in Java's `HashMap` order.
-    fn java_place_order(&self) -> Vec<String> {
-        let keys: Vec<(String, i32)> = self
-            .place_keys
-            .iter()
-            .filter(|k| self.places.contains_key(*k))
-            .map(|k| (k.clone(), lg_world::fight::java_string_hash(k)))
-            .collect();
-        lg_world::fight::java_bucket_order(&keys, lg_world::fight::java_buckets_grown(self.place_most))
+    pub(crate) fn java_place_order(&self) -> Vec<String> {
+        if self.places_linked {
+            return self.place_keys.iter().filter(|k| self.places.contains_key(*k)).cloned().collect();
+        }
+        lg_world::fight::java_order_after(&self.place_ops).into_iter().filter(|k| self.places.contains_key(k)).collect()
     }
 
     /// Java `characters`: what the character list says each character holds. Ignored when it is empty or shares no
@@ -715,6 +722,11 @@ impl Holdings {
             self.line(c, &key, &format!("not in the character list: removed ({d})"));
             self.places.remove(&key);
             self.place_keys.retain(|k| *k != key);
+            self.place_ops.push(lg_world::fight::MapOp::Removed(key.clone(), lg_world::fight::java_string_hash(&key)));
+            if !self.gone.contains_key(&key) {
+                self.gone_keys.push(key.clone());
+                self.gone_ops.push(lg_world::fight::MapOp::Put(key.clone(), lg_world::fight::java_string_hash(&key)));
+            }
             self.gone.insert(key, now);
             changed = true;
         }
@@ -913,7 +925,7 @@ fn earlier_vaults(text: &str) -> Vec<(String, Vec<(i32, usize)>)> {
 
 /// Gson reading `State`: its places (in the file's order) and the places gone; None when Java keeps its own.
 /// Places in the file's order, and the places gone.
-type State = (Vec<(String, Place)>, HashMap<String, i64>);
+type State = (Vec<(String, Place)>, (Vec<String>, HashMap<String, i64>, bool));
 
 fn parse_state(text: &str) -> Result<Option<State>, crate::java::Thrown> {
     use crate::gson;
@@ -963,15 +975,20 @@ fn parse_state(text: &str) -> Result<Option<State>, crate::java::Thrown> {
         }
         out.push((k.clone(), p));
     }
-    let mut gone = HashMap::new();
+    let (mut keys, mut gone) = (Vec::new(), HashMap::new());
+    // a file without it: Java makes a HashMap (files from before syncing)
+    let linked = matches!(root.get("gone"), Some(Json::Object(_)));
     if let Some(Json::Object(g)) = root.get("gone") {
         for (k, v) in g {
             if let Some(t) = gson::long(Some(v))? {
+                if !gone.contains_key(k) {
+                    keys.push(k.clone());
+                }
                 gone.insert(k.clone(), t);
             }
         }
     }
-    Ok(Some((out, gone)))
+    Ok(Some((out, (keys, gone, linked))))
 }
 
 fn between<'a>(s: &'a str, open: &str, close: &str) -> Option<&'a str> {
