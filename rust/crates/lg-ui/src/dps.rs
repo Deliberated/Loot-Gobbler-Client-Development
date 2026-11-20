@@ -180,6 +180,7 @@ impl DpsView {
         let data = app.world.data();
         let mut toggle: Option<String> = None;
         let pending = std::cell::RefCell::new(Vec::new());
+        let c_now = c.now;
         let zone = &app.zone;
         widgets::section(
             ui,
@@ -223,11 +224,20 @@ impl DpsView {
                         }
                         Some(run) => {
                             let is_live = shown_live && live.is_some_and(|l| std::ptr::eq(l, run));
+                            let visit = if run.guild_hall { None } else { visit_of(app, run, is_live) };
+                            // Moonlight Village: the three dancers' subtotal above them (under Umi)
+                            let mut interim = visit.filter(|v| v.mv_phases.iter().any(|ph| DANCERS.contains(&ph.boss)));
                             for i in (0..run.bosses.len()).rev() {
                                 let b = &run.bosses[i];
+                                if let Some(v) = interim
+                                    && DANCERS.contains(&b.object_type)
+                                {
+                                    y += dancers_bar(ui, &p, v, c_now, pos2(x, y), w) + 6.0;
+                                    interim = None;
+                                }
                                 let key = boss_key(run, is_live, b, i);
                                 let open = is_live != self.expanded.contains(&key);
-                                let (h, clicked) = boss_block(ui, &p, icons, data, run, b, open, pos2(x, y), w, &key, zone);
+                                let (h, clicked) = boss_block(ui, &p, icons, data, run, b, open, pos2(x, y), w, &key, zone, visit, c_now);
                                 if clicked {
                                     toggle = Some(key);
                                 }
@@ -421,6 +431,8 @@ fn boss_block(
     w: f32,
     key: &str,
     zone: &lg_app::localtime::Zone,
+    visit: Option<&lg_app::dungeon_visits::Visit>,
+    now: i64,
 ) -> (f32, bool) {
     let painter = ui.painter();
     let f = text(18.0);
@@ -492,7 +504,14 @@ fn boss_block(
     if !open {
         return (head_h, clicked);
     }
-    let h = table(painter, p, data, b, run.guild_hall, pos2(at.x, hr.bottom()), w);
+    let mut h = table(painter, p, data, b, run.guild_hall, pos2(at.x, hr.bottom()), w);
+    // Moonlight Village: the boss's phases below its damage table
+    if let Some(v) = visit {
+        let phases: Vec<&lg_app::dungeon_visits::MvPhase> = v.mv_phases.iter().filter(|ph| ph.boss == b.object_type).collect();
+        if !phases.is_empty() {
+            h += 6.0 + phase_table(ui, painter, p, v, &phases, now, pos2(at.x, hr.bottom() + h + 6.0), w);
+        }
+    }
     (head_h + h, clicked)
 }
 
@@ -640,4 +659,180 @@ pub fn boss_text(data: &lg_gamedata::GameData, zone: &lg_app::localtime::Zone, r
         );
     }
     out
+}
+
+const DANCERS: [i32; 3] = [20450, 20451, 20452];
+
+/// The dungeon visit a run belongs to: the one in progress for the live run, else the one linked to it.
+fn visit_of<'a>(app: &'a lg_app::App, run: &Run, live: bool) -> Option<&'a lg_app::dungeon_visits::Visit> {
+    if live {
+        return app.dungeon_visits.current.as_ref().filter(|v| v.dungeon == run.dungeon);
+    }
+    app.dungeon_visits.visits.iter().find(|v| v.run_start == run.start)
+}
+
+fn phase_ms(ph: &lg_app::dungeon_visits::MvPhase, v: &lg_app::dungeon_visits::Visit, now: i64) -> i64 {
+    if ph.duration_ms > 0 { ph.duration_ms } else { (now - v.start - ph.start_ms).max(0) }
+}
+
+/// Your damage between two times after entering (the visit keeps it per second).
+fn dealt(v: &lg_app::dungeon_visits::Visit, from: i64, to: i64) -> i64 {
+    let end = ((to + 999) / 1000).min(v.dealt.len() as i64);
+    ((from / 1000)..end).map(|s| i64::from(v.dealt[s as usize])).sum()
+}
+
+fn dancer_name(t: i32) -> String {
+    match t {
+        20450 => "Sage Genji".into(),
+        20451 => "Dancer Miko".into(),
+        20452 => "Drummer Kaguya".into(),
+        _ => t.to_string(),
+    }
+}
+
+/// Java `dancersBar`: the three dancers' phases summed up (time, your damage and DPS, at the lantern, flames).
+fn dancers_bar(ui: &Ui, p: &Palette, v: &lg_app::dungeon_visits::Visit, now: i64, at: egui::Pos2, w: f32) -> f32 {
+    let painter = ui.painter();
+    let (mut ms, mut dmg, mut lantern, mut range, mut flames) = (0i64, 0i64, 0i64, 0i64, 0i32);
+    let mut per: Vec<(i32, i32)> = Vec::new();
+    for ph in v.mv_phases.iter().filter(|ph| DANCERS.contains(&ph.boss)) {
+        let d = phase_ms(ph, v, now);
+        ms += d;
+        dmg += dealt(v, ph.start_ms, ph.start_ms + d);
+        lantern += ph.lantern_ms;
+        range += ph.range_ms;
+        flames += ph.flames;
+        match per.iter_mut().find(|x| x.0 == ph.boss) {
+            Some(x) => x.1 += ph.flames,
+            None => per.push((ph.boss, ph.flames)),
+        }
+    }
+    let tf = text(16.0);
+    let sf = text(15.0);
+    let h = jtext::height(painter, &tf).max(jtext::height(painter, &sf)) + 16.0;
+    let r = Rect::from_min_size(at, vec2(w, h));
+    painter.rect_filled(r, 0.0, crate::widgets::brighter(p.sand));
+    painter.rect_filled(Rect::from_min_size(at, vec2(3.0, h)), 0.0, fixed::GOLD);
+    jtext::draw_bold(painter, pos2(r.left() + 14.0, r.center().y), Align2::LEFT_CENTER, "Dancers interim", &tf, fixed::GOLD);
+    let at_lantern = if lantern > 0 { format!("{}%", (100.0 * range as f64 / lantern as f64).round()) } else { "-".into() };
+    let stats = format!(
+        "{}   \u{00B7}   {} DMG   \u{00B7}   {} DPS   \u{00B7}   at lantern {at_lantern}   \u{00B7}   {flames} flames",
+        duration(ms),
+        num(dmg),
+        num((dmg as f64 * 1000.0 / ms.max(1000) as f64).round() as i64)
+    );
+    jtext::draw(painter, pos2(r.right() - 14.0, r.center().y), Align2::RIGHT_CENTER, &stats, &sf, p.ink);
+    let tip = std::iter::once("Kaguya, Genji and Miko together, before Umi".to_string())
+        .chain(per.iter().map(|(b, f)| format!("{}: {f} flames", dancer_name(*b))))
+        .collect::<Vec<_>>()
+        .join("\n");
+    widgets::tip(ui, r, ("dancers", v.start), &tip);
+    h
+}
+
+/// Java `phaseTable`: one row per phase (song, damage or lantern, time, your damage and DPS, at the lantern,
+/// flames), then the totals.
+#[allow(clippy::too_many_arguments)]
+fn phase_table(
+    ui: &Ui,
+    painter: &egui::Painter,
+    p: &Palette,
+    v: &lg_app::dungeon_visits::Visit,
+    phases: &[&lg_app::dungeon_visits::MvPhase],
+    now: i64,
+    at: egui::Pos2,
+    w: f32,
+) -> f32 {
+    let cols = ["Phase", "Song", "Type", "Time", "Your DMG", "Your DPS", "At lantern", "Flames"];
+    // Phase at most 60, Flames at most 70, Song wider; the rest share
+    let rest = ((w - 60.0 - 70.0 - 220.0) / 5.0).floor();
+    let widths = [60.0, 220.0 + (w - 60.0 - 70.0 - 220.0 - rest * 5.0), rest, rest, rest, rest, rest, 70.0];
+    let head_h = 36.0;
+    let hr = Rect::from_min_size(at, vec2(w, head_h));
+    painter.rect_filled(hr, 0.0, p.header);
+    let mut x = at.x;
+    for (i, c) in cols.iter().enumerate() {
+        jtext::draw(painter, pos2(x + widths[i] / 2.0, hr.center().y), Align2::CENTER_CENTER, c, &small(), p.ink_soft);
+        x += widths[i];
+        if i < cols.len() - 1 {
+            painter.rect_filled(Rect::from_min_size(pos2(x - 1.0, hr.top() + 4.0), vec2(1.0, head_h - 8.0)), 0.0, p.line);
+        }
+    }
+    painter.rect_filled(Rect::from_min_size(pos2(at.x, hr.bottom() - 1.0), vec2(w, 1.0)), 0.0, p.line);
+    let (mut tms, mut tdmg, mut tl, mut tr, mut tf) = (0i64, 0i64, 0i64, 0i64, 0i32);
+    let mut rows: Vec<[String; 8]> = Vec::new();
+    for (i, ph) in phases.iter().enumerate() {
+        let ms = phase_ms(ph, v, now);
+        let dmg = dealt(v, ph.start_ms, ph.start_ms + ms);
+        let last = ph.lantern && i > 0 && phases[i - 1].lantern;
+        rows.push([
+            (i + 1).to_string(),
+            ph.title.clone(),
+            if ph.lantern { if last { "Lantern (final)" } else { "Lantern" } } else { "Damage" }.into(),
+            duration(ms),
+            num(dmg),
+            num((dmg as f64 * 1000.0 / ms.max(1000) as f64).round() as i64),
+            if ph.lantern && ph.lantern_ms > 0 {
+                format!("{}%", (100.0 * ph.range_ms as f64 / ph.lantern_ms as f64).round())
+            } else {
+                "-".into()
+            },
+            if ph.duration_ms > 0 { ph.flames.to_string() } else { "...".into() },
+        ]);
+        tms += ms;
+        tdmg += dmg;
+        tl += ph.lantern_ms;
+        tr += ph.range_ms;
+        tf += ph.flames;
+    }
+    rows.push([
+        "Total".into(),
+        String::new(),
+        String::new(),
+        duration(tms),
+        num(tdmg),
+        num((tdmg as f64 * 1000.0 / tms.max(1000) as f64).round() as i64),
+        if tl > 0 { format!("{}%", (100.0 * tr as f64 / tl as f64).round()) } else { "-".into() },
+        tf.to_string(),
+    ]);
+    let total = rows.len() - 1;
+    let mut y = hr.bottom();
+    let f = text(18.0);
+    for (k, row) in rows.iter().enumerate() {
+        let rr = Rect::from_min_size(pos2(at.x, y), vec2(w, 24.0));
+        painter.rect_filled(rr, 0.0, if k % 2 == 1 { p.header } else { p.paper });
+        let mut x = at.x;
+        for (i, t) in row.iter().enumerate() {
+            let mut color = p.ink;
+            if i == 7 {
+                color = fixed::GOLD;
+            }
+            if i == 6
+                && let Some(pct) = t.strip_suffix('%').and_then(|n| n.parse::<i32>().ok())
+            {
+                color = if pct >= 90 {
+                    fixed::GREEN
+                } else if pct < 60 {
+                    Color32::from_rgb(0xBE, 0x33, 0x2D)
+                } else {
+                    p.ink
+                };
+            }
+            if k == total {
+                color = if i == 7 { fixed::GOLD } else { p.ink_soft };
+            }
+            let draw = if k == total { jtext::draw_bold } else { jtext::draw };
+            draw(painter, pos2(x + 8.0, rr.center().y), Align2::LEFT_CENTER, t, &f, color);
+            x += widths[i];
+        }
+        y += 24.0;
+    }
+    let r = Rect::from_min_max(at, pos2(at.x + w, y));
+    widgets::tip(
+        ui,
+        r,
+        ("phases", v.start, phases[0].boss),
+        "At lantern: your time within 3.5 tiles of the lantern while it was there.\nFlames: the score the game gave for the phase.",
+    );
+    y - at.y
 }

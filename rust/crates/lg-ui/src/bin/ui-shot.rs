@@ -103,7 +103,14 @@ fn main() {
         // a fresh window per picture, the Java default theme as the oracle shows it
         let mut win = lg_ui::window::Window::new(&assets, props.clone());
         win.palette = lg_ui::theme::palette(None);
-        win.open(&tab);
+        match tab.strip_prefix("Battles:run:").and_then(|t| t.parse::<i64>().ok()) {
+            // a run under DPS, its latest boss open
+            Some(start) => {
+                win.open("Battles:dps");
+                win.battles.dps.show_run(&app.dps_history, Some(start));
+            }
+            None => win.open(&tab),
+        }
         let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(w, h)).with_pixels_per_point(1.0).wgpu().build_ui(|ui| {
             // the whole window, without the margin the harness puts around it
             let mut all = ui.new_child(egui::UiBuilder::new().max_rect(ui.ctx().content_rect()));

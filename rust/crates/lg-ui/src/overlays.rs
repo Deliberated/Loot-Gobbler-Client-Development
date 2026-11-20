@@ -329,7 +329,14 @@ pub fn badge(painter: &Painter, ctx: &egui::Context, icons: &mut Icons, data: &G
                         Color32::WHITE,
                     );
                 }
-                let color = if *held { HELD } else { TEXT };
+                // a phase still running: "..." faint (Java's ZERO)
+                let color = if *held {
+                    HELD
+                } else if t == "..." {
+                    Color32::from_rgba_unmultiplied(242, 236, 220, 115)
+                } else {
+                    TEXT
+                };
                 jtext::draw_bold(painter, pos2(x + flame_h + 4.0, cy), Align2::LEFT_CENTER, t, &bold, color);
             }
             Part::Final => {

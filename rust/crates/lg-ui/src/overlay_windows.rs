@@ -48,7 +48,8 @@ fn content(id: &str, painter: &egui::Painter, ctx: &egui::Context, icons: &mut I
             let c = &app.cooldowns;
             let matrix =
                 (c.matrix_fired >= v.start && now - c.matrix_fired < MATRIX_COOLDOWN_MS && c.matrix_type >= 0).then_some(c.matrix_type);
-            let b = Badge { dungeon: &v.dungeon, rank, amulet, matrix, moonlight: None };
+            let moonlight = (v.dungeon == "Moonlight Village").then(|| moonlight(v));
+            let b = Badge { dungeon: &v.dungeon, rank, amulet, matrix, moonlight };
             Some(overlays::badge(painter, ctx, icons, data, &b, at))
         }
         "mana" => app.vitals.fresh(now).then(|| overlays::mana_bar(painter, at, app.vitals.mp, app.vitals.max_mp)),
@@ -87,6 +88,36 @@ fn content(id: &str, painter: &egui::Painter, ctx: &egui::Context, icons: &mut I
             Some(overlays::buffs(painter, ctx, icons, data, at, &tiles, now))
         }
     }
+}
+
+/// Java `OverlayBadge.refresh` in Moonlight Village: the flames of the fight you are in (the three dancers'
+/// phases, or once Umi starts only hers), whether they are the dancers', the latest phase's flames ("..." while
+/// it runs, counting up at a lantern) and whether that phase ended (held, shown with FINAL).
+fn moonlight(v: &lg_app::dungeon_visits::Visit) -> (i32, bool, String, bool) {
+    const DANCERS: [i32; 3] = [20450, 20451, 20452];
+    const MAX_FLAMES: i32 = 8;
+    let phases = &v.mv_phases;
+    let dancers = phases.iter().rev().find(|ph| ph.boss != 0).map(|ph| DANCERS.contains(&ph.boss));
+    let now = phases.last();
+    let held = now.is_some_and(|n| n.duration_ms > 0);
+    let live = now.is_some_and(|n| !held && n.lantern && n.beats_max > 0);
+    let so_far = |ph: &lg_app::dungeon_visits::MvPhase| {
+        if !ph.lantern || ph.beats_max <= 0 { 0 } else { MAX_FLAMES.min(ph.beats * MAX_FLAMES / ph.beats_max) }
+    };
+    let mut flames = 0;
+    for (i, ph) in phases.iter().enumerate() {
+        let of_dancers = if ph.boss == 0 { dancers.is_none_or(|d| d) } else { DANCERS.contains(&ph.boss) };
+        if dancers.is_none() || Some(of_dancers) == dancers {
+            flames += if i + 1 == phases.len() && live { so_far(ph) } else { ph.flames };
+        }
+    }
+    let phase = match now {
+        None => "0".to_string(),
+        Some(n) if held => n.flames.to_string(),
+        Some(n) if live => so_far(n).to_string(),
+        Some(_) => "...".to_string(),
+    };
+    (flames, dancers.unwrap_or(true), phase, held)
 }
 
 impl OverlayWindows {
