@@ -86,6 +86,7 @@ fn main() {
                         guild.page = t.strip_prefix("Guild:").and_then(|n| names.iter().position(|x| *x == n)).unwrap_or(0);
                         guild.show(ui, &mut c)
                     }
+                    "Server" => lg_ui::server::show(ui, &mut c),
                     "Social" | "Social:quests" | "Social:discord" => {
                         social.page = match tab {
                             "Social:quests" => 1,
