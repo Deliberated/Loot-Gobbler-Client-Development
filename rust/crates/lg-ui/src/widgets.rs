@@ -407,3 +407,18 @@ pub fn search_field(ui: &mut Ui, p: &Palette, r: Rect, value: &mut String, place
     painter.rect_stroke(r, 0.0, Stroke::new(1.0, if focused { p.gold } else { p.line }), StrokeKind::Inside);
     resp.changed()
 }
+
+/// Java `setToolTipText` on a painted part: the text when the pointer rests over `r` (several lines with `\n`).
+pub fn tip(ui: &Ui, r: Rect, id: impl std::hash::Hash + std::fmt::Debug, t: &str) {
+    if t.is_empty() {
+        return;
+    }
+    let resp = ui.interact(r, ui.scope_id().with(("tip", id)), Sense::hover());
+    let p_ink = ui.visuals().override_text_color.unwrap_or(Color32::WHITE);
+    resp.on_hover_ui(|ui| {
+        let f = text(18.0);
+        for line in t.lines() {
+            label(ui, line, &f, p_ink);
+        }
+    });
+}

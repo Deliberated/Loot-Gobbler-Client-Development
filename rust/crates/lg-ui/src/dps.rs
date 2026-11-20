@@ -145,7 +145,14 @@ impl DpsView {
         let lr = Rect::from_min_size(pos2(strip.right() - 1.0 - 12.0 - 18.0 - lw, strip.center().y - 18.0), vec2(lw, 36.0));
         painter.rect(lr, 0.0, if live_on { p.gold } else { p.header }, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
         jtext::draw(&painter, lr.center(), Align2::CENTER_CENTER, "LIVE", &small(), if live_on { p.on_accent } else { p.ink });
-        if ui.interact(lr, ui.scope_id().with("dps-live"), Sense::click()).clicked() {
+        let live_resp = ui.interact(lr, ui.scope_id().with("dps-live"), Sense::click());
+        widgets::tip(
+            ui,
+            lr,
+            "live-tip",
+            "On: follow the dungeon you are in, and keep the last run open until the next one deals damage.\nOff: show only what you click.",
+        );
+        if live_resp.clicked() {
             let on = self.selected.is_some() || !self.hold;
             if !on && let Some(h) = held {
                 self.selected = Some(h.start);
@@ -392,7 +399,10 @@ fn history_row(
             None => ("no boss fought".to_string(), fixed::MUTED),
             Some((place, of)) => (format!("#{place} of {of}"), if place == 1 { fixed::GOLD } else { p.ink_soft }),
         };
-        jtext::draw(painter, pos2(rx, rr.center().y), Align2::RIGHT_CENTER, &t, &text(18.0), color);
+        let tr = jtext::draw(painter, pos2(rx, rr.center().y), Align2::RIGHT_CENTER, &t, &text(18.0), color);
+        if let Some(b) = r.main_boss().filter(|b| b.players.iter().any(|x| x.me)) {
+            widgets::tip(ui, tr, ("run-rank", r.start), &format!("Your place by damage on {}", b.name.as_deref().unwrap_or("null")));
+        }
     }
     (row.clicked() && !removed, removed)
 }
@@ -467,7 +477,7 @@ fn boss_block(
     if let Some(i) = b.players.iter().position(|x| x.me) {
         let place = if run.guild_hall { loadout_rank(run, b) } else { i + 1 };
         let of = if run.guild_hall { run.bosses.iter().filter(|b| b.players.iter().any(|x| x.me)).count() } else { b.players.len() };
-        jtext::draw(
+        let pr = jtext::draw(
             painter,
             pos2(br.left() - 16.0, hr.center().y),
             Align2::RIGHT_CENTER,
@@ -475,6 +485,8 @@ fn boss_block(
             &f,
             if place == 1 { fixed::GOLD } else { p.ink_soft },
         );
+        let tip = if run.guild_hall { "This loadout's place among your loadouts, by DPS" } else { "Your place by damage on this boss" };
+        widgets::tip(ui, pr, ("place", key), tip);
     }
     let clicked = ui.interact(nr, ui.scope_id().with(("boss", key)), Sense::click()).clicked();
     if !open {

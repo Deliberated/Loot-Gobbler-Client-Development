@@ -371,6 +371,22 @@ fn day_summary(
             }
         }
         jtext::draw(painter, pos2(cx, y + top_h), Align2::CENTER_TOP, number, &nf, color);
+        let tip = match caption {
+            "Exalt dungeons" => "Completed dungeons of difficulty 7 or more".to_string(),
+            "Exaltations" => "Exaltation progress points earned in the day's dungeons".to_string(),
+            "Highest Rarity" => {
+                let name =
+                    data.items.item(s.best_item).filter(|i| !i.name.is_empty()).map_or(format!("Item {}", s.best_item), |i| i.name.clone());
+                format!("Highest Rarity: {name} ({number})")
+            }
+            c => c.to_string(),
+        };
+        widgets::tip(
+            ui,
+            Rect::from_min_size(pos2(x, y), vec2(w, top_h + jtext::height(painter, &nf))),
+            ("daysum", at.y as i64, caption),
+            &tip,
+        );
         x += w + 22.0;
     };
     let white = icons.object(ui.ctx(), data, 1292, 26);
@@ -405,6 +421,8 @@ fn tile(
 ) -> bool {
     let painter = ui.painter();
     let data = app.world.data();
+    // the tile's click first: its parts' tooltips lie over it
+    let clicked = ui.interact(r, ui.scope_id().with(("visit", v.start)), Sense::click()).clicked();
     painter.rect_filled(r, 0.0, if selected { mix(p.gold, p.header, 0.3) } else { p.header });
     painter.rect_stroke(
         r,
@@ -432,6 +450,9 @@ fn tile(
         },
     };
     let rr = jtext::draw(painter, pos2(mx, y), Align2::LEFT_TOP, &rank, &text(16.0), rank_color);
+    if let Some(b) = run.filter(|r| !r.guild_hall).and_then(|r| r.main_boss()).filter(|b| b.players.iter().any(|x| x.me)) {
+        widgets::tip(ui, rr, ("rank", v.start), &format!("Your place by damage on {}", b.name.as_deref().unwrap_or("null")));
+    }
     let dur = if current { format!("NOW  ·  {}", duration(v.duration_ms)) } else { duration(v.duration_ms) };
     jtext::draw(
         painter,
@@ -485,6 +506,14 @@ fn tile(
             singles += 1;
         }
     }
+    if !per_stat.is_empty() {
+        let tip: String = std::iter::once("Exaltation progress here:".to_string())
+            .chain(per_stat.iter().map(|(stat, n)| format!("{} +{n}", EXALT_STATS[(*stat).clamp(0, 7) as usize])))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let bottom = if has_singles && multis > 0 { multi_y + POTION } else { py + POTION };
+        widgets::tip(ui, Rect::from_min_max(pos2(mx, py), pos2(mx2.max(sx), bottom)), ("potions", v.start), &tip);
+    }
     // the amulet, after the room the fullest potion rows take
     if !v.amulet_saves.is_empty() {
         let room = (SINGLES as f32 * POTION + (SINGLES as f32 - 1.0) * 6.0)
@@ -498,6 +527,8 @@ fn tile(
         if let Some(t) = icons.object(ui.ctx(), data, AMULET, 28) {
             painter.image(t.id(), Rect::from_min_size(pos2(ax, py), vec2(28.0, 28.0)), uv(), Color32::WHITE);
         }
+        let tip = format!("Your Amulet of Restoration saved you here{}", if saves > 1 { format!(" {saves} times") } else { String::new() });
+        widgets::tip(ui, Rect::from_min_size(pos2(ax, py), vec2(28.0, 28.0)), ("amulet", v.start), &tip);
     }
     // the name along the bottom; at the right "NOT COMPLETED" and the difficulty with the gravestone
     let nf = text(20.0);
@@ -520,6 +551,12 @@ fn tile(
         let color = Color32::from_rgb(0xF2, 0xEC, 0xDC);
         jtext::draw_bold(painter, pos2(rx - tw, base - asc), Align2::LEFT_TOP, &t, &bf, color);
         rx -= tw;
+        widgets::tip(
+            ui,
+            Rect::from_min_max(pos2(rx, base - asc), pos2(r.right() - 10.0, base)),
+            ("difficulty", v.start),
+            "Dungeon difficulty",
+        );
     }
     let not_done = !current && dungeon_visits::completed(v, &app.dps_history) == Some(false);
     if not_done {
@@ -531,8 +568,9 @@ fn tile(
         let br = Rect::from_min_size(pos2(rx - tw, name.center().y - h / 2.0), vec2(tw, h));
         painter.rect(br, 0.0, Color32::from_black_alpha(90), Stroke::new(1.0, red), StrokeKind::Inside);
         jtext::draw_bold(painter, br.center(), Align2::CENTER_CENTER, "NOT COMPLETED", &ff, red);
+        widgets::tip(ui, br, ("open", v.start), "You left before its boss was killed");
     }
-    ui.interact(r, ui.scope_id().with(("visit", v.start)), Sense::click()).clicked()
+    clicked
 }
 
 const EXALT_STATS: [&str; 8] = ["DEX", "SPD", "VIT", "WIS", "DEF", "ATT", "MP", "HP"];
@@ -574,7 +612,7 @@ fn taken_text(data: &lg_gamedata::GameData, v: &Visit) -> String {
 }
 
 /// Java `DungeonVisits.hitSource`.
-fn hit_source(data: &lg_gamedata::GameData, enemy: i32) -> String {
+pub fn hit_source(data: &lg_gamedata::GameData, enemy: i32) -> String {
     if enemy > 0 {
         return data.object_name(enemy).unwrap_or("").to_string();
     }
@@ -763,6 +801,11 @@ fn detail(ui: &mut Ui, c: &mut Ctx, v: &Visit, current: bool, side: Rect) -> Opt
                 let gh = crate::damage_graph::height(&fights);
                 let gr = Rect::from_min_size(pos2(r.left(), ty), vec2(r.width(), gh));
                 let bar = crate::damage_graph::paint(&painter, ui.ctx(), icons, data, &p, v, &fights, now, gr);
+                if let Some(pos) = ui.interact(gr, ui.scope_id().with("graph"), Sense::hover()).hover_pos()
+                    && let Some(t) = crate::damage_graph::tip(data, v, &fights, now, gr, pos)
+                {
+                    crate::damage_graph::show_tip(ui.ctx(), &p, pos, &t);
+                }
                 ty += gh;
                 if let Some((at, len)) = bar {
                     // the scrollbar under it, at its latest end

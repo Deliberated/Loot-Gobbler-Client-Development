@@ -1,7 +1,7 @@
 //! Pictures of the window without showing it, to compare with the Java app's (`oracle/UiOracle.java`): each tab
 //! painted into `<out dir>/<Tab>.png`, rendered offscreen (wgpu; a software renderer will do).
 //!
-//!   ui-shot <out dir> <width> <height> [--data <the Java app's data folder>] [tab...]
+//!   ui-shot <out dir> <width> <height> [--data <the Java app's data folder>] [--hover x,y] [tab...]
 //!
 //! With `--data` the views show that folder's records (read only) and its `assets`.
 
@@ -35,8 +35,16 @@ fn main() {
         eprintln!("usage: ui-shot <out dir> <width> <height> [--data <dir>] [tab...]");
         std::process::exit(2);
     };
-    let (data, tabs) = match rest {
+    let (data, rest) = match rest {
         [flag, d, tabs @ ..] if flag == "--data" => (Some(std::path::PathBuf::from(d)), tabs),
+        tabs => (None, tabs),
+    };
+    // `--hover x,y`: the pointer rests there (to see a tooltip)
+    let (hover, tabs) = match rest {
+        [flag, at, tabs @ ..] if flag == "--hover" => {
+            let (x, y) = at.split_once(',').expect("--hover x,y");
+            (Some(egui::pos2(x.parse().expect("x"), y.parse().expect("y"))), tabs)
+        }
         tabs => (None, tabs),
     };
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
@@ -60,6 +68,14 @@ fn main() {
             win.show(&mut all, &app, now);
         });
         harness.run_steps(3);
+        if let Some(at) = hover {
+            harness.input_mut().events.push(egui::Event::PointerMoved(at));
+            harness.run_steps(2);
+            // past the tooltip delay (the harness's clock moves a step at a time)
+            for _ in 0..60 {
+                harness.step();
+            }
+        }
         let img = harness.render().expect("render");
         let path = std::path::Path::new(out).join(format!("{}.png", tab.replace(' ', "_").replace(':', "-")));
         img.save(&path).expect("save");

@@ -499,3 +499,99 @@ fn teardrop(
         jtext::draw(painter, pos2(cx, tip.y + r + 1.0 + asc), Align2::CENTER_BOTTOM, &s, font, BUBBLE_LINE);
     }
 }
+
+/// Java `getToolTipText` of the graph painted in `r`, for the pointer at `pos`: a teardrop's dangerous moments,
+/// a boss fight in the lane, your death, your amulet, else the number of the slice (dealt above the line, taken
+/// below it).
+pub fn tip(data: &GameData, v: &Visit, fights: &[Fight], now: i64, r: Rect, pos: Pos2) -> Option<String> {
+    let window = WINDOW_MS;
+    let (w, h) = (r.width(), r.height());
+    let lane = if fights.is_empty() { 0.0 } else { LANE };
+    let pad_bottom = PAD_BOTTOM + lane;
+    let base = h - PAD_BOTTOM - lane;
+    let fit = (((w - PAD_LEFT - PAD_RIGHT + SLICE_PX - 1.0) / SLICE_PX).floor()).max(1.0) as i64;
+    let view_ms = fit * window;
+    let total = (span(v, now) as f64 / 1000.0).ceil() as i64;
+    let extent = view_ms / 1000;
+    let view_start = (total.max(extent) - extent) * 1000;
+    let x_of = |t: i64| PAD_LEFT + ((t - view_start) as f64 * f64::from(SLICE_PX) / window as f64).round() as f32;
+    let (x, y) = (pos.x - r.left(), pos.y - r.top());
+    let mid = PAD_TOP + ((h - pad_bottom - PAD_TOP) * 2.0 / 5.0).floor();
+    let sl = slices(v, window, now);
+    // the teardrops at the edges
+    let thr = threshold(v);
+    let (first, last) = (view_start / window, (view_start + view_ms) / window);
+    let (mut lt, mut rt, mut lc, mut rc) = (None, None, 0, 0);
+    for (i, d) in sl.damage.iter().enumerate() {
+        if *d < thr {
+            continue;
+        }
+        if (i as i64) < first {
+            lt = Some(i);
+            lc += 1;
+        } else if i as i64 > last {
+            rt.get_or_insert(i);
+            rc += 1;
+        }
+    }
+    let cy = ((mid + base) / 2.0).floor();
+    let reach = (BUBBLE * 1.9).floor() + BUBBLE;
+    let bubble = |target: usize, count: usize, side: &str| {
+        let t = sl.enemy[target];
+        let who = if t == 0 { "the ground or area effects".to_string() } else { crate::battles::hit_source(data, t) };
+        let n = if count == 1 { "A dangerous moment".to_string() } else { format!("{count} dangerous moments") };
+        format!("{n} to the {side}\nnearest: {}, {who}\nclick to scroll there", crate::battles::duration(target as i64 * window))
+    };
+    if let Some(i) = lt
+        && x >= PAD_LEFT + 4.0
+        && x <= PAD_LEFT + 4.0 + reach
+        && (y - cy).abs() <= BUBBLE
+    {
+        return Some(bubble(i, lc, "left"));
+    }
+    if let Some(i) = rt
+        && x <= w - PAD_RIGHT - 4.0
+        && x >= w - PAD_RIGHT - 4.0 - reach
+        && (y - cy).abs() <= BUBBLE
+    {
+        return Some(bubble(i, rc, "right"));
+    }
+    if x < PAD_LEFT {
+        return None;
+    }
+    if !fights.is_empty() && y >= h - LANE {
+        let f = fights.iter().find(|f| x >= x_of(f.from) - 4.0 && x <= x_of(f.to) + 4.0)?;
+        let d = crate::battles::duration;
+        return Some(format!("{}\n{} to {}  \u{00B7}  {}", f.boss, d(f.from), d(f.to), d(f.to - f.from)));
+    }
+    if v.died_at >= 0 && (x_of(i64::from(v.died_at)) - x).abs() <= 3.0 {
+        let by = v.killed_by.as_ref().map_or(String::new(), |k| format!(" ({k})"));
+        return Some(format!("{}:  you died{by}", crate::battles::duration(i64::from(v.died_at))));
+    }
+    if y > mid
+        && let Some(t) = v.amulet_saves.iter().find(|t| (x_of(i64::from(**t)) - x).abs() <= 3.0)
+    {
+        return Some(format!("{}:  your Amulet of Restoration fired", crate::battles::duration(i64::from(*t))));
+    }
+    let i = ((view_start + ((x - PAD_LEFT) as f64 * window as f64 / f64::from(SLICE_PX)) as i64) / window) as usize;
+    let value = if y < mid { dealt_slices(v, window).get(i).copied().unwrap_or(0) } else { sl.damage.get(i).copied().unwrap_or(0) };
+    (value != 0).then(|| crate::profile::num(value))
+}
+
+/// A tooltip at the pointer, at once (the graph's: Java sets the delay to 0 over it).
+pub fn show_tip(ctx: &egui::Context, p: &Palette, pos: Pos2, t: &str) {
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("graph-tip")));
+    let f = text(18.0);
+    let lh = jtext::height(&painter, &f);
+    let w = t.lines().map(|l| jtext::width(&painter, l, &f)).fold(0.0, f32::max) + 12.0;
+    let hh = t.lines().count() as f32 * lh + 8.0;
+    let mut at = pos + vec2(12.0, 18.0);
+    let screen = ctx.content_rect();
+    at.x = at.x.min(screen.right() - w - 2.0);
+    at.y = if at.y + hh > screen.bottom() { pos.y - hh - 4.0 } else { at.y };
+    let r = Rect::from_min_size(at, vec2(w, hh));
+    painter.rect(r, 0.0, p.paper, Stroke::new(1.0, p.line), egui::StrokeKind::Inside);
+    for (k, l) in t.lines().enumerate() {
+        jtext::draw(&painter, pos2(r.left() + 6.0, r.top() + 4.0 + k as f32 * lh), Align2::LEFT_TOP, l, &f, p.ink);
+    }
+}

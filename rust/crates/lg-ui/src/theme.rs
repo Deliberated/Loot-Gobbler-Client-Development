@@ -202,6 +202,12 @@ pub fn apply(ctx: &egui::Context, p: &Palette) {
         v.widgets.hovered.bg_fill = p.ink_soft;
         v.widgets.active.bg_fill = p.ink;
         v.menu_corner_radius = egui::CornerRadius::ZERO;
+        // tooltips as Java's: paper, a 1 px line, 4/6 px inside, after Swing's 750 ms
+        v.window_stroke = egui::Stroke::new(1.0, p.line);
+        v.popup_shadow = egui::Shadow::NONE;
+        st.spacing.menu_margin = egui::Margin::symmetric(6, 4);
+        st.interaction.tooltip_delay = 0.75;
+        st.interaction.tooltip_grace_time = 0.0;
     });
 }
 
