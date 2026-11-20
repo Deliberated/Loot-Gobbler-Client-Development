@@ -780,6 +780,11 @@ impl Holdings {
         self.tally(c, living).0.get(&item).copied().unwrap_or(0)
     }
 
+    /// Java's tally: copies of every collectible item (one pass for many items).
+    pub fn counts(&self, c: &Ctx, living: &HashMap<i32, bool>) -> HashMap<i32, i32> {
+        self.tally(c, living).0
+    }
+
     pub fn best_enchants(&self, c: &Ctx, living: &HashMap<i32, bool>, item: i32) -> i32 {
         self.tally(c, living).1.get(&item).copied().unwrap_or(-1)
     }
@@ -806,6 +811,80 @@ impl Holdings {
             }
         }
         (n, best)
+    }
+
+    /// Java `everyCopy`: every copy of an item on living characters and in the vaults, characters first by id.
+    pub fn every_copy(&self, living: &HashMap<i32, bool>, item: i32) -> Vec<crate::loadout::Held> {
+        let mut out = Vec::new();
+        for key in self.java_place_order() {
+            let p = &self.places[&key];
+            let char_id = key.strip_prefix("char:").and_then(|i| i.parse::<i32>().ok());
+            if let Some(id) = char_id
+                && !living.contains_key(&id)
+            {
+                continue;
+            }
+            let seasonal = match char_id {
+                Some(id) => living.get(&id).copied(),
+                None => Some(key == SEASONAL_VAULT),
+            };
+            for (section, slots) in &p.sections {
+                for (i, slot) in slots.iter().enumerate() {
+                    if slot.item != item {
+                        continue;
+                    }
+                    let place = match char_id {
+                        Some(_) if section == QUICK => "Quick slot".to_string(),
+                        Some(_) => slot_name(i).to_string(),
+                        None => section.clone(),
+                    };
+                    out.push(crate::loadout::Held {
+                        char_id: char_id.unwrap_or(0),
+                        vault: if char_id.is_some() { None } else { Some(key.clone()) },
+                        slot: place,
+                        enchant_ids: slot.enchant_ids.clone(),
+                        seasonal,
+                    });
+                }
+            }
+        }
+        out.sort_by(|a, b| {
+            (a.char_id == 0)
+                .cmp(&(b.char_id == 0))
+                .then(a.char_id.cmp(&b.char_id))
+                .then(a.vault.as_deref().unwrap_or("").cmp(b.vault.as_deref().unwrap_or("")))
+        });
+        out
+    }
+
+    /// Java `itemsHeld`: every item you have on that side (None: both), in the order of Java's `HashSet`.
+    pub fn items_held(&self, living: &HashMap<i32, bool>, seasonal: Option<bool>) -> Vec<i32> {
+        let mut seen = Vec::new();
+        for key in self.java_place_order() {
+            let char_id = key.strip_prefix("char:").and_then(|i| i.parse::<i32>().ok());
+            if let Some(id) = char_id
+                && !living.contains_key(&id)
+            {
+                continue;
+            }
+            let side = match char_id {
+                Some(id) => living.get(&id).copied(),
+                None => Some(key == SEASONAL_VAULT),
+            };
+            if let (Some(want), Some(side)) = (seasonal, side)
+                && want != side
+            {
+                continue;
+            }
+            for (_, slots) in &self.places[&key].sections {
+                for slot in slots {
+                    if slot.item > 0 && !seen.contains(&slot.item) {
+                        seen.push(slot.item);
+                    }
+                }
+            }
+        }
+        lg_world::fight::java_hash_order(&seen)
     }
 
     pub fn known(&self) -> bool {

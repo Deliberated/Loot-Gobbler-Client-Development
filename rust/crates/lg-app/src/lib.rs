@@ -20,6 +20,7 @@ pub mod holdings;
 pub mod item_cooldowns;
 pub mod item_use;
 pub mod java;
+pub mod loadout;
 pub mod localtime;
 pub mod login;
 pub mod loot_events;

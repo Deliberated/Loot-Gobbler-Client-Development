@@ -319,6 +319,11 @@ fn parse_tiles(s: &str, problems: &mut Vec<String>) -> HashMap<i32, Tile> {
     out
 }
 
+/// Java's `Integer.decode`, None where it throws.
+pub fn decode_int_pub(s: &str) -> Option<i32> {
+    decode_int(s).ok()
+}
+
 /// Java's `Integer.decode`: decimal, or hex after `0x`/`#`, with an optional sign.
 pub(crate) fn decode_int(s: &str) -> Result<i32, String> {
     let (neg, body) = match s.strip_prefix('-') {

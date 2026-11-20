@@ -7,7 +7,14 @@ const ROGUE: i32 = 768;
 
 fn world() -> World {
     let mut d = GameData::default();
-    d.classes.push(Class { id: ROGUE, name: "Rogue".into(), max_stats: [0; 8], base_gear: [0; 4], weapon_group: vec![ROGUE], slot_types: None });
+    d.classes.push(Class {
+        id: ROGUE,
+        name: "Rogue".into(),
+        max_stats: [0; 8],
+        base_gear: [0; 4],
+        weapon_group: vec![ROGUE],
+        slot_types: None,
+    });
     World::new(d)
 }
 

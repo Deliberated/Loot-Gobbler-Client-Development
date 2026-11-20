@@ -6,6 +6,7 @@
 //!   lg-replay decoded-ids               the ids of the packets that have a decoder, for oracle/compare.sh
 //!   lg-replay gamedata <assets>         the game data read from an assets folder, to compare with Java
 //!   lg-replay <session.pcap> --stats    only the summary
+//!   lg-replay suggest <data dir>        the suggested loadouts of every character, as oracle/SuggestOracle.java
 //!   lg-replay sprites <assets>          every object's sprite and dye mask, as oracle/SpriteOracle.java prints them
 //!   lg-replay extract <resources.assets> <assets>
 //!                                       the game data extracted from the game as the Java app does, then each
@@ -88,6 +89,7 @@ fn main() -> ExitCode {
         }
         [cmd, dir] if cmd == "gamedata" => gamedata(std::path::Path::new(dir)),
         [cmd, dir] if cmd == "sprites" => sprites(std::path::Path::new(dir)),
+        [cmd, dir] if cmd == "suggest" => suggest(std::path::Path::new(dir)),
         [cmd, game, out] if cmd == "extract" => extract(std::path::Path::new(game), std::path::Path::new(out)),
         [cmd, rest @ ..] if cmd == "capture" => {
             let all = rest.iter().any(|f| f == "--all");
@@ -505,6 +507,67 @@ fn world(
         }
     }
     full(&mut out, "end", &w.dump());
+    let _ = out.flush();
+    ExitCode::SUCCESS
+}
+
+/// The suggested loadouts (see `oracle/SuggestOracle.java`).
+fn suggest(dir: &std::path::Path) -> ExitCode {
+    let world = lg_world::World::new(lg_gamedata::GameData::load(&dir.join("assets")));
+    let app = lg_app::App::importing(world, 0, Some(dir));
+    let en = lg_app::loadout::Enchantments::load(&dir.join("assets").join("xml"));
+    let choices: [&[&str]; 7] =
+        [&["MAXHP", "DPS", "HPREGEN"], &["ATT", "DEX"], &["DPS"], &["LOOT"], &["DEF", "MAXHP"], &["WIS", "MPREGEN"], &[]];
+    let mut ids: Vec<i32> = app.characters.all().filter(|c| c.alive).map(|c| c.char_id).collect();
+    ids.sort_unstable();
+    let props = lg_app::properties::Properties::in_memory(&std::fs::read_to_string(dir.join("realmShark.properties")).unwrap_or_default());
+    let base = lg_app::loadout::Settings::from(&props);
+    let mut out = BufWriter::new(std::io::stdout().lock());
+    for id in ids {
+        let c = app.characters.get(id).expect("char");
+        let class = app.world.data().classes.iter().find(|k| k.id == c.class_type);
+        if class.and_then(|k| k.slot_types).is_none() {
+            continue;
+        }
+        let pool = lg_app::loadout::pool(&app, c);
+        line(&mut out, format_args!("pool {id} [{}]", pool.iter().map(i32::to_string).collect::<Vec<_>>().join(",")));
+        for (k, chosen) in choices.iter().enumerate() {
+            for scope in 0..3 {
+                for second in [0, 2] {
+                    for def in [0.0, 40.0] {
+                        if def > 0.0 && !chosen.contains(&"DPS") {
+                            continue;
+                        }
+                        let s = lg_app::loadout::Settings {
+                            chosen: chosen.iter().map(|x| x.to_string()).collect(),
+                            scope,
+                            enemy_def: def,
+                            second_chance: second,
+                            ..base.clone()
+                        };
+                        let Some(picks) = lg_app::loadout::suggestion(&app, &en, c, &s) else { continue };
+                        for (slot, pk) in picks.iter().enumerate() {
+                            let e = pk.enchants.as_ref().map_or("null".to_string(), |v| {
+                                format!("[{}]", v.iter().map(i32::to_string).collect::<Vec<_>>().join(","))
+                            });
+                            let planned: Vec<String> = pk.plan.picks.iter().map(|i| en.get(*i).kind.to_string()).collect();
+                            line(
+                                &mut out,
+                                format_args!(
+                                    "suggest {id} {k}/{scope}/{second}/{} {slot} {} {} {e} [{}] {:.6}",
+                                    def as i32,
+                                    pk.id,
+                                    pk.r#where.replace(' ', "_"),
+                                    planned.join(","),
+                                    pk.plan.score
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
     let _ = out.flush();
     ExitCode::SUCCESS
 }
