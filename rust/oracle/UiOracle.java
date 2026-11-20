@@ -13,7 +13,7 @@ import java.lang.reflect.Field;
  * menu bar above it. Run in a folder holding the app's data (a copy: the app may write there) and without network
  * (e.g. `unshare -rn`): views that talk to servers then show what they show offline.
  * Usage: UiOracle <out dir> <width> <height> [tab...]   (all tabs if none given; "Characters:<charId>" opens a character,
- * "Characters:classes" / "Characters:pets" those pages, "Battles:dps" / "Battles:overlay", "Social:quests" / "Social:discord", "Guild:<page name>" those)
+ * "Characters:classes" / "Characters:pets" those pages, "Battles:dps" / "Battles:overlay", "Social:quests" / "Social:discord", "Guild:<page name>" those; "card:<charId>" the loadout card as an image)
  */
 public class UiOracle {
     public static void main(String[] args) throws Throwable {
@@ -39,6 +39,15 @@ public class UiOracle {
                 : new String[]{"Profile", "Inventory", "Characters", "Game Modes", "Battles", "Social", "Guild", "Server", "Settings"};
         Thread.sleep(3000);   // views load in the background
         for (String name : names) {
+            if (name.startsWith("card:")) {   // "card:<charId>": the loadout card "Copy as image" makes
+                int id = Integer.parseInt(name.substring(5));
+                lootgobbler.CharacterStore.Char ch = lootgobbler.CharacterStore.get().all().stream().filter(c -> c.charId == id).findFirst().orElseThrow();
+                java.lang.reflect.Method render = Class.forName("lootgobbler.ui.LoadoutCard").getDeclaredMethod("render", lootgobbler.CharacterStore.Char.class);
+                render.setAccessible(true);
+                ImageIO.write((BufferedImage) render.invoke(null, ch), "png", new File(out, "card-" + id + ".png"));
+                System.out.println("card " + id);
+                continue;
+            }
             BufferedImage img = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
             String tab = name.contains(":") ? name.substring(0, name.indexOf(':')) : name;
             String arg = name.contains(":") ? name.substring(name.indexOf(':') + 1) : null;

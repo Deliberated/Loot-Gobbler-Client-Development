@@ -58,6 +58,48 @@ fn main() {
     let tabs: Vec<String> = if tabs.is_empty() { lg_ui::shell::TABS.iter().map(|t| t.to_string()).collect() } else { tabs.to_vec() };
     std::fs::create_dir_all(out).expect("out dir");
     for tab in tabs {
+        // "card:<charId>": the loadout card "Copy as image" makes, alone
+        if let Some(id) = tab.strip_prefix("card:").and_then(|i| i.parse::<i32>().ok()) {
+            let mut win = lg_ui::window::Window::new(&assets, props.clone());
+            win.palette = lg_ui::theme::palette(None);
+            let ch = app.characters.get(id).expect("character");
+            let rect = std::cell::Cell::new(egui::Rect::NOTHING);
+            let mut themed = false;
+            let mut harness =
+                egui_kittest::Harness::builder().with_size(egui::vec2(w, h)).with_pixels_per_point(1.0).wgpu().build_ui(|ui| {
+                    if !themed {
+                        lg_ui::theme::apply(ui.ctx(), &win.palette);
+                        themed = true;
+                    }
+                    let rarity = win.characters.rarity(ui.ctx());
+                    let ctx = ui.ctx().clone();
+                    rect.set(lg_ui::card::paint(
+                        ui.painter(),
+                        &ctx,
+                        &mut win.icons,
+                        app.world.data(),
+                        &rarity,
+                        &win.palette,
+                        ch,
+                        egui::Pos2::ZERO,
+                        lg_ui::card::SCALE,
+                    ));
+                });
+            harness.run_steps(3);
+            let img = harness.render().expect("render");
+            drop(harness);
+            let frame = egui::ColorImage::from_rgba_unmultiplied([img.width() as usize, img.height() as usize], img.as_raw());
+            let card = lg_ui::card::crop(&frame, rect.get(), 1.0, lg_ui::card::SCALE);
+            let out_img = image::RgbaImage::from_raw(
+                card.size[0] as u32,
+                card.size[1] as u32,
+                card.pixels.iter().flat_map(|c| c.to_srgba_unmultiplied()).collect(),
+            )
+            .expect("image");
+            out_img.save(std::path::Path::new(out).join(format!("card-{id}.png"))).expect("save");
+            println!("card {id}");
+            continue;
+        }
         // a fresh window per picture, the Java default theme as the oracle shows it
         let mut win = lg_ui::window::Window::new(&assets, props.clone());
         win.palette = lg_ui::theme::palette(None);

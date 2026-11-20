@@ -591,9 +591,26 @@ impl CharactersView {
                     let f = text(18.0);
                     let bw = jtext::width(&painter, "Copy as image", &f) + 30.0;
                     let r = Rect::from_min_max(pos2(head.right() - bw, head.top()), head.max);
-                    let hover = ui.interact(r, ui.scope_id().with("copy-loadout"), Sense::click()).hovered();
-                    painter.rect(r, 0.0, if hover { p.sand } else { p.header }, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
-                    jtext::draw(&painter, r.center(), Align2::CENTER_CENTER, "Copy as image", &f, p.ink);
+                    let resp = ui.interact(r, ui.scope_id().with("copy-loadout"), Sense::click());
+                    if resp.clicked() {
+                        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("lg-copy-card"), ch.char_id));
+                    }
+                    painter.rect(
+                        r,
+                        0.0,
+                        if resp.hovered() { p.sand } else { p.header },
+                        Stroke::new(1.5, Color32::BLACK),
+                        StrokeKind::Inside,
+                    );
+                    // "Copied" for a moment after
+                    let copied = ui.ctx().data(|d| d.get_temp::<i64>(egui::Id::unique("lg-card-copied"))).is_some_and(|t| {
+                        let real = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
+                        real - t < 1500
+                    });
+                    jtext::draw(&painter, r.center(), Align2::CENTER_CENTER, if copied { "Copied" } else { "Copy as image" }, &f, p.ink);
+                    if copied {
+                        ui.ctx().request_repaint_after(std::time::Duration::from_millis(300));
+                    }
                 },
                 |ui, r| crate::detail::loadout(ui, &p, app, icons, ch, r),
             );

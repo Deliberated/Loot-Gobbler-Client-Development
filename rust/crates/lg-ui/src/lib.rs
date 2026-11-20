@@ -4,6 +4,7 @@
 #![allow(clippy::too_many_arguments)]
 
 pub mod battles;
+pub mod card;
 pub mod characters;
 pub mod charts;
 pub mod classes;

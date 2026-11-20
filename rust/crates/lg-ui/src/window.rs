@@ -58,6 +58,12 @@ pub struct Window {
     asks: Vec<Ask>,
     /// The question shown over the window, if any.
     confirm: Option<Ask>,
+    /// "Copy as image": the character whose card is drawn for the grab, and for how many frames yet.
+    card: Option<(i32, u8)>,
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
 }
 
 const GUILD_PAGES: [&str; 6] = ["Loot Caravan", "Quest Map", "Leaderboard", "Recent Drops", "Member", "Quests"];
@@ -84,6 +90,7 @@ impl Window {
             themed: false,
             asks: Vec::new(),
             confirm: None,
+            card: None,
         }
     }
 
@@ -140,6 +147,35 @@ impl Window {
     /// The question shown over the window, if any.
     pub fn asking(&self) -> Option<&Ask> {
         self.confirm.as_ref()
+    }
+
+    /// Java `LoadoutCard.copyButton`: the card drawn over the window for two frames, the first grabbed, cropped and
+    /// put on the clipboard; the button says "Copied" a moment.
+    fn grab_card(&mut self, ui: &egui::Ui, app: &lg_app::App) {
+        let ctx = ui.ctx().clone();
+        if let Some(id) = ctx.data_mut(|d| d.remove_temp::<i32>(egui::Id::unique("lg-copy-card"))) {
+            self.card = Some((id, 2));
+        }
+        let Some((id, left)) = self.card else { return };
+        let Some(ch) = app.characters.get(id) else {
+            self.card = None;
+            return;
+        };
+        let ppp = ctx.pixels_per_point();
+        let k = crate::card::SCALE / ppp;
+        let rarity = self.characters.rarity(&ctx);
+        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("lg-card")));
+        let r = crate::card::paint(&painter, &ctx, &mut self.icons, app.world.data(), &rarity, &self.palette, ch, ui.max_rect().min, k);
+        if left == 2 {
+            let c2 = ctx.clone();
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::ScreenshotCallback::new(move |frame| {
+                c2.copy_image(crate::card::crop(&frame, r, ppp, k));
+                c2.data_mut(|d| d.insert_temp(egui::Id::unique("lg-card-copied"), now_ms()));
+                c2.request_repaint();
+            })));
+        }
+        self.card = if left > 1 { Some((id, left - 1)) } else { None };
+        ctx.request_repaint();
     }
 
     /// The question asked over the window: its buttons answer it, closing it is "no".
@@ -226,6 +262,7 @@ impl Window {
             }
         });
         self.question(ui.ctx());
+        self.grab_card(ui, app);
         if let Some(spec) = ui.ctx().data_mut(|d| d.remove_temp::<String>(egui::Id::unique("lg-open"))) {
             match spec.split_once(":run:").filter(|(t, _)| *t == "Battles") {
                 Some((_, start)) => {

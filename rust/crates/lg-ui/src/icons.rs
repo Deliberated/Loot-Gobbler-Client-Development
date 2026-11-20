@@ -302,6 +302,11 @@ impl Icons {
         Some(tex)
     }
 
+    /// An object's sprite as the game files have it (its native size, no outline).
+    pub fn native(&mut self, data: &GameData, id: i32) -> Option<Image> {
+        self.sprites.object(data, id)
+    }
+
     /// A sprite by sheet and index scaled to a size, pixel-sharp, no outline (Java `EnchantIcons.icon`).
     pub fn sheet(&mut self, ctx: &egui::Context, sheet: &str, index: i32, size: u32) -> Option<TextureHandle> {
         let key = format!("sheet-{sheet}-{index}-{size}");
