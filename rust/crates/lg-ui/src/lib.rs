@@ -7,6 +7,7 @@ pub mod characters;
 pub mod charts;
 pub mod classes;
 pub mod detail;
+pub mod game_modes;
 pub mod icons;
 pub mod inventory;
 pub mod jtext;

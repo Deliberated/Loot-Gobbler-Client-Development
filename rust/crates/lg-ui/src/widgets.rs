@@ -342,3 +342,42 @@ pub fn fit(painter: &egui::Painter, t: &str, font: &FontId, w: f32) -> String {
     }
     format!("{}...", s.trim_end())
 }
+
+/// Text wrapped at word boundaries to a width (Java `JTextArea` with word wrap): its lines.
+pub fn wrap(painter: &egui::Painter, t: &str, font: &FontId, width: f32) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    for word in t.split(' ') {
+        let candidate = if line.is_empty() { word.to_string() } else { format!("{line} {word}") };
+        if !line.is_empty() && jtext::width(painter, &candidate, font) > width {
+            lines.push(std::mem::take(&mut line));
+            line = word.to_string();
+        } else {
+            line = candidate;
+        }
+    }
+    lines.push(line);
+    lines
+}
+
+/// Wrapped text (with Java's 2 px above and below) at the top left; gives its height.
+pub fn wrapped(painter: &egui::Painter, at: egui::Pos2, t: &str, font: &FontId, width: f32, color: Color32) -> f32 {
+    let lh = jtext::height(painter, font);
+    let lines = wrap(painter, t, font, width);
+    for (i, l) in lines.iter().enumerate() {
+        jtext::draw(painter, pos2(at.x, at.y + 2.0 + i as f32 * lh), Align2::LEFT_TOP, l, font, color);
+    }
+    lines.len() as f32 * lh + 4.0
+}
+
+/// Java `Color.brighter`.
+pub fn brighter(c: Color32) -> Color32 {
+    let f = |v: u8| -> u8 {
+        let v = if v == 0 { 3.0 } else { f32::from(v) };
+        (v / 0.7).min(255.0) as u8
+    };
+    if c.r() == 0 && c.g() == 0 && c.b() == 0 {
+        return Color32::from_rgb(3, 3, 3);
+    }
+    Color32::from_rgb(if c.r() > 0 { f(c.r()) } else { 0 }, if c.g() > 0 { f(c.g()) } else { 0 }, if c.b() > 0 { f(c.b()) } else { 0 })
+}

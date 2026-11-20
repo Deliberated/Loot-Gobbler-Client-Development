@@ -49,6 +49,119 @@ pub fn label(mode: &str) -> String {
     format!("{}{l}", if guild(mode) { "g" } else { "" })
 }
 
+/// PPE or UPE (Java `category`).
+pub fn category(mode: &str) -> &str {
+    let b = base(mode);
+    if UPE_VARIANTS.contains(&b) { "UPE" } else { b }
+}
+
+/// The mode of this base, with or without its guild version (Java `withGuild`).
+pub fn with_guild(mode: &str, guild: bool) -> String {
+    let b = base(mode);
+    if guild { format!("g{b}") } else { b.to_string() }
+}
+
+pub const UPE_VARIANTS: [&str; 5] = ["UPE", "PUPE", "STPE", "ShinyUPE", "DivinePE"];
+
+/// A category or mode as the Game Modes tab explains it (Java `ModeInfo`).
+pub struct ModeInfo {
+    pub code: &'static str,
+    pub name: &'static str,
+    pub summary: &'static str,
+    /// What the loadout may hold; the rules all share follow ([`OWN_RULES`]).
+    pub first_rule: &'static str,
+}
+
+/// What every mode asks before a run may start.
+pub const PREREQUISITE: &str = "A run can start only on a fresh character the sniffer saw from its creation, created with upgrades disabled: a tier 0 weapon, ability and armor. That starting gear never counts against the rules.";
+
+/// The categories, for the list on the left.
+pub const CATEGORY_INFO: [ModeInfo; 2] = [
+    ModeInfo {
+        code: "PPE",
+        name: "Pet Player Experience",
+        summary: "Play with nothing but what the character finds itself: any tier, from its own drops.",
+        first_rule: "",
+    },
+    ModeInfo {
+        code: "UPE",
+        name: "Untiered Player Experience",
+        summary: "Like a PPE, but the loadout holds untiered gear only: UT and ST, or stricter (pure: UT only, ST, shiny), or divine gear of any tier.",
+        first_rule: "",
+    },
+];
+
+/// The rules every mode shares: where things may come from.
+pub const OWN_RULES: [&str; 7] = [
+    "Whatever is equipped came out of a loot bag during the run, or was forged from such things (ST set tokens and pieces included).",
+    "Nothing from the vault: vault chest, gift chest, potion storage, spoils and materials may be carried, but never equipped.",
+    "Stat potions only from drops: none from the vault, the potion storage or other players.",
+    "Loot boosts (Loot Drop and Loot Tier Potions, drop rate and enchanted drop boosts) only if gathered in the run. Oryx runes, experience boosts and other items are free to use.",
+    "No trading (the guild version allows trades with guild mates). Nothing bought in the shop, no daily login rewards, reward chests or battle pass milestones in the loadout.",
+    "Tinkerer quests count if everything handed in came from this run; battle pass missions if they began at 0 with this character and it solved them alone. Their rewards may be taken from the gift chest once.",
+    "Anything the sniffer could not see keeps the benefit of the doubt, unless the vault records prove otherwise.",
+];
+
+/// What the guild version adds.
+pub const GUILD_RULES: [&str; 5] = [
+    "Trading is allowed with guild mates of your Loot Gobbler guild who play a guild mode themselves (gPPE, gUPE, gSTPE...).",
+    "Only items gathered in the run may change hands: dropped, crafted from the run's own things, or traded in from another guild run.",
+    "Both sides need Loot Gobbler running: each reports the trade to the server and checks the other's report, where the partner's run got the items. Until it arrives, items from the trade are marked as checking; without a fitting report within 5 minutes the trade is illegal and the run is lost.",
+    "Trading with anyone else (a run without the guild version, other Loot Gobbler friends, players without Loot Gobbler) loses the run.",
+    "A run may switch its guild version off again as long as it never equipped or used an item traded from a guild mate.",
+];
+
+/// What playing without a pet adds.
+pub const NO_PET_RULES: [&str; 1] = [
+    "No pet may follow the character, from its creation to the end of the run. Loot Gobbler sees the pets in the character list at each login; a pet there loses the run.",
+];
+
+/// Each mode without its guild part.
+pub const MODE_INFO: [ModeInfo; 6] = [
+    ModeInfo {
+        code: "PPE",
+        name: "Pet Player Experience",
+        summary: "Any tier is fine, as long as the character found it itself.",
+        first_rule: "The loadout may hold items of any tier, if they came from the run itself.",
+    },
+    ModeInfo {
+        code: "UPE",
+        name: "Untiered Player Experience",
+        summary: "Untiered gear from the character's own drops.",
+        first_rule: "The loadout (weapon, ability, armor, ring) holds only UT and ST items, besides the starting gear.",
+    },
+    ModeInfo {
+        code: "PUPE",
+        name: "Pure UPE",
+        summary: "Only untiered (UT) items in the loadout: no set items.",
+        first_rule: "The loadout holds only UT items, besides the starting gear: no ST, no tiered items.",
+    },
+    ModeInfo {
+        code: "STPE",
+        name: "ST Player Experience",
+        summary: "Only set gear (ST) in the loadout.",
+        first_rule: "The loadout holds only ST items, besides the starting gear.",
+    },
+    ModeInfo {
+        code: "ShinyUPE",
+        name: "Shiny UPE",
+        summary: "Only shiny UT items in the loadout.",
+        first_rule: "The loadout holds only shiny UT items, besides the starting gear (ST items have no shiny versions).",
+    },
+    ModeInfo {
+        code: "DivinePE",
+        name: "Divine Player Experience",
+        summary: "Only divine items (four enchantment slots) in the loadout, of any tier.",
+        first_rule: "The loadout holds only divine items (four enchantment slots), of any tier, besides the starting gear.",
+    },
+];
+
+/// The info of a mode (its base); unknown: UPE's (Java `info`).
+pub fn info(mode: &str) -> &'static ModeInfo {
+    let b = base(mode);
+    MODE_INFO.iter().find(|m| m.code == b).unwrap_or(&MODE_INFO[1])
+}
+
 fn tainted(o: &str) -> bool {
     [VAULT, TRADE, FORGED_TAINTED, REWARD].contains(&o)
 }
