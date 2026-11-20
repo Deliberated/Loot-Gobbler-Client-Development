@@ -14,6 +14,8 @@
 //!   lg-replay synth-login <out.pcap> <answers dir> [seed]
 //!                                       writes a made-up login and the game's made-up web answers to it
 //!   lg-replay synth-items <out.pcap> [seed]   writes a made-up session with items (vault, moves, forge, trades...)
+//!   lg-replay capture [--all] [--world <assets>]
+//!                                       capturing itself (libpcap / Npcap), as the Java app's sniffer does
 //!   lg-replay live [--all] [--world <assets>]
 //!                                       the game packets of a live capture piped in, as they happen:
 //!                                       sudo tcpdump -i any -U -w - 'tcp port 2050' | lg-replay live
@@ -81,6 +83,11 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         [cmd, dir] if cmd == "gamedata" => gamedata(std::path::Path::new(dir)),
+        [cmd, rest @ ..] if cmd == "capture" => {
+            let all = rest.iter().any(|f| f == "--all");
+            let assets = rest.iter().position(|f| f == "--world").and_then(|i| rest.get(i + 1));
+            capture(all, assets.map(std::path::Path::new))
+        }
         [cmd, rest @ ..] if cmd == "live" => {
             let all = rest.iter().any(|f| f == "--all");
             let assets = rest.iter().position(|f| f == "--world").and_then(|i| rest.get(i + 1));
@@ -258,28 +265,66 @@ fn live(all: bool, assets: Option<&std::path::Path>) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let mut world = assets.map(|a| {
+    let link_type = input.link_type;
+    eprintln!("listening (link type {link_type}); start or change servers in the game to see everything. Ctrl+C ends.");
+    show(all, assets, move || input.next_frame().map(|f| f.map(|(m, d)| (link_type, m, d)).map_err(|e| e.to_string())))
+}
+
+/// Capturing itself (Java: the app's own sniffer): every usable interface opened, the game's one kept.
+fn capture(all: bool, assets: Option<&std::path::Path>) -> ExitCode {
+    let cap = match lg_capture::live::start("tcp port 2050") {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{e}");
+            if matches!(e, lg_capture::live::Error::Permission(_)) && cfg!(target_os = "linux") {
+                eprintln!(
+                    "Run it as root, or give it the capture rights once:\n  sudo setcap cap_net_raw,cap_net_admin=eip <path to lg-replay>"
+                );
+            }
+            return ExitCode::FAILURE;
+        }
+    };
+    let names: Vec<String> = cap.opened.iter().map(|i| i.name.clone()).collect();
+    eprintln!("capturing on {}; start or change servers in the game to see everything. Ctrl+C ends.", names.join(", "));
+    let mut told = false;
+    show(all, assets, move || {
+        let f = cap.frames.recv().ok()?;
+        if !told {
+            told = true;
+            eprintln!("the game's packets come on {}", names[f.interface]);
+        }
+        Some(Ok((f.link_type, f.micros, f.data)))
+    })
+}
+
+/// Frames as they come (link type, µs, bytes), shown: the packets, and with game data what the world says of you.
+fn show(
+    all: bool,
+    assets: Option<&std::path::Path>,
+    mut next_frame: impl FnMut() -> Option<Result<(u32, u64, Vec<u8>), String>>,
+) -> ExitCode {
+    let mut session: Option<lg_replay::Session> = None;
+    let world_for = |a: &std::path::Path| {
         let game = lg_gamedata::GameData::load(a);
         if game.objects.is_empty() {
             eprintln!("no game data in {} (expected ObjectID.list, xml/players.xml)", a.display());
         }
         lg_world::World::new(game)
-    });
-    eprintln!("listening (link type {}); start or change servers in the game to see everything. Ctrl+C ends.", input.link_type);
-    let mut session = lg_replay::Session::new(input.link_type);
+    };
+    let mut world = assets.map(world_for);
     let mut items = Vec::new();
     let mut first = None;
     let mut last_summary = String::new();
     let mut out = std::io::stdout().lock();
-    while let Some(frame) = input.next_frame() {
-        let (micros, data) = match frame {
+    while let Some(frame) = next_frame() {
+        let (link_type, micros, data) = match frame {
             Ok(f) => f,
             Err(e) => {
                 eprintln!("capture stream broken: {e}");
                 return ExitCode::FAILURE;
             }
         };
-        session.frame(micros, &data, &mut items);
+        session.get_or_insert_with(|| lg_replay::Session::new(link_type)).frame(micros, &data, &mut items);
         for item in items.drain(..) {
             let at = item_micros(&item);
             let t = time(at - *first.get_or_insert(at));
