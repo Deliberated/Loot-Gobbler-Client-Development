@@ -113,6 +113,10 @@ impl Shell {
             x += w;
         }
         painter.rect_filled(Rect::from_min_size(pos2(all.left(), row.bottom()), vec2(all.width(), 1.0)), 0.0, p.line);
+        // the notifications bell at the right end of the tab row
+        let bell = Rect::from_min_size(pos2(row.right() - 36.0, row.top()), vec2(36.0, TAB_H));
+        let hover = ui.interact(bell, ui.scope_id().with("bell"), Sense::click()).hovered();
+        paint_bell(&painter, bell.center(), if hover { p.ink } else { p.ink.gamma_multiply(190.0 / 255.0) });
 
         // the status bar
         let bar = Rect::from_min_max(pos2(all.left(), all.bottom() - STATUS_H), all.max);
@@ -195,4 +199,25 @@ impl Shell {
         child.set_clip_rect(content);
         view(&mut child, &self.selected.clone());
     }
+}
+
+/// Java `NotificationBell`: a dome widening to a flared rim, the clapper below, a knob on top.
+fn paint_bell(painter: &egui::Painter, c: Pos2, color: Color32) {
+    use egui::epaint::{CubicBezierShape, PathShape};
+    let pt = |x: f32, y: f32| pos2(c.x + x, c.y + y);
+    let curves = [
+        [pt(-7.0, 4.0), pt(-6.0, 1.0), pt(-6.0, -1.0), pt(-6.0, -3.0)],
+        [pt(-6.0, -3.0), pt(-6.0, -7.0), pt(-3.5, -9.0), pt(0.0, -9.0)],
+        [pt(0.0, -9.0), pt(3.5, -9.0), pt(6.0, -7.0), pt(6.0, -3.0)],
+        [pt(6.0, -3.0), pt(6.0, -1.0), pt(6.0, 1.0), pt(7.0, 4.0)],
+    ];
+    let mut points = Vec::new();
+    for b in curves {
+        let shape = CubicBezierShape::from_points_stroke(b, false, Color32::TRANSPARENT, Stroke::NONE);
+        points.extend(shape.flatten(Some(0.2)));
+    }
+    painter.add(PathShape::convex_polygon(points, color, Stroke::NONE));
+    painter.rect_filled(Rect::from_min_size(pt(-8.5, 3.5), vec2(17.0, 2.5)), 1.0, color);
+    painter.add(egui::Shape::ellipse_filled(pt(0.0, 8.5), vec2(2.5, 2.0), color));
+    painter.circle_filled(pt(0.0, -9.5), 1.5, color);
 }

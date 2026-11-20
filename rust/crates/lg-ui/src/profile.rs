@@ -232,6 +232,22 @@ impl Profile {
                 Box::new(|ui: &mut Ui, icons: &mut Icons| recent_runs(ui, &p, app, icons, &runs, &drops)),
             ],
         );
+        ui.add_space(20.0);
+        row(
+            ui,
+            &p,
+            16.0,
+            &mut (),
+            vec![
+                Box::new(|ui: &mut Ui, _: &mut ()| top_dungeons(ui, &p, app)),
+                Box::new(|ui: &mut Ui, _: &mut ()| exaltation(ui, &p, app)),
+                Box::new(|ui: &mut Ui, _: &mut ()| {
+                    heading(ui, &p, "Daily quests");
+                    ui.add_space(6.0);
+                    muted(ui, "Coming soon from the Loot Gobbler server.");
+                }),
+            ],
+        );
     }
 }
 
@@ -650,6 +666,95 @@ fn recent_runs(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, runs: &[&
                     );
                 }
             }
+        }
+    }
+}
+
+/// The dungeons you entered most (Java `DungeonStatsPanel.topDungeons`), each with a bar against the first.
+fn top_dungeons(ui: &mut Ui, p: &Palette, app: &App) {
+    heading(ui, p, "Top dungeons");
+    ui.add_space(6.0);
+    let mut rows: Vec<(&str, i32)> =
+        app.world.dungeon_stats.data.iter().filter(|(_, i)| i.entered > 0).map(|(n, i)| (n.as_str(), i.entered)).collect();
+    rows.sort_by_key(|r| std::cmp::Reverse(r.1));
+    rows.truncate(RECENT);
+    if rows.is_empty() {
+        muted(ui, "Run some dungeons to see them here.");
+    }
+    let max = rows.first().map_or(1, |r| r.1.max(1));
+    let f = text(18.0);
+    for (name, n) in rows {
+        let w = ui.available_width();
+        let (r, _) = ui.allocate_exact_size(vec2(w, crate::jtext::height(ui.painter(), &f)), Sense::hover());
+        crate::jtext::draw(ui.painter(), r.min, egui::Align2::LEFT_TOP, name, &f, p.ink);
+        crate::jtext::draw(ui.painter(), pos2(r.right(), r.top()), egui::Align2::RIGHT_TOP, &num(i64::from(n)), &f, p.ink_soft);
+        ui.add_space(2.0);
+        let (bar, _) = ui.allocate_exact_size(vec2(w, 10.0), Sense::hover());
+        ui.painter().rect_filled(bar, 0.0, p.header);
+        let share = f64::from(n) / f64::from(max);
+        ui.painter().rect_filled(egui::Rect::from_min_size(bar.min, vec2((f64::from(w) * share).round() as f32, 10.0)), 0.0, p.gold);
+        ui.add_space(8.0);
+    }
+}
+
+/// Classes fully exalted, a cell per class, the class closest to it (Java `exaltation`).
+fn exaltation(ui: &mut Ui, p: &Palette, app: &App) {
+    heading(ui, p, "Exaltation");
+    ui.add_space(6.0);
+    if app.exalts.progress.is_empty() {
+        muted(ui, "Visit the nexus once so your exaltations are loaded.");
+        return;
+    }
+    let max = 8 * lg_app::exalt_store::THRESHOLDS.len() as i32;
+    let classes = &app.world.data().classes;
+    let totals: Vec<i32> = classes.iter().map(|c| lg_app::exalt_store::total(app.exalts.progress(c.id).map(|v| v.as_slice()))).collect();
+    let full = totals.iter().filter(|t| **t == max).count();
+    let mut closest: Option<usize> = None;
+    for (i, t) in totals.iter().enumerate() {
+        if *t != max && closest.is_none_or(|c| *t > totals[c]) {
+            closest = Some(i);
+        }
+    }
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+        ui.add_space(8.0);
+        let big = widgets::head_px(42.0);
+        let r = label(ui, &full.to_string(), &big, p.ink).rect;
+        ui.add_space(8.0);
+        // FlowLayout centres the smaller text on the line
+        let small = text(24.0);
+        let t = format!("/ {} classes maxed", classes.len());
+        let h = crate::jtext::height(ui.painter(), &small);
+        let (s, _) = ui.allocate_exact_size(vec2(crate::jtext::width(ui.painter(), &t, &small), r.height()), Sense::hover());
+        crate::jtext::draw(ui.painter(), pos2(s.left(), s.center().y - h / 2.0), egui::Align2::LEFT_TOP, &t, &small, p.ink_soft);
+    });
+    ui.add_space(6.0);
+    let w = ui.available_width();
+    let (strip, _) = ui.allocate_exact_size(vec2(w, 18.0), Sense::hover());
+    let n = totals.len() as f32;
+    if n > 0.0 {
+        let cell = (w - 3.0 * (n - 1.0)) / n;
+        for (i, t) in totals.iter().enumerate() {
+            let c = if *t == max {
+                p.gold
+            } else if *t > 0 {
+                p.gold_dark
+            } else {
+                p.header
+            };
+            let x = (i as f32 * (cell + 3.0)).round();
+            ui.painter().rect_filled(egui::Rect::from_min_size(pos2(strip.left() + x, strip.top()), vec2(cell.round(), 18.0)), 0.0, c);
+        }
+    }
+    ui.add_space(10.0);
+    match closest {
+        Some(i) => {
+            let left = max - totals[i];
+            let name = classes[i].name.clone();
+            soft(ui, p, &format!("Closest next: {name}, {left} exaltation{} left", if left == 1 { "" } else { "s" }));
+        }
+        None => {
+            soft(ui, p, "Every class is fully exalted!");
         }
     }
 }

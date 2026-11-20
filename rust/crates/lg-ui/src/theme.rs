@@ -188,6 +188,17 @@ pub fn apply(ctx: &egui::Context, p: &Palette) {
             w.corner_radius = egui::CornerRadius::ZERO;
         }
         v.window_corner_radius = egui::CornerRadius::ZERO;
+        // Java's scroll bars: 12 px, a square line-coloured thumb on the sand track, always there when needed
+        let mut sc = egui::style::ScrollStyle::solid();
+        sc.bar_width = 12.0;
+        sc.handle_min_length = 24.0;
+        sc.bar_inner_margin = 0.0;
+        sc.bar_outer_margin = 0.0;
+        st.spacing.scroll = sc;
+        v.extreme_bg_color = p.paper;
+        v.widgets.inactive.bg_fill = p.line;
+        v.widgets.hovered.bg_fill = p.ink_soft;
+        v.widgets.active.bg_fill = p.ink;
         v.menu_corner_radius = egui::CornerRadius::ZERO;
     });
 }
