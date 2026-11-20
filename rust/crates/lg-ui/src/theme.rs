@@ -202,3 +202,9 @@ pub fn apply(ctx: &egui::Context, p: &Palette) {
         v.menu_corner_radius = egui::CornerRadius::ZERO;
     });
 }
+
+/// Java `Palette.mix`: t of a, the rest of b.
+pub fn mix(a: Color32, b: Color32, t: f64) -> Color32 {
+    let m = |x: u8, y: u8| (f64::from(x) * t + f64::from(y) * (1.0 - t)).round() as u8;
+    Color32::from_rgb(m(a.r(), b.r()), m(a.g(), b.g()), m(a.b(), b.b()))
+}

@@ -7,7 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-egui = "0.37"
+egui = { version = "0.37", features = ["default_fonts", "monochrome_emoji_fonts"] }
 lg-app = { path = "../lg-app" }
 lg-gamedata = { path = "../lg-gamedata" }
 lg-world = { path = "../lg-world" }

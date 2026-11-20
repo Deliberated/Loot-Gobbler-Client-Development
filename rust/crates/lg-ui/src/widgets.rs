@@ -117,3 +117,175 @@ pub fn icon(ui: &mut Ui, tex: Option<&egui::TextureHandle>, size: f32) -> egui::
     }
     resp
 }
+
+/// Java's `Section`: a line-bordered panel with a header strip (a coloured square, the upper-case title in the tab
+/// font, controls at the right) above a paper body. `actions` draws right-to-left from the header's right end and
+/// gives back how wide they were; `body` fills the rest. Gives the whole rect.
+pub fn section(
+    ui: &mut Ui,
+    p: &Palette,
+    rect: Rect,
+    title: &str,
+    accent: Color32,
+    actions: impl FnOnce(&mut Ui, Rect),
+    body: impl FnOnce(&mut Ui, Rect),
+) {
+    let painter = ui.painter().clone();
+    let font = theme::head(17.0);
+    let th = jtext::height(&painter, &font);
+    let head_h = th + 12.0 + 1.0;
+    painter.rect_filled(rect, 0.0, p.paper);
+    let head = Rect::from_min_size(rect.min + vec2(1.0, 1.0), vec2(rect.width() - 2.0, head_h - 1.0));
+    painter.rect_filled(head, 0.0, p.header);
+    painter.rect_filled(Rect::from_min_size(pos2(rect.left(), head.bottom()), vec2(rect.width(), 1.0)), 0.0, p.line);
+    let sq = Rect::from_min_size(pos2(head.left() + 10.0, head.center().y - 4.0), vec2(8.0, 8.0));
+    painter.rect_filled(sq, 0.0, accent);
+    jtext::draw(&painter, pos2(sq.right() + 8.0, head.center().y), Align2::LEFT_CENTER, &title.to_uppercase(), &font, p.ink_soft);
+    let mut a = ui.new_child(egui::UiBuilder::new().max_rect(head));
+    actions(&mut a, Rect::from_min_max(pos2(head.left(), head.top() + 2.0), pos2(head.right() - 4.0, head.bottom() - 2.0)));
+    let body_r = Rect::from_min_max(pos2(rect.left() + 1.0, head.bottom() + 1.0), pos2(rect.right() - 1.0, rect.bottom() - 1.0));
+    let mut b = ui.new_child(egui::UiBuilder::new().max_rect(body_r).layout(egui::Layout::top_down(egui::Align::Min)));
+    b.set_clip_rect(body_r.intersect(ui.clip_rect()));
+    b.spacing_mut().item_spacing = vec2(0.0, 0.0);
+    body(&mut b, body_r);
+    painter.rect_stroke(rect, 0.0, Stroke::new(1.0, p.line), StrokeKind::Inside);
+}
+
+/// The height of a section's header strip.
+pub fn section_head_height(painter: &egui::Painter) -> f32 {
+    jtext::height(painter, &theme::head(17.0)) + 12.0
+}
+
+/// The width a row of buttons takes (see [`segmented`]).
+pub fn segmented_width(painter: &egui::Painter, names: &[&str], joined: bool) -> f32 {
+    let font = small();
+    let w: f32 = names.iter().map(|n| jtext::width(painter, &n.to_uppercase(), &font) + 30.0).sum();
+    w + if joined { 0.0 } else { 8.0 * (names.len() as f32 - 1.0) }
+}
+
+/// Java `Segmented`: toggle buttons in a row (`joined`: touching, as one control), the selected one gold. Drawn with
+/// its left top at `at`, `h` high; gives the clicked one.
+pub fn segmented(
+    ui: &Ui,
+    p: &Palette,
+    at: egui::Pos2,
+    h: f32,
+    names: &[&str],
+    selected: usize,
+    joined: bool,
+    disabled: &[usize],
+) -> Option<usize> {
+    let font = small();
+    let painter = ui.painter().clone();
+    let mut x = at.x;
+    let mut clicked = None;
+    for (i, n) in names.iter().enumerate() {
+        let t = n.to_uppercase();
+        let w = jtext::width(&painter, &t, &font) + 30.0;
+        let r = Rect::from_min_size(pos2(x, at.y), vec2(w, h));
+        let off = disabled.contains(&i);
+        let resp =
+            ui.interact(r, ui.scope_id().with(("seg", n, at.x as i32, at.y as i32)), if off { Sense::hover() } else { Sense::click() });
+        let on = selected == i;
+        let (bg, fg) = if on {
+            (p.gold, p.on_accent)
+        } else if off {
+            (p.paper, p.ink_muted)
+        } else if resp.hovered() {
+            (p.header, p.ink_soft)
+        } else {
+            (p.paper, p.ink_soft)
+        };
+        painter.rect(r, 0.0, bg, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
+        jtext::draw(&painter, r.center(), Align2::CENTER_CENTER, &t, &font, fg);
+        if resp.clicked() {
+            clicked = Some(i);
+        }
+        x += w + if joined { 0.0 } else { 8.0 };
+    }
+    clicked
+}
+
+/// Java's banner (SEASONAL / CRUCIBLE / UPE): a slab with notched corners, a dark bottom side, white text with a
+/// grey outline; faded when off. Gives its size for a text.
+pub fn banner_size(painter: &egui::Painter, text: &str) -> egui::Vec2 {
+    let f = head_px(24.0);
+    // Java's FontMetrics.getAscent (rounded up)
+    let asc: f32 = (24.0f32 * 1125.0 / 1400.0).ceil();
+    let h = asc + 18.0;
+    let u = (h / 5.6).round().max(3.0);
+    vec2(jtext::width(painter, &text.to_uppercase(), &f) + 2.0 * u + 12.0, h)
+}
+
+pub fn banner(painter: &egui::Painter, r: Rect, text: &str, bg: Color32, alpha: f32) {
+    let f = head_px(24.0);
+    let (w, h) = (r.width(), r.height());
+    let u = (h / 5.6).round().max(3.0);
+    let fade = |c: Color32| c.gamma_multiply(alpha);
+    let rect = |x: f32, y: f32, ww: f32, hh: f32, c: Color32| {
+        painter.rect_filled(Rect::from_min_size(pos2(r.left() + x, r.top() + y), vec2(ww, hh)), 0.0, fade(c))
+    };
+    let dark = crate::theme::mix(bg, Color32::BLACK, 0.76);
+    rect(u, 0.0, w - 2.0 * u, h, Color32::BLACK);
+    rect(0.0, u, w, h - 2.0 * u, Color32::BLACK);
+    rect(u + 1.0, 1.0, w - 2.0 * u - 2.0, h - 2.0, dark);
+    rect(1.0, u + 1.0, w - 2.0, h - 2.0 * u - 2.0, dark);
+    rect(u + 1.0, 1.0, w - 2.0 * u - 2.0, h - 2.0 - u, bg);
+    rect(1.0, u + 1.0, w - 2.0, h - 2.0 * u - 2.0 - ((u + 1.0) / 2.0).floor(), bg);
+    let t = text.to_uppercase();
+    let face = h - u;
+    let tw = jtext::width(painter, &t, &f);
+    let asc: f32 = (24.0f32 * 1125.0 / 1400.0).ceil();
+    let base = ((face + asc) / 2.0).floor() - 1.0;
+    let top = r.top() + base - asc;
+    let x = r.left() + ((w - tw) / 2.0).floor();
+    for dx in -1..=1 {
+        for dy in -1..=1 {
+            if dx != 0 || dy != 0 {
+                jtext::draw(
+                    painter,
+                    pos2(x + dx as f32, top + dy as f32),
+                    Align2::LEFT_TOP,
+                    &t,
+                    &f,
+                    fade(Color32::from_rgb(0x5C, 0x5C, 0x5C)),
+                );
+            }
+        }
+    }
+    jtext::draw(painter, pos2(x, top), Align2::LEFT_TOP, &t, &f, fade(Color32::WHITE));
+}
+
+/// Java `OutlinedText`: pixel-font text with a 2 px black outline and a shadow below; its size.
+pub fn outlined_size(painter: &egui::Painter, text: &str, px: f32) -> egui::Vec2 {
+    let f = head_px(px);
+    vec2(jtext::width(painter, text, &f) + 6.0, (px * 1125.0 / 1400.0).ceil() + 6.0)
+}
+
+pub fn outlined_text(painter: &egui::Painter, r: Rect, text: &str, px: f32, color: Color32) {
+    let f = head_px(px);
+    let asc = (px * 1125.0 / 1400.0).ceil();
+    let base = ((r.height() + asc) / 2.0).floor() - 1.0;
+    let (x, top) = (r.left() + 2.0, r.top() + base - asc);
+    for dx in -2..=2 {
+        for dy in -2..=3 {
+            if dx != 0 || dy != 0 {
+                jtext::draw(painter, pos2(x + dx as f32, top + dy as f32), Align2::LEFT_TOP, text, &f, Color32::BLACK);
+            }
+        }
+    }
+    jtext::draw(painter, pos2(x, top), Align2::LEFT_TOP, text, &f, color);
+}
+
+/// Java `kpi`: a header-coloured box with a line border, the caption above a gold value.
+pub fn kpi(ui: &mut Ui, p: &Palette, r: Rect, caption_text: &str, value: &str) {
+    let painter = ui.painter();
+    painter.rect(r, 0.0, p.header, Stroke::new(1.0, p.line), StrokeKind::Inside);
+    let c = jtext::draw(painter, pos2(r.left() + 9.0, r.top() + 5.0), Align2::LEFT_TOP, &caption_text.to_uppercase(), &small(), p.ink_soft);
+    jtext::draw(painter, pos2(r.left() + 9.0, c.bottom()), Align2::LEFT_TOP, value, &text(24.0), crate::theme::fixed::GOLD);
+}
+
+/// A KPI box's height.
+pub fn kpi_height(painter: &egui::Painter) -> f32 {
+    jtext::height(painter, &small()) + jtext::height(painter, &text(24.0)) + 10.0
+}
