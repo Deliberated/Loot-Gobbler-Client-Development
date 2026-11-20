@@ -14,7 +14,7 @@ jar=$(ls -t "$repo"/build/libs/LootGobbler-*.jar 2>/dev/null | head -1 || true)
 [ -n "$jar" ] || { echo "Build the Java client first: ./gradlew shadowJar (in $repo)" >&2; exit 2; }
 cargo=$(command -v cargo || echo "$HOME/.cargo/bin/cargo")
 (cd "$here/.." && "$cargo" build -q --release -p lg-ui)
-w=1799 h=1005
+w=${LG_W:-1799} h=${LG_H:-1005}   # LG_W / LG_H: another window size
 
 work=$(mktemp -d)
 if [ -n "${LG_KEEP:-}" ]; then echo "keeping $work" >&2; else trap 'rm -rf "${work:?}"' EXIT; fi

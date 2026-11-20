@@ -10,6 +10,8 @@ pub struct Icons {
     sprites: Sprites,
     cache: HashMap<(i32, u32), Option<TextureHandle>>,
     skins: HashMap<String, TextureHandle>,
+    /// Keys made before that came out empty.
+    missing: std::collections::HashSet<String>,
 }
 
 /// Java's `ReplicateScaleFilter`: each target pixel takes the source pixel under its centre.
@@ -190,6 +192,89 @@ impl Icons {
         Some(tex)
     }
 
+    /// Java `DamageGraph.croppedIcon`: an enemy's outlined sprite (at 64) cut to its visible pixels and scaled (crisp)
+    /// to fit a `size` square, centred on its bottom; None for a placeholder (one colour, or a plain filled square).
+    pub fn cropped(&mut self, ctx: &egui::Context, data: &GameData, id: i32, size: u32) -> Option<TextureHandle> {
+        let key = format!("crop-{id}-{size}");
+        if let Some(t) = self.skins.get(&key) {
+            return Some(t.clone());
+        }
+        if self.missing.contains(&key) {
+            return None;
+        }
+        let made = (|| {
+            let src = outlined(&self.sprites.object(data, id)?, 64);
+            let (x0, y0, w, h) = opaque_bounds(&src, 30)?;
+            let mut colors = std::collections::HashSet::new();
+            let mut opaque = 0u32;
+            for y in 0..src.h {
+                for x in 0..src.w {
+                    let i = ((y * src.w + x) * 4) as usize;
+                    if src.rgba[i + 3] >= 30 {
+                        opaque += 1;
+                        colors.insert([src.rgba[i], src.rgba[i + 1], src.rgba[i + 2]]);
+                    }
+                }
+            }
+            if colors.len() <= 1 || colors.len() == 2 && opaque * 10 >= w * h * 9 {
+                return None;
+            }
+            let scale = f64::from(size) / f64::from(w.max(h));
+            let (dw, dh) = (((f64::from(w) * scale).round() as u32).clamp(1, size), ((f64::from(h) * scale).round() as u32).clamp(1, size));
+            let small = resize(&src, x0, y0, w, h, dw, dh);
+            let mut out = Image { w: size, h: size, rgba: vec![0; (size * size * 4) as usize] };
+            let (ox, oy) = ((size - dw) / 2, size - dh);
+            for y in 0..dh {
+                for x in 0..dw {
+                    let s = ((y * dw + x) * 4) as usize;
+                    let d = (((oy + y) * size + ox + x) * 4) as usize;
+                    out.rgba[d..d + 4].copy_from_slice(&small.rgba[s..s + 4]);
+                }
+            }
+            Some(out)
+        })();
+        let Some(out) = made else {
+            self.missing.insert(key);
+            return None;
+        };
+        let tex = ctx.load_texture(
+            key.clone(),
+            ColorImage::from_rgba_unmultiplied([size as usize, size as usize], &out.rgba),
+            TextureOptions::NEAREST,
+        );
+        self.skins.insert(key, tex.clone());
+        Some(tex)
+    }
+
+    /// Java `DamageGraph.bigIcon`: the enemy's own cropped sprite, else (a sizeless helper, a placeholder) that of the
+    /// enemy it stands for.
+    pub fn enemy(&mut self, ctx: &egui::Context, data: &GameData, id: i32, size: u32) -> Option<TextureHandle> {
+        if !data.enemy_sprites.hidden(id)
+            && let Some(t) = self.cropped(ctx, data, id, size)
+        {
+            return Some(t);
+        }
+        for e in data.enemy_sprites.candidates(id, data.object_name(id)) {
+            if let Some(t) = self.cropped(ctx, data, e, size) {
+                return Some(t);
+            }
+        }
+        None
+    }
+
+    /// A ground tile's sprite (its first texture), scaled to a size, pixel-sharp; None if unknown or empty.
+    pub fn tile(&mut self, ctx: &egui::Context, data: &GameData, tile: i32, size: u32) -> Option<TextureHandle> {
+        let tex = &data.tiles.get(&tile)?.texture;
+        let (index, sheet) = tex.split_once(',')?;
+        let sheet = sheet.split(',').next()?.to_string();
+        let index: i32 = index.trim().parse().ok()?;
+        let im = self.sprites.sprite(&sheet, index)?;
+        if im.w <= 1 || !im.rgba.chunks(4).any(|p| p[3] > 40) {
+            return None;
+        }
+        self.sheet(ctx, &sheet, index, size)
+    }
+
     /// Java `DifficultyMark.plainGravestone`: a plain sprite (no outline) cut to its pixels and scaled (crisp) to a
     /// height.
     pub fn plain_cut(&mut self, ctx: &egui::Context, data: &GameData, id: i32, height: u32) -> Option<TextureHandle> {
@@ -249,7 +334,7 @@ impl Icons {
     }
 
     pub fn new(assets: &std::path::Path) -> Icons {
-        Icons { sprites: Sprites::new(assets), cache: HashMap::new(), skins: HashMap::new() }
+        Icons { sprites: Sprites::new(assets), cache: HashMap::new(), skins: HashMap::new(), missing: Default::default() }
     }
 
     /// An object's outlined icon at a size (Java `CharactersView.sprite`), None without a sprite.

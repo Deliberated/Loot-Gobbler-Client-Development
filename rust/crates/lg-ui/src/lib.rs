@@ -7,6 +7,7 @@ pub mod battles;
 pub mod characters;
 pub mod charts;
 pub mod classes;
+pub mod damage_graph;
 pub mod detail;
 pub mod game_modes;
 pub mod icons;
