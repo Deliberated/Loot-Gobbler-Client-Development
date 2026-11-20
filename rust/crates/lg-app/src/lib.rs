@@ -8,6 +8,7 @@ pub mod amulet_saves;
 pub mod assets;
 pub mod char_list;
 pub mod characters;
+pub mod chat;
 pub mod collection;
 pub mod dps_history;
 pub mod dungeon_visits;
@@ -73,6 +74,8 @@ pub struct App {
     pub vitals: item_cooldowns::Vitals,
     pub pets: pet_store::PetStore,
     pub friends: friends::Friends,
+    /// The chat while the app runs.
+    pub chat: chat::Chat,
     /// Tomato's exaltation progress per class (`RealmCharacter.exalts`): from the login's fetches, then from the
     /// game's exaltation packets.
     pub realm_exalts: realm_character::Exalts,
@@ -105,6 +108,12 @@ macro_rules! upe_ctx {
     ($app:ident) => {
         upe::Ctx { data: $app.world.data(), zone: &$app.zone, now: $app.world.now() }
     };
+}
+
+/// Java `Util.getHourTime`: "HH:mm:ss" from a local date-time ("yyyy-mm-ddTHH:MM[:SS]").
+fn hour_time(t: &str) -> String {
+    let hm = t.get(11..).unwrap_or("");
+    if hm.len() == 5 { format!("{hm}:00") } else { hm.to_string() }
 }
 
 impl App {
@@ -148,6 +157,7 @@ impl App {
             vitals: item_cooldowns::Vitals::default(),
             pets: java_data.map(pet_store::PetStore::import).unwrap_or_default(),
             friends: java_data.map(friends::Friends::import).unwrap_or_default(),
+            chat: chat::Chat::default(),
             realm_exalts: realm_character::Exalts::new(),
             web: Box::new(web::Offline::default()),
             token: None,
@@ -367,6 +377,12 @@ impl App {
                 self.world.packet(p)?;
                 self.events(now);
                 self.amulet_saves.text(&self.world, &mut self.dungeon_visits, t, now);
+                // ChatGUI.updateChat (after the loot attribution)
+                let me = match self.world.me() {
+                    Some(e) => self.world.display_name(e)?,
+                    None => None,
+                };
+                self.chat.text(me.as_deref(), &t.name, &t.recipient, &t.text, &hour_time(&time));
             }
             // TomatoData.updateToken
             Decoded::Hello(h) => {

@@ -5,7 +5,7 @@
 //!
 //! With `--data` the views show that folder's records (read only) and its `assets`.
 
-use lg_ui::{battles, characters, game_modes, icons::Icons, inventory, profile, shell, theme};
+use lg_ui::{battles, characters, game_modes, icons::Icons, inventory, profile, shell, social, theme};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -63,6 +63,7 @@ fn main() {
         let mut chars = characters::CharactersView::default();
         let mut inv = inventory::InventoryView::default();
         let mut modes = game_modes::GameModesView::default();
+        let mut social = social::SocialView::default();
         let mut battles = battles::BattlesView { selected: -1, ..Default::default() };
         let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(w, h)).with_pixels_per_point(1.0).wgpu().build_ui(|ui| {
             if !themed {
@@ -79,6 +80,14 @@ fn main() {
                     "Profile" => prof.show(ui, &mut c),
                     "Characters" => chars.show(ui, &mut c),
                     "Game Modes" => modes.show(ui, &mut c),
+                    "Social" | "Social:quests" | "Social:discord" => {
+                        social.page = match tab {
+                            "Social:quests" => 1,
+                            "Social:discord" => 2,
+                            _ => 0,
+                        };
+                        social.show(ui, &mut c)
+                    }
                     "Battles" | "Battles:dps" | "Battles:overlay" => {
                         battles.page = match tab {
                             "Battles:dps" => 1,

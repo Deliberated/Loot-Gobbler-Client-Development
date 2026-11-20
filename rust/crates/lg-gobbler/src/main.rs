@@ -98,6 +98,7 @@ fn main() -> ExitCode {
         eprintln!("took the Java app's records over into {}", own.display());
     }
     eprintln!("your records: {}", own.display());
+    app.chat.load_blocked(&own); // the chat's spam phrases kept next to the records
     if !o.offline {
         app.web = Box::new(lg_net::Online::new());
     }

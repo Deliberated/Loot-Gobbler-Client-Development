@@ -13,7 +13,7 @@ import java.lang.reflect.Field;
  * menu bar above it. Run in a folder holding the app's data (a copy: the app may write there) and without network
  * (e.g. `unshare -rn`): views that talk to servers then show what they show offline.
  * Usage: UiOracle <out dir> <width> <height> [tab...]   (all tabs if none given; "Characters:<charId>" opens a character,
- * "Characters:classes" / "Characters:pets" those pages, "Battles:dps" / "Battles:overlay" those)
+ * "Characters:classes" / "Characters:pets" those pages, "Battles:dps" / "Battles:overlay", "Social:quests" / "Social:discord" those)
  */
 public class UiOracle {
     public static void main(String[] args) throws Throwable {
@@ -63,6 +63,11 @@ public class UiOracle {
                         ((CardLayout) field(v, "pages")).show((Container) field(v, "views"), arg.equals("dps") ? "DPS" : "Overlay");
                     } catch (Exception e) {
                         throw new RuntimeException(e);
+                    }
+                }
+                if (arg != null && tab.equals("Social")) {   // "Social:quests" / "Social:discord"
+                    for (lootgobbler.ui.SubTabs t : findAll(main, lootgobbler.ui.SubTabs.class)) {
+                        t.show(arg.equals("quests") ? "Daily Quests" : "Discord");   // only Social's has these pages
                     }
                 }
                 if (arg != null && tab.equals("Characters")) {
@@ -118,6 +123,15 @@ public class UiOracle {
             }
         }
         return null;
+    }
+
+    static <T> java.util.List<T> findAll(Container c, Class<T> type) {
+        java.util.List<T> out = new java.util.ArrayList<>();
+        for (Component k : c.getComponents()) {
+            if (type.isInstance(k)) out.add(type.cast(k));
+            if (k instanceof Container kc) out.addAll(findAll(kc, type));
+        }
+        return out;
     }
 
     /** Lays out a tree that has no window (validate does nothing without one). */
