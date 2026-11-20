@@ -785,6 +785,11 @@ impl Holdings {
         self.tally(c, living).0
     }
 
+    /// Java's tally whole: copies, and the most enchantment slots on one copy, of every collectible item.
+    pub fn counts_and_best(&self, c: &Ctx, living: &HashMap<i32, bool>) -> (HashMap<i32, i32>, HashMap<i32, i32>) {
+        self.tally(c, living)
+    }
+
     pub fn best_enchants(&self, c: &Ctx, living: &HashMap<i32, bool>, item: i32) -> i32 {
         self.tally(c, living).1.get(&item).copied().unwrap_or(-1)
     }

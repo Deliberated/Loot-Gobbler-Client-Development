@@ -112,6 +112,12 @@ fn enchant_count(c: &Char, slot: usize) -> usize {
 }
 
 impl CharactersView {
+    /// The rarity marker sprites, for other views.
+    pub fn rarity(&mut self, ctx: &egui::Context) -> crate::detail::Rarity {
+        self.ensure_textures(ctx);
+        self.rarity.clone()
+    }
+
     fn ensure_textures(&mut self, ctx: &egui::Context) {
         if self.grave.is_none() {
             self.grave = png_texture(ctx, "gravestone", include_bytes!("../../../../src/main/resources/icons/gravestone.png"));

@@ -117,6 +117,22 @@ impl Entry {
         self.history.as_ref().map_or(0, |h| h.iter().filter(|f| f.is_removal()).count() as i32)
     }
 
+    /// Java `maxEnchants`: the most enchantment slots a copy found had (removals left out).
+    pub fn max_enchants(&self) -> i32 {
+        self.history
+            .iter()
+            .flatten()
+            .filter(|f| !f.is_removal())
+            .map(|f| f.enchant_ids.as_ref().map_or(f.enchants, |e| e.len() as i32))
+            .max()
+            .unwrap_or(0)
+            .max(0)
+    }
+
+    pub fn last_date(&self) -> &str {
+        self.last.as_deref().map_or("", |l| &l[..l.len().min(10)])
+    }
+
     pub fn held(&self) -> i32 {
         (self.count - self.removed()).max(0)
     }

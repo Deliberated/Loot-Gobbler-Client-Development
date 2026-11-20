@@ -43,6 +43,8 @@ pub struct Ctx<'a> {
     pub en: &'a lg_app::loadout::Enchantments,
     /// The suggested loadout's settings (what you aim for, the scope...).
     pub loadout: &'a mut lg_app::loadout::Settings,
+    /// The app's settings file (`realmShark.properties`).
+    pub props: &'a lg_app::properties::Properties,
 }
 
 pub struct Profile {
