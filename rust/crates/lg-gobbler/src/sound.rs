@@ -400,6 +400,15 @@ pub const ITEM_SOUNDS: [(&str, &[(&str, &str)]); 6] = [
     ),
 ];
 
+/// The kinds of ping (Java `PingSounds.Type`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ping {
+    Enchant,
+    Dungeon,
+    Item,
+    Entity,
+}
+
 /// The sounds as the settings say (Java `Sound`'s flags and volume, `ItemSound`, `StartupSound`).
 pub struct Sounds<'a>(pub &'a lg_app::properties::Properties);
 
@@ -462,6 +471,71 @@ impl Sounds<'_> {
                 self.play("pm.wav");
                 return;
             }
+        }
+    }
+
+    /// Java `PingSounds.play`: the kind's sound (its own WAV, else the Windows notification sound it prefers, else
+    /// the bundled ping) at its own share of the volume.
+    pub fn ping(&self, kind: Ping) {
+        let (key, windows) = match kind {
+            Ping::Enchant => ("pingSound.enchant", "Windows Notify.wav"),
+            Ping::Dungeon => ("pingSound.dungeon", "Windows Ding.wav"),
+            Ping::Item => ("pingSound.item", "chimes.wav"),
+            Ping::Entity => ("pingSound.entity", "Windows Balloon.wav"),
+        };
+        let saved = self.0.get(key).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+        let preferred = std::path::Path::new("C:/Windows/Media").join(windows);
+        let file = saved.unwrap_or_else(|| if preferred.is_file() { preferred.display().to_string() } else { "custom.wav".into() });
+        let own = self.0.get(&format!("{key}.volume")).and_then(|v| v.trim().parse::<i32>().ok()).map_or(100, |v| v.clamp(0, 100));
+        play(&file, self.volume() * own / 100);
+    }
+
+    fn list(&self, key: &str) -> Vec<String> {
+        self.0.get(key).unwrap_or("").split('\u{00A7}').filter(|s| !s.is_empty()).map(str::to_string).collect()
+    }
+
+    /// An object came into view (TomatoData `customSoundAlert`, `dungeonPingAlert`): an entity id on your list, a
+    /// portal of a dungeon you chose.
+    pub fn object(&self, data: &lg_gamedata::GameData, object_type: i32) {
+        if self.list("entityIdPings").iter().any(|id| *id == object_type.to_string()) {
+            self.ping(Ping::Entity);
+        }
+        if let Some(name) = data.dungeons.portal_names.get(&object_type) {
+            let chosen = self.0.get("dungeonPing.selected").unwrap_or("");
+            if chosen.split(',').any(|s| s.trim().eq_ignore_ascii_case(name)) {
+                self.ping(Ping::Dungeon);
+            }
+        }
+    }
+
+    /// The pings of a bag Java's loot panel shows (LootGUI): an item on your list (by id or name, a part of it
+    /// enough), an enchantment you chose; each kind once.
+    pub fn bag_contents(&self, data: &lg_gamedata::GameData, items: &[i32], enchants: &[String]) {
+        let pings: Vec<String> = self.list("itemPings").iter().map(|s| s.to_lowercase()).collect();
+        let chosen: Vec<i32> = self
+            .0
+            .get("enchantPing.selected")
+            .unwrap_or("")
+            .split(',')
+            .filter_map(|p| p.trim().parse::<i16>().ok())
+            .map(i32::from)
+            .collect();
+        let (mut item, mut enchant) = (false, false);
+        for (i, id) in items.iter().enumerate() {
+            if *id < 1 {
+                continue;
+            }
+            let name = data.object_name(*id).unwrap_or("").to_lowercase();
+            let id_text = id.to_string();
+            item |= pings.iter().any(|s| id_text.contains(s.as_str()) || name.contains(s.as_str()));
+            let code = enchants.get(i).map(String::as_str).filter(|c| !c.is_empty() && *c != "AAIE_f_9__3__f8=");
+            enchant |= lg_gamedata::enchants::enchant_ids(code).iter().any(|e| chosen.contains(e));
+        }
+        if item {
+            self.ping(Ping::Item);
+        }
+        if enchant {
+            self.ping(Ping::Enchant);
         }
     }
 

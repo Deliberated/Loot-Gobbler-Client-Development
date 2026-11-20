@@ -149,7 +149,13 @@ impl Gui {
         let s = crate::sound::Sounds(&self.window.props);
         for h in std::mem::take(&mut self.app.heard) {
             match h {
-                lg_app::Heard::Bag(t) => s.bag(t),
+                lg_app::Heard::Bag { object_type, items, enchants, shown } => {
+                    if shown {
+                        s.bag_contents(self.app.world.data(), &items, &enchants);
+                    }
+                    s.bag(object_type);
+                }
+                lg_app::Heard::Object(t) => s.object(self.app.world.data(), t),
                 lg_app::Heard::Chat { channel, from_me, text } => s.chat(channel, from_me, &text),
                 lg_app::Heard::Trade => s.trade(),
             }

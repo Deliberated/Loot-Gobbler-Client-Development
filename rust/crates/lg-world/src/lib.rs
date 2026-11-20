@@ -72,6 +72,10 @@ pub enum Event {
         id: i32,
         status: ObjectStatus,
     },
+    /// An object came into view (Java's entity and dungeon pings look at it).
+    NewObject {
+        object_type: i32,
+    },
     /// A bag matched to who dropped it (Java `LootEvents.bagDropped`): the bag as it is now, your seasonal stat.
     BagDropped {
         map: String,
@@ -657,6 +661,9 @@ impl World {
             self.entity(id).name = name;
         }
         self.events.push(Event::ObjectStatus { id, status: status.clone() });
+        if new {
+            self.events.push(Event::NewObject { object_type });
+        }
         if new && self.map_unknown() && !self.map_guess_failed {
             self.guess_map(object_type);
         }

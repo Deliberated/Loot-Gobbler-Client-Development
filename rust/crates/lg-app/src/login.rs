@@ -105,6 +105,8 @@ impl App {
         if !ok {
             return Ok(());
         }
+        // LootGUI.updateExaltStats: the loot boxes (and their item and enchant pings) start now
+        self.loot_shown = true;
         // new HashMap<>(RealmCharacter.exalts): its order
         let keys: Vec<(i32, i32)> = self.realm_exalts.keys().map(|&k| (k, k)).collect();
         let order = lg_world::fight::java_bucket_order(&keys, lg_world::fight::java_buckets_copied(keys.len()));

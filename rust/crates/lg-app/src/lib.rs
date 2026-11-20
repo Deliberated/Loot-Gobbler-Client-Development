@@ -58,8 +58,11 @@ pub const RAW: &[u8] = &[item_use::USE_REQUEST, item_use::USE_RESULT];
 /// Something the app heard that may make a sound (the window decides, by the settings, and plays it).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Heard {
-    /// A loot bag of yours dropped (its object type).
-    Bag(i32),
+    /// A loot bag of yours dropped: its object type, its eight slots' items and enchantment codes, and whether
+    /// Java's loot panel showed it (then its item and enchant pings sound).
+    Bag { object_type: i32, items: Vec<i32>, enchants: Vec<String>, shown: bool },
+    /// An object came into view (entity and dungeon pings).
+    Object(i32),
     /// A chat line: its channel, whether you wrote it, its text.
     Chat { channel: chat::Channel, from_me: bool, text: String },
     /// Someone asked to trade with you.
@@ -98,6 +101,8 @@ pub struct App {
     pub token: Option<String>,
     /// The exaltations were asked for once (Java: `updatedExaltStats`).
     pub updated_exalts: bool,
+    /// Java `LootGUI.update`: the exaltations came, so the loot boxes show (and ping).
+    pub loot_shown: bool,
     pub friends_asked: i64,
     pub missions: missions::Missions,
     pub zone: localtime::Zone,
@@ -176,6 +181,7 @@ impl App {
             web: Box::new(web::Offline::default()),
             token: None,
             updated_exalts: false,
+            loot_shown: false,
             friends_asked: 0,
             missions: java_data.map(missions::Missions::import).unwrap_or_default(),
             zone: localtime::Zone::system(),
@@ -511,6 +517,7 @@ impl App {
                 }
                 Event::MoonAdded { id, object_type } => self.moonlight.added(&self.world, &mut self.dungeon_visits, id, object_type, now),
                 Event::MoonRemoved { id } => self.moonlight.removed(id),
+                Event::NewObject { object_type } => self.heard.push(Heard::Object(object_type)),
                 Event::YardPet { object_type, status } => self.pets.yard_pet(object_type, &status, now),
                 Event::EnteredNexus => {
                     if self.characters.entered_nexus(now) {
@@ -542,7 +549,11 @@ impl App {
                     self.loot_events.object_status(&mut r, id, &status.stats);
                 }
                 Event::BagDropped { map, bag, seasonal } => {
-                    self.heard.push(Heard::Bag(bag.object_type));
+                    let items = (0..8).map(|i| bag.value(lg_world::stats::INVENTORY_0 + i).unwrap_or(-1)).collect();
+                    let enchants =
+                        bag.text(lg_world::stats::UNIQUE_DATA).map_or_else(Vec::new, |t| t.split(',').map(str::to_string).collect());
+                    let shown = self.loot_shown && self.world.me().is_some();
+                    self.heard.push(Heard::Bag { object_type: bag.object_type, items, enchants, shown });
                     let mut r = records!(self, &time, false);
                     self.loot_events.bag_dropped(&mut r, &map, &bag, seasonal);
                 }
