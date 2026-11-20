@@ -389,7 +389,7 @@ fn character_block(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, c: &C
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
         let id = if c.skin > 0 { c.skin } else { c.class_type };
-        let tex = icons.object(ui.ctx(), app.world.data(), id, 96);
+        let tex = icons.skin(ui.ctx(), app.world.data(), id, c.tex1, c.tex2, 96);
         widgets::icon(ui, tex.as_ref(), 96.0);
         ui.add_space(18.0);
         ui.vertical(|ui| {
