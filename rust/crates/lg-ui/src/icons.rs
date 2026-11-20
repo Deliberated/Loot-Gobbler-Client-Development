@@ -169,10 +169,22 @@ impl Icons {
         if let Some(t) = self.skins.get(&key) {
             return Some(t.clone());
         }
+        let out = self.fitted_image(data, id, from, size)?;
+        let tex = ctx.load_texture(
+            key.clone(),
+            ColorImage::from_rgba_unmultiplied([size as usize, size as usize], &out.rgba),
+            TextureOptions::NEAREST,
+        );
+        self.skins.insert(key, tex.clone());
+        Some(tex)
+    }
+
+    /// The pixels of [`Self::fitted`].
+    pub fn fitted_image(&mut self, data: &GameData, id: i32, from: u32, size: u32) -> Option<Image> {
         let src = outlined(&self.sprites.object(data, id)?, from);
         let (x0, y0, w, h) = opaque_bounds(&src, 30)?;
         let scale = f64::from(size) / f64::from(w.max(h));
-        let (dw, dh) = (((f64::from(w) * scale).round() as u32).max(1), ((f64::from(h) * scale).round() as u32).max(1));
+        let (dw, dh) = (((f64::from(w) * scale).round() as u32).clamp(1, size), ((f64::from(h) * scale).round() as u32).clamp(1, size));
         let small = resize(&src, x0, y0, w, h, dw, dh);
         let mut out = Image { w: size, h: size, rgba: vec![0; (size * size * 4) as usize] };
         let (ox, oy) = ((size - dw) / 2, (size - dh) / 2);
@@ -183,13 +195,7 @@ impl Icons {
                 out.rgba[d..d + 4].copy_from_slice(&small.rgba[s..s + 4]);
             }
         }
-        let tex = ctx.load_texture(
-            key.clone(),
-            ColorImage::from_rgba_unmultiplied([size as usize, size as usize], &out.rgba),
-            TextureOptions::NEAREST,
-        );
-        self.skins.insert(key, tex.clone());
-        Some(tex)
+        Some(out)
     }
 
     /// Java `DamageGraph.croppedIcon`: an enemy's outlined sprite (at 64) cut to its visible pixels and scaled (crisp)

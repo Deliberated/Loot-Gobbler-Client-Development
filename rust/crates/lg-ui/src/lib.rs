@@ -14,6 +14,8 @@ pub mod game_modes;
 pub mod icons;
 pub mod inventory;
 pub mod jtext;
+pub mod overlay_page;
+pub mod overlays;
 pub mod pets;
 pub mod profile;
 pub mod shell;

@@ -93,8 +93,8 @@ impl BattlesView {
             self.dps.show(ui, c, body);
             return;
         }
-        if self.page != 0 {
-            jtext::draw(ui.painter(), body.min + vec2(8.0, 8.0), Align2::LEFT_TOP, "Coming soon.", &text(18.0), fixed::MUTED);
+        if self.page == 2 {
+            crate::overlay_page::show(ui, c, body);
             return;
         }
         self.dungeons(ui, c, rarity, body);
