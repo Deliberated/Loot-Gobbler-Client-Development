@@ -31,6 +31,7 @@ pub struct Gui {
     overlays: lg_ui::overlay_windows::OverlayWindows,
     /// A file or folder picker open on its thread: the setting it is for, and where its answer comes.
     choosing: Option<(String, std::sync::mpsc::Receiver<Option<PathBuf>>)>,
+    frames: u64,
 }
 
 impl Gui {
@@ -50,6 +51,7 @@ impl Gui {
             seen_at: now_ms(),
             overlays: Default::default(),
             choosing: None,
+            frames: 0,
         };
         g.seen_saves = g.app.amulet_saves.count();
         g.seen_matrix = g.app.cooldowns.matrix_fired;
@@ -312,6 +314,22 @@ impl eframe::App for Gui {
             }
         }
         self.remember_bounds(ui.ctx());
+        // the test hook: LG_TRY=card:<charId> or LG_TRY=grid presses that "Copy as image" after start-up
+        self.frames += 1;
+        if self.frames == 30
+            && let Ok(t) = std::env::var("LG_TRY")
+        {
+            match t.strip_prefix("card:").and_then(|i| i.parse::<i32>().ok()) {
+                Some(id) => {
+                    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("lg-copy-card"), id));
+                }
+                None if t == "grid" => {
+                    self.window.open("Inventory");
+                    self.window.inventory.copy_image_now();
+                }
+                None => {}
+            }
+        }
         // the clocks and the live views move on; packets come in between
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
     }

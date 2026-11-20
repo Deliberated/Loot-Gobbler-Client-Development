@@ -282,7 +282,8 @@ impl Window {
                 "Profile" => profile.show(ui, &mut c),
                 "Inventory" => {
                     let rarity = characters.rarity(ui.ctx());
-                    inventory.show(ui, &mut c, &rarity)
+                    inventory.show(ui, &mut c, &rarity);
+                    inventory.grab_step(ui, &mut c, &rarity)
                 }
                 "Characters" => characters.show(ui, &mut c),
                 "Game Modes" => game_modes.show(ui, &mut c),

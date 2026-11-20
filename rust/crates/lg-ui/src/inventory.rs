@@ -22,6 +22,10 @@ const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Au
 
 #[derive(Default)]
 pub struct InventoryView {
+    /// "Copy as image" under way: the grid drawn over the window a piece at a time, each piece grabbed.
+    grab: Option<Grab>,
+    /// "Copy as image" asked from outside the view (it starts on the next draw).
+    copy_requested: bool,
     pub page: usize,
     pub filter: usize,
     pub search: String,
@@ -278,6 +282,8 @@ impl InventoryView {
             "Collection".to_string()
         };
         let mut filter = self.filter;
+        // the grid's cells as last drawn, for "Copy as image"
+        let grid_cells: std::cell::RefCell<(Vec<Cell>, usize)> = Default::default();
         let mut search = self.search.clone();
         let icons = &mut *c.icons;
         widgets::section(
@@ -306,45 +312,10 @@ impl InventoryView {
                     let gh = rows * CELL + 2.0 * PAD;
                     let painter = ui.painter().clone();
                     painter.rect_filled(Rect::from_min_size(top, vec2(gw, gh.max(r.height()))), 0.0, BG);
-                    let count_f = text(16.0);
-                    for (i, id) in grid.iter().enumerate() {
-                        let (col, row) = (i as f32 % cols, (i as f32 / cols).floor());
-                        let (x, y) = (top.x + PAD + col * CELL, top.y + PAD + row * CELL);
-                        let have = owned_set.contains(id);
-                        if let Some(t) = icons.object(ui.ctx(), data, *id, ICON as u32) {
-                            let tint = if have { Color32::WHITE } else { Color32::from_white_alpha(56) };
-                            painter.image(
-                                t.id(),
-                                Rect::from_min_size(pos2(x + (CELL - ICON) / 2.0, y + (CELL - ICON) / 2.0), vec2(ICON, ICON)),
-                                uv(),
-                                tint,
-                            );
-                        }
-                        if have {
-                            enchant_badge(&painter, rarity, pos2(x + CELL - 3.0, y + CELL - 3.0), best_of(*id).max(0) as usize, 5.0);
-                            let n = held(*id);
-                            if n > 0 {
-                                let t = n.to_string();
-                                let asc = (16.0f32 * 1050.0 / 1350.0).ceil();
-                                let (tx, ty) = (x + 2.0, y + CELL - 3.0 - asc);
-                                for dx in -1..=1 {
-                                    for dy in -1..=1 {
-                                        if dx != 0 || dy != 0 {
-                                            jtext::draw(
-                                                &painter,
-                                                pos2(tx + dx as f32, ty + dy as f32),
-                                                Align2::LEFT_TOP,
-                                                &t,
-                                                &count_f,
-                                                Color32::BLACK,
-                                            );
-                                        }
-                                    }
-                                }
-                                jtext::draw(&painter, pos2(tx, ty), Align2::LEFT_TOP, &t, &count_f, COUNT_GOLD);
-                            }
-                        }
-                    }
+                    let cells: Vec<Cell> =
+                        grid.iter().map(|id| Cell { id: *id, have: owned_set.contains(id), best: best_of(*id), held: held(*id) }).collect();
+                    paint_cells(&painter, ui.ctx(), icons, data, rarity, &cells, cols as usize, top);
+                    *grid_cells.borrow_mut() = (cells, cols as usize);
                     ui.allocate_exact_size(vec2(gw, gh), Sense::hover());
                 });
             },
@@ -414,6 +385,11 @@ impl InventoryView {
                 }
             },
         );
+        if clicked == Some(1) || std::mem::take(&mut self.copy_requested) {
+            // Java `copyImage`: the grid as one image, with the columns it shows now
+            let (cells, cols) = grid_cells.take();
+            self.grab = Some(Grab { cells, cols: cols.max(1), chunk: 0, frames: 0, pieces: Default::default() });
+        }
         match clicked {
             // Java `copyText`: "- Name (Shiny) xN" per item held, sorted, under a head line
             Some(0) => {
@@ -945,4 +921,162 @@ fn gathered(app: &lg_app::App, char_id: i32) -> HashMap<i32, (i32, i32, String, 
         e.3 = time;
     }
     out
+}
+
+/// One item of the collection grid.
+#[derive(Clone, Copy)]
+struct Cell {
+    id: i32,
+    have: bool,
+    best: i32,
+    held: i32,
+}
+
+/// Java `CollectionGrid.paintCells`: per item its icon (faded when you have none), and for those you have the
+/// best copy's enchantment badge and how many you hold (gold pixel digits outlined in black), the grid's corner at
+/// `top` (the rows outside the painter's clip are skipped).
+#[allow(clippy::too_many_arguments)]
+fn paint_cells(
+    painter: &egui::Painter,
+    ctx: &egui::Context,
+    icons: &mut crate::icons::Icons,
+    data: &lg_gamedata::GameData,
+    rarity: &Rarity,
+    cells: &[Cell],
+    cols: usize,
+    top: egui::Pos2,
+) {
+    let count_f = text(16.0);
+    let clip = painter.clip_rect();
+    for (i, c) in cells.iter().enumerate() {
+        let (col, row) = ((i % cols) as f32, (i / cols) as f32);
+        let (x, y) = (top.x + PAD + col * CELL, top.y + PAD + row * CELL);
+        if y > clip.bottom() || y + CELL < clip.top() {
+            continue;
+        }
+        if let Some(t) = icons.object(ctx, data, c.id, ICON as u32) {
+            let tint = if c.have { Color32::WHITE } else { Color32::from_white_alpha(56) };
+            painter.image(
+                t.id(),
+                Rect::from_min_size(pos2(x + (CELL - ICON) / 2.0, y + (CELL - ICON) / 2.0), vec2(ICON, ICON)),
+                uv(),
+                tint,
+            );
+        }
+        if c.have {
+            enchant_badge(painter, rarity, pos2(x + CELL - 3.0, y + CELL - 3.0), c.best.max(0) as usize, 5.0);
+            if c.held > 0 {
+                let t = c.held.to_string();
+                let asc = (16.0f32 * 1050.0 / 1350.0).ceil();
+                let (tx, ty) = (x + 2.0, y + CELL - 3.0 - asc);
+                for dx in -1..=1 {
+                    for dy in -1..=1 {
+                        if dx != 0 || dy != 0 {
+                            jtext::draw(painter, pos2(tx + dx as f32, ty + dy as f32), Align2::LEFT_TOP, &t, &count_f, Color32::BLACK);
+                        }
+                    }
+                }
+                jtext::draw(painter, pos2(tx, ty), Align2::LEFT_TOP, &t, &count_f, COUNT_GOLD);
+            }
+        }
+    }
+}
+
+type Pieces = std::sync::Arc<std::sync::Mutex<Vec<Option<egui::ColorImage>>>>;
+
+/// "Copy as image" under way.
+struct Grab {
+    cells: Vec<Cell>,
+    cols: usize,
+    /// The piece drawn now, and for how many frames it has been.
+    chunk: usize,
+    frames: u8,
+    pieces: Pieces,
+}
+
+impl InventoryView {
+    /// One step of the grab: the next piece of the grid drawn over the window's top left (one pixel each, as Java's
+    /// image), grabbed from the frame; all there: put together, copied, said so.
+    /// Starts "Copy as image" as the button does (for the app's test hook).
+    pub fn copy_image_now(&mut self) {
+        self.copy_requested = true;
+    }
+
+    pub fn grab_step(&mut self, ui: &Ui, c: &mut Ctx, rarity: &Rarity) {
+        let Some(g) = &mut self.grab else { return };
+        let ctx = ui.ctx().clone();
+        let ppp = ctx.pixels_per_point();
+        let rows = g.cells.len().div_ceil(g.cols).max(1);
+        // in points (the image comes out at the screen's scale: Java's size on a plain screen)
+        let (w_pt, h_pt) = (g.cols as f32 * CELL + 2.0 * PAD, rows as f32 * CELL + 2.0 * PAD);
+        let screen = ctx.content_rect();
+        // a piece: as many whole rows as the window holds
+        let chunk_pt = (((screen.height() - 2.0 * PAD) / CELL).floor().max(1.0)) * CELL;
+        let chunks = (h_pt / chunk_pt).ceil() as usize;
+        {
+            let pieces = g.pieces.lock().expect("pieces");
+            if pieces.len() == chunks && pieces.iter().all(Option::is_some) {
+                drop(pieces);
+                let pieces = std::mem::take(&mut *g.pieces.lock().expect("pieces"));
+                let (w, h) = ((w_pt * ppp).round() as usize, (h_pt * ppp).round() as usize);
+                let mut px = vec![Color32::TRANSPARENT; w * h];
+                let mut y0 = 0;
+                for im in pieces.into_iter().flatten() {
+                    for y in 0..im.size[1].min(h.saturating_sub(y0)) {
+                        for x in 0..im.size[0].min(w) {
+                            px[(y0 + y) * w + x] = im.pixels[y * im.size[0] + x];
+                        }
+                    }
+                    y0 += im.size[1];
+                }
+                ctx.copy_image(egui::ColorImage::new([w, h], px));
+                self.grab = None;
+                c.asks.push(crate::window::Ask::Confirm {
+                    title: "Copy as image".into(),
+                    text: "Collection grid copied to the clipboard as an image.".into(),
+                    yes: "OK".into(),
+                    no: String::new(),
+                    then: Box::new(crate::window::Ask::Nothing),
+                });
+                return;
+            }
+        }
+        if g.chunk >= chunks {
+            ctx.request_repaint();
+            return;
+        }
+        // the piece over the window's top left
+        let off = g.chunk as f32 * chunk_pt;
+        let piece_h = chunk_pt.min(h_pt - off);
+        let area = Rect::from_min_size(screen.min, vec2(w_pt, piece_h));
+        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("lg-grid-grab"))).with_clip_rect(area);
+        painter.rect_filled(area, 0.0, BG);
+        paint_cells(&painter, &ctx, c.icons, c.app.world.data(), rarity, &g.cells, g.cols, screen.min - vec2(0.0, off));
+        if g.frames == 0 {
+            let (pieces, chunk, n) = (g.pieces.clone(), g.chunk, chunks);
+            let c2 = ctx.clone();
+            let (wp, hp) = ((w_pt * ppp).round() as usize, (piece_h * ppp).round() as usize);
+            let origin = (screen.min.x * ppp, screen.min.y * ppp);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::ScreenshotCallback::new(move |frame| {
+                let (x0, y0) = (origin.0.round() as usize, origin.1.round() as usize);
+                let (w, h) = (wp.min(frame.size[0].saturating_sub(x0)), hp.min(frame.size[1].saturating_sub(y0)));
+                let mut px = Vec::with_capacity(w * h);
+                for y in 0..h {
+                    px.extend_from_slice(&frame.pixels[(y0 + y) * frame.size[0] + x0..(y0 + y) * frame.size[0] + x0 + w]);
+                }
+                let mut p = pieces.lock().expect("pieces");
+                if p.len() < n {
+                    p.resize(n, None);
+                }
+                p[chunk] = Some(egui::ColorImage::new([w, h], px));
+                c2.request_repaint();
+            })));
+        }
+        g.frames += 1;
+        if g.frames >= 2 {
+            g.frames = 0;
+            g.chunk += 1;
+        }
+        ctx.request_repaint();
+    }
 }
