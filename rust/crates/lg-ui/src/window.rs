@@ -25,6 +25,8 @@ pub enum Ask {
     ClearCollection,
     /// Nothing (what a message's button asks).
     Nothing,
+    /// Play a sound: a bundled file ("pm.wav"), "item:<setting key>" or "startup:<id>" (Settings' previews).
+    Play(String),
     /// Ask first (Java `JOptionPane.showConfirmDialog`): title, text, the yes and no buttons; yes asks `then`. With
     /// `no` empty it is a message (`showMessageDialog`): one button, nothing asked.
     Confirm { title: String, text: String, yes: String, no: String, then: Box<Ask> },

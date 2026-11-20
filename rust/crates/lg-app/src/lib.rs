@@ -55,8 +55,21 @@ pub const HELLO: u8 = 74;
 /// Packets unknown to the packet table the app still reads, raw (Java: `PacketDebug.problem` -> `ItemUse.raw`).
 pub const RAW: &[u8] = &[item_use::USE_REQUEST, item_use::USE_RESULT];
 
+/// Something the app heard that may make a sound (the window decides, by the settings, and plays it).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Heard {
+    /// A loot bag of yours dropped (its object type).
+    Bag(i32),
+    /// A chat line: its channel, whether you wrote it, its text.
+    Chat { channel: chat::Channel, from_me: bool, text: String },
+    /// Someone asked to trade with you.
+    Trade,
+}
+
 pub struct App {
     pub world: World,
+    /// What was heard since the window last took it (`take_heard`).
+    pub heard: Vec<Heard>,
     pub characters: characters::Characters,
     pub profile: profile::Profile,
     pub collection: collection::Collection,
@@ -140,6 +153,7 @@ impl App {
         characters.saved_list = java_data.and_then(|d| std::fs::read_to_string(d.join("char-list.xml")).ok());
         let mut app = App {
             world,
+            heard: Vec::new(),
             characters,
             profile,
             collection: java_data.map(collection::Collection::import).unwrap_or_default(),
@@ -212,6 +226,10 @@ impl App {
     /// What the records' listeners do after a change (Java: the UPE rules hear of vault changes as they happen, the
     /// profile counts the ST sets on a thread of its own).
     fn after(&mut self, now: i64) {
+        // nobody listening (no window): only the newest are kept
+        if self.heard.len() > 1000 {
+            self.heard.drain(..self.heard.len() - 1000);
+        }
         self.vault_changes();
         if std::mem::take(&mut self.collection.changed) {
             let sets = &self.world.data().st_sets;
@@ -383,6 +401,10 @@ impl App {
                     None => None,
                 };
                 self.chat.text(me.as_deref(), &t.name, &t.recipient, &t.text, &hour_time(&time));
+                if self.chat.blocked.iter().all(|b| !t.text.contains(b.as_str())) {
+                    let channel = self.chat.lines.back().map_or(chat::Channel::Public, |l| l.channel);
+                    self.heard.push(Heard::Chat { channel, from_me: me.as_deref() == Some(t.name.as_str()), text: t.text.clone() });
+                }
             }
             // TomatoData.updateToken
             Decoded::Hello(h) => {
@@ -412,6 +434,12 @@ impl App {
                 if n.effect == lg_protocol::packets::NotificationEffect::Victory {
                     self.dungeon_visits.victory();
                 }
+            }
+            // TomatoPacketCapture: the trade sound
+            Decoded::TradeRequested(_) => {
+                self.world.packet(p)?;
+                self.events(now);
+                self.heard.push(Heard::Trade);
             }
             _ => {
                 self.world.packet(p)?;
@@ -497,6 +525,7 @@ impl App {
                     self.loot_events.object_status(&mut r, id, &status.stats);
                 }
                 Event::BagDropped { map, bag, seasonal } => {
+                    self.heard.push(Heard::Bag(bag.object_type));
                     let mut r = records!(self, &time, false);
                     self.loot_events.bag_dropped(&mut r, &map, &bag, seasonal);
                 }

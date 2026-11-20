@@ -24,6 +24,10 @@ pub struct Gui {
     /// The window's place and size as last seen, and when it last changed (saved once it rests 600 ms).
     bounds: Option<(String, bool)>,
     bounds_changed: Option<std::time::Instant>,
+    /// What the item sounds were last seen at (amulet saves, the matrix firing, the time).
+    seen_saves: usize,
+    seen_matrix: i64,
+    seen_at: i64,
 }
 
 impl Gui {
@@ -38,7 +42,15 @@ impl Gui {
             capture: None,
             bounds: None,
             bounds_changed: None,
+            seen_saves: 0,
+            seen_matrix: 0,
+            seen_at: now_ms(),
         };
+        g.seen_saves = g.app.amulet_saves.count();
+        g.seen_matrix = g.app.cooldowns.matrix_fired;
+        // Java: the startup sound once the window is up
+        let sounds = crate::sound::Sounds(&g.window.props);
+        sounds.startup(sounds.saved_startup());
         if start {
             g.start();
         }
@@ -74,6 +86,45 @@ impl Gui {
 }
 
 impl Gui {
+    /// What should sound since the last frame: the app's bags, chat and trade requests, and the item sounds Java's
+    /// timers play (an amulet save and its recharge, the matrix firing, a cooldown running out).
+    fn sounds(&mut self) {
+        let now = now_ms();
+        let s = crate::sound::Sounds(&self.window.props);
+        for h in std::mem::take(&mut self.app.heard) {
+            match h {
+                lg_app::Heard::Bag(t) => s.bag(t),
+                lg_app::Heard::Chat { channel, from_me, text } => s.chat(channel, from_me, &text),
+                lg_app::Heard::Trade => s.trade(),
+            }
+        }
+        let saves = self.app.amulet_saves.count();
+        if saves > self.seen_saves {
+            s.item("amuletSoundFile");
+        }
+        self.seen_saves = saves;
+        let last = self.app.amulet_saves.saves.iter().rev().find(|x| !x.removed).map_or(0, |x| x.t);
+        let ready = last + lg_app::amulet_saves::RECHARGE_MS;
+        if last > 0 && self.seen_at < ready && ready <= now {
+            s.item("amuletReadySoundFile");
+        }
+        if self.app.cooldowns.matrix_fired > self.seen_matrix {
+            s.item("matrixBreakSoundFile");
+        }
+        self.seen_matrix = self.app.cooldowns.matrix_fired;
+        for (sound, r) in &self.app.cooldowns.running {
+            let end = r.start + r.duration_ms;
+            if self.seen_at < end && end <= now {
+                s.item(match sound {
+                    lg_app::item_cooldowns::Sound::Refinery => "refinerySoundFile",
+                    lg_app::item_cooldowns::Sound::Alien => "alienSoundFile",
+                    lg_app::item_cooldowns::Sound::Matrix => "matrixSoundFile",
+                });
+            }
+        }
+        self.seen_at = now;
+    }
+
     /// Java `WindowMemory.save`: maximized or not, and the normal bounds, once the window rests.
     fn remember_bounds(&mut self, ctx: &egui::Context) {
         let (rect, maximized, minimized) = ctx.input(|i| {
@@ -115,6 +166,7 @@ impl eframe::App for Gui {
             }
         }
         self.window.shell.sniffing = self.capture.is_some();
+        self.sounds();
         // what the views asked for last frame is done before this one is drawn
         if let Err(e) = self.app.save_changed(&self.own) {
             eprintln!("cannot save into {}: {e}", self.own.display());
@@ -131,6 +183,14 @@ impl eframe::App for Gui {
                 lg_ui::window::Ask::ClearRuns => self.app.dps_history.clear(),
                 lg_ui::window::Ask::ClearCollection => self.app.collection.clear(),
                 lg_ui::window::Ask::Confirm { .. } | lg_ui::window::Ask::Nothing => {}
+                lg_ui::window::Ask::Play(what) => {
+                    let s = crate::sound::Sounds(&self.window.props);
+                    match what.split_once(':') {
+                        Some(("item", key)) => s.item(key),
+                        Some(("startup", id)) => s.startup(id),
+                        _ => s.play(&what),
+                    }
+                }
             }
         }
         if self.window.shell.clicked_sniffer {

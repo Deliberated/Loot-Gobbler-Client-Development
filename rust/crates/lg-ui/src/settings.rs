@@ -114,6 +114,32 @@ enum Zone {
     Slider(Rect, String, f32, f32, i32, i32),
     /// Asked already (a picker was clicked).
     Now(String, String),
+    /// A sound to play (a Play button).
+    Play(String),
+}
+
+/// What a changed setting lets you hear (Java plays it with every click): the ping or bag sound switched, the
+/// volume (with the PM ping), the startup or item sound chosen.
+fn preview(key: &str, value: &str) -> Option<String> {
+    let file = match key {
+        "chatPing" => "pm.wav",
+        "chatPingParty" => "party.wav",
+        "chatPingGuild" => "guild.wav",
+        "whiteBagSound" => "whitebag.wav",
+        "orangeBagSound" => "orangebag.wav",
+        "redBagSound" => "redbag.wav",
+        "goldBagSound" => "goldbag.wav",
+        "eggBagSound" => "eggbag.wav",
+        "blueBagSound" => "bluebag.wav",
+        "tradePing" => "trade.wav",
+        "soundVolume" => "pm.wav",
+        "startupSound" => return Some(format!("startup:{value}")),
+        k => {
+            let item = k.strip_suffix("Volume").unwrap_or(k);
+            return ITEM_SOUNDS.iter().any(|(s, _, _)| s.key == item).then(|| format!("item:{item}"));
+        }
+    };
+    Some(file.into())
 }
 
 fn bool_prop(props: &Properties, key: &str, by_default: bool) -> bool {
@@ -176,7 +202,13 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
     let data = c.app.world.data();
     let icons = &mut *c.icons;
     let asks = &mut *c.asks;
-    let mut set = |k: &str, v: &str| asks.push(crate::window::Ask::Set(k.to_string(), v.to_string()));
+    // a setting saved, and the sound it is about played, as Java does on every click (it plays the new choice)
+    let set = |asks: &mut Vec<crate::window::Ask>, k: &str, v: &str| {
+        asks.push(crate::window::Ask::Set(k.to_string(), v.to_string()));
+        if let Some(sound) = preview(k, v) {
+            asks.push(crate::window::Ask::Play(sound));
+        }
+    };
     let f = text(18.0);
     let all = ui.max_rect();
     let zones = std::cell::RefCell::new(Vec::<Zone>::new());
@@ -298,7 +330,9 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                     zones.borrow_mut().push(Zone::Now("startupSound".into(), STARTUP_IDS[i].into()));
                 }
                 let sw = widgets::segmented_width(&painter, &STARTUP_LABELS, true);
-                button(ui, &p, x + 6.0 + sw + 6.0 + 8.0 + 6.0, ty + 4.0 + 18.0, "Play");
+                if button(ui, &p, x + 6.0 + sw + 6.0 + 8.0 + 6.0, ty + 4.0 + 18.0, "Play").1 {
+                    zones.borrow_mut().push(Zone::Play(format!("startup:{saved}")));
+                }
                 ty += row_h;
                 ty - r.top() + 2.0
             },
@@ -382,7 +416,9 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                     bx = cr.right() + 6.0 + 12.0 + 6.0;
                     for b in ["Play", "Choose...", "Default", "Off"] {
                         let (br, clicked) = button(ui, &p, bx, cy, b);
-                        if clicked && b == "Default" {
+                        if clicked && b == "Play" {
+                            zones.borrow_mut().push(Zone::Play(format!("item:{}", s.key)));
+                        } else if clicked && b == "Default" {
                             zones.borrow_mut().push(Zone::Now(s.key.into(), String::new()));
                         } else if clicked && b == "Off" {
                             zones.borrow_mut().push(Zone::Now(s.key.into(), "off".into()));
@@ -563,10 +599,11 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
         ui.allocate_exact_size(vec2(w + 16.0, y - top.y), egui::Sense::hover());
         for (k, z) in zones.take().into_iter().enumerate() {
             match z {
-                Zone::Now(key, value) => set(&key, &value),
+                Zone::Now(key, value) => set(asks, &key, &value),
+                Zone::Play(what) => asks.push(crate::window::Ask::Play(what)),
                 Zone::Set(rect, key, value) => {
                     if ui.interact(rect, ui.scope_id().with(("set", k)), egui::Sense::click()).clicked() {
-                        set(&key, &value);
+                        set(asks, &key, &value);
                     }
                 }
                 Zone::Slider(rect, key, from, to, min, max) => {
@@ -576,7 +613,7 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                     {
                         let f = ((pos.x - from) / (to - from)).clamp(0.0, 1.0);
                         let v = min + (f * (max - min) as f32).round() as i32;
-                        set(&key, &v.to_string());
+                        set(asks, &key, &v.to_string());
                     }
                 }
             }
