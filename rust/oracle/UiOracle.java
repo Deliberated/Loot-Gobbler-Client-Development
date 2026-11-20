@@ -12,7 +12,7 @@ import java.lang.reflect.Field;
  * which stops where it would make the frame: there is no screen here), then each tab is painted into a PNG with the
  * menu bar above it. Run in a folder holding the app's data (a copy: the app may write there) and without network
  * (e.g. `unshare -rn`): views that talk to servers then show what they show offline.
- * Usage: UiOracle <out dir> <width> <height> [tab...]   (all tabs if none given)
+ * Usage: UiOracle <out dir> <width> <height> [tab...]   (all tabs if none given; "Characters:<charId>" opens a character)
  */
 public class UiOracle {
     public static void main(String[] args) throws Throwable {
@@ -38,8 +38,11 @@ public class UiOracle {
         Thread.sleep(3000);   // views load in the background
         for (String name : names) {
             BufferedImage img = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+            String tab = name.contains(":") ? name.substring(0, name.indexOf(':')) : name;
+            String arg = name.contains(":") ? name.substring(name.indexOf(':') + 1) : null;
             SwingUtilities.invokeAndWait(() -> {
-                tabs.show(name);
+                tabs.show(tab);
+                if (arg != null && tab.equals("Characters")) find(main, lootgobbler.ui.CharactersView.class).showCharacter(Integer.parseInt(arg));
                 JPanel root = new JPanel(new BorderLayout());
                 root.add(menu, BorderLayout.NORTH);
                 root.add(main, BorderLayout.CENTER);
@@ -55,7 +58,7 @@ public class UiOracle {
                 root.printAll(g);
                 g.dispose();
             });
-            ImageIO.write(img, "png", new File(out, name.replace(' ', '_') + ".png"));
+            ImageIO.write(img, "png", new File(out, name.replace(' ', '_').replace(':', '-') + ".png"));
             System.out.println("tab " + name);
         }
         System.exit(0);
