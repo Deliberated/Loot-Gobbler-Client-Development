@@ -6,6 +6,7 @@
 //!   lg-replay decoded-ids               the ids of the packets that have a decoder, for oracle/compare.sh
 //!   lg-replay gamedata <assets>         the game data read from an assets folder, to compare with Java
 //!   lg-replay <session.pcap> --stats    only the summary
+//!   lg-replay sprites <assets>          every object's sprite and dye mask, as oracle/SpriteOracle.java prints them
 //!   lg-replay extract <resources.assets> <assets>
 //!                                       the game data extracted from the game as the Java app does, then each
 //!                                       sprite sheet's pixels as oracle/AssetOracle.java prints them
@@ -86,6 +87,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         [cmd, dir] if cmd == "gamedata" => gamedata(std::path::Path::new(dir)),
+        [cmd, dir] if cmd == "sprites" => sprites(std::path::Path::new(dir)),
         [cmd, game, out] if cmd == "extract" => extract(std::path::Path::new(game), std::path::Path::new(out)),
         [cmd, rest @ ..] if cmd == "capture" => {
             let all = rest.iter().any(|f| f == "--all");
@@ -503,6 +505,30 @@ fn world(
         }
     }
     full(&mut out, "end", &w.dump());
+    let _ = out.flush();
+    ExitCode::SUCCESS
+}
+
+/// Every object's sprite and mask: `sprite|mask <id> <w>x<h> <crc of the ARGB pixels>`, or `empty` / `none`.
+fn sprites(dir: &std::path::Path) -> ExitCode {
+    let data = lg_gamedata::GameData::load(dir);
+    let mut sprites = lg_gamedata::sprites::Sprites::new(dir);
+    let mut ids: Vec<i32> = data.objects.keys().copied().filter(|id| *id > 0).collect();
+    ids.sort_unstable();
+    let describe = |im: Option<lg_gamedata::sprites::Image>, none: &str| match im {
+        None => none.to_string(),
+        Some(im) => {
+            let argb: Vec<u8> = im.rgba.as_chunks::<4>().0.iter().flat_map(|p| [p[3], p[0], p[1], p[2]]).collect();
+            format!("{}x{} {:08x}", im.w, im.h, lg_replay::crc32(&argb))
+        }
+    };
+    let mut out = BufWriter::new(std::io::stdout().lock());
+    for id in ids {
+        let s = describe(sprites.object(&data, id), "empty");
+        let m = describe(sprites.mask(&data, id), "none");
+        line(&mut out, format_args!("sprite {id} {s}"));
+        line(&mut out, format_args!("mask {id} {m}"));
+    }
     let _ = out.flush();
     ExitCode::SUCCESS
 }

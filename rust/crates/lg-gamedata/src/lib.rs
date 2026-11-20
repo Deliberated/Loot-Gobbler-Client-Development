@@ -17,6 +17,7 @@ pub mod dyes;
 pub mod enchants;
 pub mod extract;
 pub mod items;
+pub mod sprites;
 pub mod st_sets;
 pub mod xml;
 
