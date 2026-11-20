@@ -39,7 +39,13 @@ fn clear_all_dungeons_asks_first() {
     let app = Box::leak(Box::new(lg_app::App::new(lg_world::World::new(lg_gamedata::GameData::default()), 0)));
     let mut win = Window::new(std::path::Path::new("/nonexistent"), lg_app::properties::Properties::in_memory(""));
     win.open("Battles");
-    let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1799.0, 1005.0)).with_pixels_per_point(1.0).wgpu().build_ui_state(
+    // a picture only when asked (LG_SHOT): it needs a GPU (or a software one), which CI does not have
+    let shot = std::env::var("LG_SHOT").ok();
+    let mut b = egui_kittest::Harness::builder().with_size(egui::vec2(1799.0, 1005.0)).with_pixels_per_point(1.0);
+    if shot.is_some() {
+        b = b.wgpu();
+    }
+    let mut h = b.build_ui_state(
         |ui, win: &mut Window| {
             let mut all = ui.new_child(egui::UiBuilder::new().max_rect(ui.ctx().content_rect()));
             win.show(&mut all, app, 0);
@@ -58,7 +64,7 @@ fn clear_all_dungeons_asks_first() {
         }
         other => panic!("no question: {other:?}"),
     }
-    if let Ok(dir) = std::env::var("LG_SHOT") {
+    if let Some(dir) = shot {
         h.render().expect("render").save(format!("{dir}/question.png")).expect("save");
     }
 }
