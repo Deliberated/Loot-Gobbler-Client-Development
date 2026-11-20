@@ -1,0 +1,20 @@
+[package]
+name = "lg-gobbler"
+description = "Loot Gobbler itself: capturing the game, keeping your records in the app's own folder"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "loot-gobbler"
+path = "src/main.rs"
+
+[dependencies]
+lg-capture = { path = "../lg-capture" }
+lg-protocol = { path = "../lg-protocol" }
+lg-gamedata = { path = "../lg-gamedata" }
+lg-world = { path = "../lg-world" }
+lg-app = { path = "../lg-app" }
+lg-net = { path = "../lg-net" }
+lg-replay = { path = "../lg-replay" }

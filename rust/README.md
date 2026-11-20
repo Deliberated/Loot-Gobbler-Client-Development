@@ -16,6 +16,8 @@ work with the current Loot Gobbler server and its data as they are.
 | `lg-gamedata` | the game data the app extracts from the game: objects, tiles, character classes, loot bags, abilities scaling with a stat, enchantments, the amulets that save you, dungeon portals and modifiers, the enemies of each dungeon | `IdToAsset`, `CharacterClass`, `LootBags`, `Amulets`, `AbilityScalingManager`, `ParseEnchants`, `ParseDungeon`, `GameFileEnemies` |
 | `lg-world` | the world as the packets tell it: the map, every object in view and its stats, which one is you (also when the sniffer starts inside a map), players, loot bags; damage: your shots rolled with the map's seed, hits, damage per player, damage you take, boss phases, crucible bonuses; loot: which enemy (or boss, by its last words) dropped which bag, and per dungeon what you hit and what dropped | the core of `TomatoData` and `Entity`, `Projectile`, `Damage`, `RNG`, `CrucibleBonusManager`, `LootAttributionManager`, `DungeonStatData` |
 | `lg-app` | Loot Gobbler's own records, built from the world in the order the Java app's listeners run: characters, profile, collection, holdings and their journal, the game mode (UPE) rules, items forged, fed, dropped and used up, the Tinkerer's quests, the boss damage of each run (DPS history), every dungeon visit (hits taken, damage dealt, way walked, quick slot items, exaltations, your death, its run; Moonlight Village's lantern time and boss phases, amulet saves), exaltation progress per class, the times your Amulet of Restoration saved you, item cooldowns (Coral Juice Refinery, Alien Generator, Protective Matrix), your mana, your pets (Pet Yard and character list), friends, the season's missions; the character list from the game's web API on login (characters, enchantments, vault, pets, exaltations), with the web answers coming from files in a replay | `CharacterStore`, `PlayerProfile`, `CollectionStore`, `Holdings`, `LootEvents`, `Upe`, `ItemUse`, `TinkererQuests`, `DpsHistory`, `DungeonVisits`, `ExaltStore`, `MoonlightLog`, `AmuletSaves`, `ItemCooldowns`, `PlayerVitals`, `PetStore`, `Friends`, `RealmCharacter`, `RealmCharacterStats`, `HttpCharListRequest` (the answers), `Missions` |
+| `lg-net` | the game's web API over HTTPS (character list, exaltations, friends, missions) with your login token | `HttpCharListRequest.webRequest` |
+| `lg-gobbler` | `loot-gobbler`, the app without a window yet: captures the game, keeps your records in its own folder, takes the Java app's folder over on a first start | `Tomato`, `Sniffer` (the running app) |
 | `lg-replay` | the command-line tool below, and made-up sessions for tests | - |
 
 Where it differs from Java on purpose (each one is a bug in Java):
@@ -63,6 +65,8 @@ until the sprites are ported with the UI.
 ```sh
 cd rust
 cargo test                                          # all tests
+cargo run --release -p lg-gobbler -- --java ~/LootGobbler    # the app: capture, records next to the program
+cargo run --release -p lg-gobbler -- --data /tmp/d --assets ~/LootGobbler/assets --offline --pcap session.pcap
 cargo run --release -p lg-replay -- session.pcap    # every packet in a recording
 cargo run --release -p lg-replay -- session.pcap --stats
 cargo run --release -p lg-replay -- synth /tmp/s.pcap 7   # a made-up session (seed 7)

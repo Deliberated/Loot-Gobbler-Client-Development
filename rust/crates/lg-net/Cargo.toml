@@ -1,0 +1,11 @@
+[package]
+name = "lg-net"
+description = "The game's web API over HTTPS (Java: HttpCharListRequest.webRequest), as a Web for the app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+lg-app = { path = "../lg-app" }
+ureq = { version = "2.12", default-features = false, features = ["tls"] }
