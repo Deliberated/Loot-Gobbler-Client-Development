@@ -5,9 +5,11 @@
 
 pub mod characters;
 pub mod charts;
+pub mod classes;
 pub mod detail;
 pub mod icons;
 pub mod jtext;
+pub mod pets;
 pub mod profile;
 pub mod shell;
 pub mod suggested;

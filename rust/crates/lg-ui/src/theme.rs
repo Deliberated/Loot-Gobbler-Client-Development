@@ -170,6 +170,8 @@ pub fn fonts() -> FontDefinitions {
 /// The theme on a context: fonts, colors, square corners.
 pub fn apply(ctx: &egui::Context, p: &Palette) {
     ctx.set_fonts(fonts());
+    // a character no font has (in a player's or pet's name...) shows as a box, never stops the app
+    ctx.set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
     ctx.all_styles_mut(|st| {
         st.text_styles.insert(egui::TextStyle::Body, body(18.0));
         st.text_styles.insert(egui::TextStyle::Button, head(16.0));

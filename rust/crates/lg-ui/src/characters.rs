@@ -38,11 +38,21 @@ pub struct CharactersView {
     rarity: [Option<egui::TextureHandle>; 5],
     /// The last suggestion worked out: for which character and settings, its picks and numbers.
     suggestion: Option<(String, [lg_app::loadout::Pick; 4], lg_app::loadout::Summary)>,
+    pets: crate::pets::PetsView,
 }
 
 impl Default for CharactersView {
     fn default() -> Self {
-        CharactersView { page: 0, range: 1, graveyard: false, selected: TOTAL, grave: None, rarity: Default::default(), suggestion: None }
+        CharactersView {
+            page: 0,
+            range: 1,
+            graveyard: false,
+            selected: TOTAL,
+            grave: None,
+            rarity: Default::default(),
+            suggestion: None,
+            pets: Default::default(),
+        }
     }
 }
 
@@ -134,8 +144,12 @@ impl CharactersView {
         painter.rect(rr, 0.0, if hover { p.sand } else { p.header }, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
         jtext::draw(&painter, rr.center(), Align2::CENTER_CENTER, "REFRESH", &small(), p.ink);
         let body = Rect::from_min_max(pos2(all.left(), all.top() + 36.0 + 8.0), all.max);
-        if self.page != 0 {
-            jtext::draw(&painter, body.min + vec2(8.0, 8.0), Align2::LEFT_TOP, "Coming soon.", &text(18.0), fixed::MUTED);
+        if self.page == 1 {
+            crate::classes::show(ui, c, body);
+            return;
+        }
+        if self.page == 2 {
+            self.pets.show(ui, c, body);
             return;
         }
         self.characters_page(ui, c, body);

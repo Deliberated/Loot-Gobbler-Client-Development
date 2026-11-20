@@ -12,7 +12,8 @@ import java.lang.reflect.Field;
  * which stops where it would make the frame: there is no screen here), then each tab is painted into a PNG with the
  * menu bar above it. Run in a folder holding the app's data (a copy: the app may write there) and without network
  * (e.g. `unshare -rn`): views that talk to servers then show what they show offline.
- * Usage: UiOracle <out dir> <width> <height> [tab...]   (all tabs if none given; "Characters:<charId>" opens a character)
+ * Usage: UiOracle <out dir> <width> <height> [tab...]   (all tabs if none given; "Characters:<charId>" opens a character,
+ * "Characters:classes" / "Characters:pets" those pages)
  */
 public class UiOracle {
     public static void main(String[] args) throws Throwable {
@@ -42,7 +43,12 @@ public class UiOracle {
             String arg = name.contains(":") ? name.substring(name.indexOf(':') + 1) : null;
             SwingUtilities.invokeAndWait(() -> {
                 tabs.show(tab);
-                if (arg != null && tab.equals("Characters")) find(main, lootgobbler.ui.CharactersView.class).showCharacter(Integer.parseInt(arg));
+                if (arg != null && tab.equals("Characters")) {
+                    lootgobbler.ui.CharactersView cv = find(main, lootgobbler.ui.CharactersView.class);
+                    if (arg.equals("classes")) cv.showClass(-1);
+                    else if (arg.equals("pets")) pets(cv);
+                    else cv.showCharacter(Integer.parseInt(arg));
+                }
                 JPanel root = new JPanel(new BorderLayout());
                 root.add(menu, BorderLayout.NORTH);
                 root.add(main, BorderLayout.CENTER);
@@ -62,6 +68,17 @@ public class UiOracle {
             System.out.println("tab " + name);
         }
         System.exit(0);
+    }
+
+    /** The Characters tab's Pets page (it has no method to open it). */
+    static void pets(lootgobbler.ui.CharactersView cv) {
+        try {
+            Object picker = field(cv, "viewPicker");
+            picker.getClass().getMethod("select", int.class).invoke(picker, 2);
+            ((CardLayout) field(cv, "pages")).show((Container) field(cv, "views"), "pets");
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 
     static Object field(Object o, String name) throws Exception {
