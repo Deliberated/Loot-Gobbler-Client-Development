@@ -11,6 +11,7 @@ pub mod damage_graph;
 pub mod detail;
 pub mod dps;
 pub mod game_modes;
+pub mod guild;
 pub mod icons;
 pub mod inventory;
 pub mod jtext;

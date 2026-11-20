@@ -13,7 +13,7 @@ import java.lang.reflect.Field;
  * menu bar above it. Run in a folder holding the app's data (a copy: the app may write there) and without network
  * (e.g. `unshare -rn`): views that talk to servers then show what they show offline.
  * Usage: UiOracle <out dir> <width> <height> [tab...]   (all tabs if none given; "Characters:<charId>" opens a character,
- * "Characters:classes" / "Characters:pets" those pages, "Battles:dps" / "Battles:overlay", "Social:quests" / "Social:discord" those)
+ * "Characters:classes" / "Characters:pets" those pages, "Battles:dps" / "Battles:overlay", "Social:quests" / "Social:discord", "Guild:<page name>" those)
  */
 public class UiOracle {
     public static void main(String[] args) throws Throwable {
@@ -65,10 +65,9 @@ public class UiOracle {
                         throw new RuntimeException(e);
                     }
                 }
-                if (arg != null && tab.equals("Social")) {   // "Social:quests" / "Social:discord"
-                    for (lootgobbler.ui.SubTabs t : findAll(main, lootgobbler.ui.SubTabs.class)) {
-                        t.show(arg.equals("quests") ? "Daily Quests" : "Discord");   // only Social's has these pages
-                    }
+                if (arg != null && (tab.equals("Social") || tab.equals("Guild"))) {   // a page by name ("Social:quests" / "Social:discord" too)
+                    String page = arg.equals("quests") && tab.equals("Social") ? "Daily Quests" : arg.equals("discord") ? "Discord" : arg;
+                    for (lootgobbler.ui.SubTabs t : findAll(main, lootgobbler.ui.SubTabs.class)) t.show(page);   // only the tab's own has it
                 }
                 if (arg != null && tab.equals("Characters")) {
                     lootgobbler.ui.CharactersView cv = find(main, lootgobbler.ui.CharactersView.class);

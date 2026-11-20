@@ -5,7 +5,7 @@
 //!
 //! With `--data` the views show that folder's records (read only) and its `assets`.
 
-use lg_ui::{battles, characters, game_modes, icons::Icons, inventory, profile, shell, social, theme};
+use lg_ui::{battles, characters, game_modes, guild, icons::Icons, inventory, profile, shell, social, theme};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -64,6 +64,7 @@ fn main() {
         let mut inv = inventory::InventoryView::default();
         let mut modes = game_modes::GameModesView::default();
         let mut social = social::SocialView::default();
+        let mut guild = guild::GuildView::default();
         let mut battles = battles::BattlesView { selected: -1, ..Default::default() };
         let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(w, h)).with_pixels_per_point(1.0).wgpu().build_ui(|ui| {
             if !themed {
@@ -80,6 +81,11 @@ fn main() {
                     "Profile" => prof.show(ui, &mut c),
                     "Characters" => chars.show(ui, &mut c),
                     "Game Modes" => modes.show(ui, &mut c),
+                    t if t == "Guild" || t.starts_with("Guild:") => {
+                        let names = ["Loot Caravan", "Quest Map", "Leaderboard", "Recent Drops", "Member", "Quests"];
+                        guild.page = t.strip_prefix("Guild:").and_then(|n| names.iter().position(|x| *x == n)).unwrap_or(0);
+                        guild.show(ui, &mut c)
+                    }
                     "Social" | "Social:quests" | "Social:discord" => {
                         social.page = match tab {
                             "Social:quests" => 1,
