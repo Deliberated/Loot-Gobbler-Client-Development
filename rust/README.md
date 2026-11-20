@@ -33,6 +33,13 @@ The decoders otherwise copy Java exactly, including how it reacts to bad packets
 dropped, one with bytes left over is kept, and VAULT_UPDATE and DEATH keep what they could read when cut off. Field
 names follow Java's and types follow how Java reads them (`byte` is `i8`), so the two can be compared field by field.
 
+Taking over the Java app's folder (`App::importing`, `lg-replay --world <assets> --java-data <dir>`): every file the
+Java app keeps is read, never changed: characters, collection, holdings and their journal (and an earlier version's
+whereabouts.json), the run history, dungeon visits, profile, UPE runs, exaltations, amulet saves, pets, friends,
+missions, Tinkerer quests, Tomato's dungeon.stats, the saved character list, your name; each with Java's repairs at
+loading. `LG_SEED=<folder>` hands both sides the same files: those Java wrote in an earlier comparison
+(`LG_KEEP`) give the same records on both sides.
+
 Logins: `lg-replay synth-login` makes up a login with HELLO and the game's web answers to it (character lists with
 vault, pets, enchantments and statistics; exaltations; friends; refused and unreadable answers), and
 `oracle/compare.sh <pcap> <assets> <answers>` hands both sides HELLO and answers them from those files: Java's web

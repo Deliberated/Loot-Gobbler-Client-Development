@@ -361,6 +361,28 @@ fn season_blocks(xml: &str) -> Vec<(&str, &str)> {
 }
 
 impl Missions {
+    /// What the Java app kept (its last answers, `missions-seasons.json` and `missions-player.xml`), read only; the
+    /// player file's time is when they were fetched. Java stops at what it cannot read.
+    pub fn import(dir: &std::path::Path) -> Missions {
+        let mut m = Missions::default();
+        let (seasons, player) = (dir.join("missions-seasons.json"), dir.join("missions-player.xml"));
+        if let Ok(text) = std::fs::read_to_string(&seasons) {
+            match parse_defs(&text) {
+                Ok(d) => m.defs = Some(d),
+                Err(_) => return m,
+            }
+            m.seasons_file = Some(text);
+        }
+        if let Ok(text) = std::fs::read_to_string(&player) {
+            if m.apply_player(&text).is_err() {
+                return m;
+            }
+            m.fetched = crate::tinkerer::modified_ms(&player).unwrap_or(0);
+            m.player_file = Some(text);
+        }
+        m
+    }
+
     /// Java `applyPlayer`: your progress per tree ("mission,a:b:c,state,updated,claims,claimedAt|...") and the lock
     /// lists. `Err` where Java throws (a tree id past an int).
     pub fn apply_player(&mut self, xml: &str) -> Result<(), Thrown> {

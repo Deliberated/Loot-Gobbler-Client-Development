@@ -68,8 +68,15 @@ pub struct PetStore {
 impl PetStore {
     /// What the Java app kept (`pets.json`), read only.
     pub fn import(dir: &Path) -> PetStore {
-        let pets = std::fs::read_to_string(dir.join("pets.json")).ok().and_then(|t| parse_pets(&t)).unwrap_or_default();
-        PetStore { pets }
+        let Ok(text) = std::fs::read_to_string(dir.join("pets.json")) else {
+            // none kept yet: the character list saved at the last login (before pets were kept)
+            let mut p = PetStore::default();
+            if let Ok(xml) = std::fs::read_to_string(dir.join("char-list.xml")) {
+                let _ = p.import_char_list(&xml, 0);
+            }
+            return p;
+        };
+        PetStore { pets: parse_pets(&text).unwrap_or_default() }
     }
 
     fn pet(&mut self, id: i32) -> &mut Pet {

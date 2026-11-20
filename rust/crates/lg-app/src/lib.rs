@@ -133,7 +133,7 @@ impl App {
             loot_events: loot_events::LootEvents::default(),
             upe: java_data.map(upe::Upe::import).unwrap_or_default(),
             item_use: item_use::ItemUse::default(),
-            tinkerer: tinkerer::Tinkerer::default(),
+            tinkerer: java_data.map(tinkerer::Tinkerer::import).unwrap_or_default(),
             dps_history,
             dungeon_visits,
             exalts,
@@ -148,7 +148,7 @@ impl App {
             token: None,
             updated_exalts: false,
             friends_asked: 0,
-            missions: missions::Missions::default(),
+            missions: java_data.map(missions::Missions::import).unwrap_or_default(),
             zone: localtime::Zone::system(),
         };
         // TomatoData.bootload: Tomato's dungeon statistics
