@@ -13,7 +13,7 @@ import java.lang.reflect.Field;
  * menu bar above it. Run in a folder holding the app's data (a copy: the app may write there) and without network
  * (e.g. `unshare -rn`): views that talk to servers then show what they show offline.
  * Usage: UiOracle <out dir> <width> <height> [tab...]   (all tabs if none given; "Characters:<charId>" opens a character,
- * "Characters:classes" / "Characters:pets" those pages)
+ * "Characters:classes" / "Characters:pets" those pages, "Battles:dps" / "Battles:overlay" those)
  */
 public class UiOracle {
     public static void main(String[] args) throws Throwable {
@@ -50,6 +50,17 @@ public class UiOracle {
                         Object picker = field(cp, "viewPicker");
                         picker.getClass().getMethod("select", int.class).invoke(picker, arg.equals("st") ? 1 : 2);
                         ((CardLayout) field(cp, "cards")).show((Container) field(cp, "views"), arg);
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+                if (arg != null && tab.equals("Battles")) {   // "Battles:dps" / "Battles:overlay"
+                    try {
+                        Object v = find(main, lootgobbler.ui.DpsLoggerView.class);
+                        int page = arg.equals("dps") ? 1 : 2;
+                        Object picker = field(v, "picker");
+                        picker.getClass().getMethod("select", int.class).invoke(picker, page);
+                        ((CardLayout) field(v, "pages")).show((Container) field(v, "views"), arg.equals("dps") ? "DPS" : "Overlay");
                     } catch (Exception e) {
                         throw new RuntimeException(e);
                     }

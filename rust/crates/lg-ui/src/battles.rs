@@ -32,6 +32,7 @@ pub struct BattlesView {
     /// The visit shown on the right (its start), -1: the newest.
     pub selected: i64,
     pub collapsed: Vec<String>,
+    pub dps: crate::dps::DpsView,
 }
 
 /// What a day adds up to (Java `DaySum`).
@@ -88,6 +89,10 @@ impl BattlesView {
             self.page = i;
         }
         let body = Rect::from_min_max(pos2(all.left(), all.top() + 36.0 + 8.0), all.max);
+        if self.page == 1 {
+            self.dps.show(ui, c, body);
+            return;
+        }
         if self.page != 0 {
             jtext::draw(ui.painter(), body.min + vec2(8.0, 8.0), Align2::LEFT_TOP, "Coming soon.", &text(18.0), fixed::MUTED);
             return;

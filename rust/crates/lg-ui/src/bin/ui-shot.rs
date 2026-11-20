@@ -79,7 +79,12 @@ fn main() {
                     "Profile" => prof.show(ui, &mut c),
                     "Characters" => chars.show(ui, &mut c),
                     "Game Modes" => modes.show(ui, &mut c),
-                    "Battles" => {
+                    "Battles" | "Battles:dps" | "Battles:overlay" => {
+                        battles.page = match tab {
+                            "Battles:dps" => 1,
+                            "Battles:overlay" => 2,
+                            _ => 0,
+                        };
                         let rarity = chars.rarity(ui.ctx());
                         battles.show(ui, &mut c, &rarity)
                     }
