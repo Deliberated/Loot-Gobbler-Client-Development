@@ -18,3 +18,6 @@ lg-world = { path = "../lg-world" }
 lg-app = { path = "../lg-app" }
 lg-net = { path = "../lg-net" }
 lg-replay = { path = "../lg-replay" }
+lg-ui = { path = "../lg-ui" }
+egui = "0.37"
+eframe = "0.37"

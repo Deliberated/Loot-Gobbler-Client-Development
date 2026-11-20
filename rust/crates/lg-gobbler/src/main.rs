@@ -1,15 +1,18 @@
-//! Loot Gobbler, without a window yet: captures the game as the Java app does, keeps your records and writes them
-//! into its own folder (next to the program, or `--data`) in the Java app's formats. On a first start the Java
-//! app's folder (`--java`) is taken over: read only, copied in full.
+//! Loot Gobbler: its window over your records, captures the game as the Java app does (while the sniffer runs),
+//! keeps your records and writes them into its own folder (next to the program, or `--data`) in the Java app's
+//! formats. On a first start the Java app's folder (`--java`) is taken over: read only, copied in full.
 //!
 //!   loot-gobbler [--java <Java app folder>] [--data <folder>] [--path <resources.assets>] [--assets <folder>]
-//!                [--offline] [--pcap <file>]
+//!                [--offline] [--pcap <file>] [--no-window]
 //!
 //! The game data (ObjectID.list, xml/...) is extracted from the game into `assets` in the own folder when the game's
 //! file changed, as the Java app does (`--path`: the game's `resources.assets`, if it is not found by itself).
 //! `--assets`: game data from another folder instead, as it is.
 //! `--offline`: never ask the game's web API (character list, exaltations, friends, missions).
-//! `--pcap`: a recording instead of capturing, played as if it happened now.
+//! `--pcap`: a recording played first, as if it happened now (without a window: instead of capturing).
+//! `--no-window`: no window; captures at once until Ctrl+C.
+
+mod gui;
 
 use lg_replay::{Item, Session};
 use std::path::{Path, PathBuf};
@@ -22,10 +25,11 @@ struct Options {
     game: Option<PathBuf>,
     offline: bool,
     pcap: Option<PathBuf>,
+    no_window: bool,
 }
 
 fn options() -> Result<Options, String> {
-    let mut o = Options { java: None, data: None, assets: None, game: None, offline: false, pcap: None };
+    let mut o = Options { java: None, data: None, assets: None, game: None, offline: false, pcap: None, no_window: false };
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         let mut value = || args.next().map(PathBuf::from).ok_or(format!("{a} needs a value"));
@@ -36,6 +40,7 @@ fn options() -> Result<Options, String> {
             "--path" => o.game = Some(value()?),
             "--pcap" => o.pcap = Some(value()?),
             "--offline" => o.offline = true,
+            "--no-window" => o.no_window = true,
             _ => return Err(format!("unknown: {a}")),
         }
     }
@@ -51,7 +56,7 @@ fn main() -> ExitCode {
         Ok(o) => o,
         Err(e) => {
             eprintln!(
-                "{e}\nusage: loot-gobbler [--java <dir>] [--data <dir>] [--path <resources.assets>] [--assets <dir>] [--offline] [--pcap <file>]"
+                "{e}\nusage: loot-gobbler [--java <dir>] [--data <dir>] [--path <resources.assets>] [--assets <dir>] [--offline] [--pcap <file>] [--no-window]"
             );
             return ExitCode::FAILURE;
         }
@@ -102,9 +107,25 @@ fn main() -> ExitCode {
     if !o.offline {
         app.web = Box::new(lg_net::Online::new());
     }
-    match &o.pcap {
-        Some(f) => play(&mut app, &own, f),
-        None => capture(&mut app, &own),
+    if o.no_window {
+        return match &o.pcap {
+            Some(f) => play(&mut app, &own, f),
+            None => capture(&mut app, &own),
+        };
+    }
+    if let Some(f) = &o.pcap
+        && play(&mut app, &own, f) != ExitCode::SUCCESS
+    {
+        return ExitCode::FAILURE;
+    }
+    let options = eframe::NativeOptions { viewport: gui::viewport(&lg_app::properties::Properties::load(&own)), ..Default::default() };
+    let gui = gui::Gui::new(app, own, assets);
+    match eframe::run_native("Loot Gobbler", options, Box::new(|_| Ok(Box::new(gui)))) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("cannot open the window: {e}");
+            ExitCode::FAILURE
+        }
     }
 }
 

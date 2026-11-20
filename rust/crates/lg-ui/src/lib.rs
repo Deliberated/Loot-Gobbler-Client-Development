@@ -26,3 +26,4 @@ pub mod social;
 pub mod suggested;
 pub mod theme;
 pub mod widgets;
+pub mod window;

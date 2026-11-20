@@ -5,8 +5,6 @@
 //!
 //! With `--data` the views show that folder's records (read only) and its `assets`.
 
-use lg_ui::{battles, characters, game_modes, guild, icons::Icons, inventory, profile, shell, social, theme};
-
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     // `ui-shot skins <data dir>`: every character's look, "skin <charId> <w>x<h> <fnv of the ARGB pixels>"
@@ -45,90 +43,21 @@ fn main() {
     let assets = data.as_ref().map(|d| d.join("assets")).unwrap_or_default();
     let world = lg_world::World::new(lg_gamedata::GameData::load(&assets));
     let app = lg_app::App::importing(world, now, data.as_deref());
-    let en = lg_app::loadout::Enchantments::load(&assets.join("xml"));
     let props = lg_app::properties::Properties::in_memory(
         &data.as_ref().and_then(|d| std::fs::read_to_string(d.join("realmShark.properties")).ok()).unwrap_or_default(),
     );
-    let mut loadout = lg_app::loadout::Settings::from(&props);
     let (w, h): (f32, f32) = (w.parse().expect("width"), h.parse().expect("height"));
-    let tabs: Vec<String> = if tabs.is_empty() { shell::TABS.iter().map(|t| t.to_string()).collect() } else { tabs.to_vec() };
+    let tabs: Vec<String> = if tabs.is_empty() { lg_ui::shell::TABS.iter().map(|t| t.to_string()).collect() } else { tabs.to_vec() };
     std::fs::create_dir_all(out).expect("out dir");
-    let palette = theme::palette(None);
     for tab in tabs {
-        let shown = tab.split(':').next().unwrap_or(&tab).to_string();
-        let mut sh = shell::Shell { selected: shown, ..Default::default() };
-        let mut themed = false;
-        let mut icons = Icons::new(&assets);
-        let mut prof = profile::Profile::default();
-        let mut chars = characters::CharactersView::default();
-        let mut inv = inventory::InventoryView::default();
-        let mut modes = game_modes::GameModesView::default();
-        let mut social = social::SocialView::default();
-        let mut guild = guild::GuildView::default();
-        let mut battles = battles::BattlesView { selected: -1, ..Default::default() };
+        // a fresh window per picture, the Java default theme as the oracle shows it
+        let mut win = lg_ui::window::Window::new(&assets, props.clone());
+        win.palette = lg_ui::theme::palette(None);
+        win.open(&tab);
         let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(w, h)).with_pixels_per_point(1.0).wgpu().build_ui(|ui| {
-            if !themed {
-                theme::apply(ui.ctx(), &palette);
-                themed = true;
-            }
             // the whole window, without the margin the harness puts around it
             let mut all = ui.new_child(egui::UiBuilder::new().max_rect(ui.ctx().content_rect()));
-            let wanted = tab.clone();
-            sh.show(&mut all, &palette, |ui, shown| {
-                let tab = if wanted.starts_with(shown) { wanted.as_str() } else { shown };
-                let mut c = profile::Ctx { app: &app, p: &palette, icons: &mut icons, now, en: &en, loadout: &mut loadout, props: &props };
-                match tab {
-                    "Profile" => prof.show(ui, &mut c),
-                    "Characters" => chars.show(ui, &mut c),
-                    "Game Modes" => modes.show(ui, &mut c),
-                    t if t == "Guild" || t.starts_with("Guild:") => {
-                        let names = ["Loot Caravan", "Quest Map", "Leaderboard", "Recent Drops", "Member", "Quests"];
-                        guild.page = t.strip_prefix("Guild:").and_then(|n| names.iter().position(|x| *x == n)).unwrap_or(0);
-                        guild.show(ui, &mut c)
-                    }
-                    "Server" => lg_ui::server::show(ui, &mut c),
-                    "Settings" => lg_ui::settings::show(ui, &mut c),
-                    "Social" | "Social:quests" | "Social:discord" => {
-                        social.page = match tab {
-                            "Social:quests" => 1,
-                            "Social:discord" => 2,
-                            _ => 0,
-                        };
-                        social.show(ui, &mut c)
-                    }
-                    "Battles" | "Battles:dps" | "Battles:overlay" => {
-                        battles.page = match tab {
-                            "Battles:dps" => 1,
-                            "Battles:overlay" => 2,
-                            _ => 0,
-                        };
-                        let rarity = chars.rarity(ui.ctx());
-                        battles.show(ui, &mut c, &rarity)
-                    }
-                    "Inventory" | "Inventory:st" | "Inventory:log" => {
-                        inv.page = match tab {
-                            "Inventory:st" => 1,
-                            "Inventory:log" => 2,
-                            _ => 0,
-                        };
-                        let rarity = chars.rarity(ui.ctx());
-                        inv.show(ui, &mut c, &rarity)
-                    }
-                    "Characters:classes" => {
-                        chars.page = 1;
-                        chars.show(ui, &mut c)
-                    }
-                    "Characters:pets" => {
-                        chars.page = 2;
-                        chars.show(ui, &mut c)
-                    }
-                    t if t.starts_with("Characters:") => {
-                        chars.selected = t[11..].parse().unwrap_or(0);
-                        chars.show(ui, &mut c)
-                    }
-                    _ => {}
-                }
-            });
+            win.show(&mut all, &app, now);
         });
         harness.run_steps(3);
         let img = harness.render().expect("render");
