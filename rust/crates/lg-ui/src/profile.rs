@@ -576,7 +576,7 @@ fn recent_runs(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, runs: &[&
         let rank = if r.guild_hall {
             Cell { text: format!("{} loadout{}", r.bosses.len(), if r.bosses.len() == 1 { "" } else { "s" }), color: p.ink_soft }
         } else {
-            let boss = r.bosses.iter().max_by_key(|b| b.max_hp);
+            let boss = r.main_boss();
             match boss.and_then(|b| b.players.iter().position(|x| x.me).map(|i| (i + 1, b.players.len()))) {
                 None => Cell { text: "-".into(), color: fixed::MUTED },
                 Some((rank, of)) => Cell {

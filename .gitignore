@@ -3,6 +3,7 @@
 build/
 out/
 bin/
+!rust/crates/*/src/bin/
 **/build/
 **/.gradle/
 

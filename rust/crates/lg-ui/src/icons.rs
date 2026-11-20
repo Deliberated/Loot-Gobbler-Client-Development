@@ -128,7 +128,89 @@ pub fn skin_image(sprites: &mut Sprites, data: &GameData, sprite: i32, tex1: i32
     }
 }
 
+/// The opaque part of a picture (alpha at least `min`): x, y, w, h.
+fn opaque_bounds(im: &Image, min: u8) -> Option<(u32, u32, u32, u32)> {
+    let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0, 0);
+    let mut any = false;
+    for y in 0..im.h {
+        for x in 0..im.w {
+            if im.rgba[((y * im.w + x) * 4 + 3) as usize] >= min {
+                any = true;
+                x0 = x0.min(x);
+                y0 = y0.min(y);
+                x1 = x1.max(x);
+                y1 = y1.max(y);
+            }
+        }
+    }
+    any.then(|| (x0, y0, x1 - x0 + 1, y1 - y0 + 1))
+}
+
+/// Nearest-pixel scaling to any size (Java's drawImage with nearest neighbour: source pixel floor(x * w / dw)).
+fn resize(im: &Image, x0: u32, y0: u32, w: u32, h: u32, dw: u32, dh: u32) -> Image {
+    let mut rgba = Vec::with_capacity((dw * dh * 4) as usize);
+    for y in 0..dh {
+        for x in 0..dw {
+            let (sx, sy) = (x0 + (x * w / dw).min(w - 1), y0 + (y * h / dh).min(h - 1));
+            let i = ((sy * im.w + sx) * 4) as usize;
+            rgba.extend_from_slice(&im.rgba[i..i + 4]);
+        }
+    }
+    Image { w: dw, h: dh, rgba }
+}
+
 impl Icons {
+    /// Java `ActiveDungeonBadge.fit`: an object's outlined icon (at `from` px) cut to its visible pixels and scaled
+    /// (crisp) into a `size` square, centred, so all portals look alike.
+    pub fn fitted(&mut self, ctx: &egui::Context, data: &GameData, id: i32, from: u32, size: u32) -> Option<TextureHandle> {
+        let key = format!("fit-{id}-{from}-{size}");
+        if let Some(t) = self.skins.get(&key) {
+            return Some(t.clone());
+        }
+        let src = outlined(&self.sprites.object(data, id)?, from);
+        let (x0, y0, w, h) = opaque_bounds(&src, 30)?;
+        let scale = f64::from(size) / f64::from(w.max(h));
+        let (dw, dh) = (((f64::from(w) * scale).round() as u32).max(1), ((f64::from(h) * scale).round() as u32).max(1));
+        let small = resize(&src, x0, y0, w, h, dw, dh);
+        let mut out = Image { w: size, h: size, rgba: vec![0; (size * size * 4) as usize] };
+        let (ox, oy) = ((size - dw) / 2, (size - dh) / 2);
+        for y in 0..dh {
+            for x in 0..dw {
+                let s = ((y * dw + x) * 4) as usize;
+                let d = (((oy + y) * size + ox + x) * 4) as usize;
+                out.rgba[d..d + 4].copy_from_slice(&small.rgba[s..s + 4]);
+            }
+        }
+        let tex = ctx.load_texture(
+            key.clone(),
+            ColorImage::from_rgba_unmultiplied([size as usize, size as usize], &out.rgba),
+            TextureOptions::NEAREST,
+        );
+        self.skins.insert(key, tex.clone());
+        Some(tex)
+    }
+
+    /// Java `DifficultyMark.plainGravestone`: a plain sprite (no outline) cut to its pixels and scaled (crisp) to a
+    /// height.
+    pub fn plain_cut(&mut self, ctx: &egui::Context, data: &GameData, id: i32, height: u32) -> Option<TextureHandle> {
+        let key = format!("plain-{id}-{height}");
+        if let Some(t) = self.skins.get(&key) {
+            return Some(t.clone());
+        }
+        let src = self.sprites.object(data, id)?;
+        let (x0, y0, w, h) = opaque_bounds(&src, 40)?;
+        let height = height.max(h);
+        let width = ((f64::from(w) * f64::from(height) / f64::from(h)).round() as u32).max(1);
+        let out = resize(&src, x0, y0, w, h, width, height);
+        let tex = ctx.load_texture(
+            key.clone(),
+            ColorImage::from_rgba_unmultiplied([out.w as usize, out.h as usize], &out.rgba),
+            TextureOptions::NEAREST,
+        );
+        self.skins.insert(key, tex.clone());
+        Some(tex)
+    }
+
     /// A sprite by sheet and index scaled to a size, pixel-sharp, no outline (Java `EnchantIcons.icon`).
     pub fn sheet(&mut self, ctx: &egui::Context, sheet: &str, index: i32, size: u32) -> Option<TextureHandle> {
         let key = format!("sheet-{sheet}-{index}-{size}");

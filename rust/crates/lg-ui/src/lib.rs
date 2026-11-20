@@ -3,6 +3,7 @@
 // painting takes a painter, the palette, a place, the content and its colours: more than seven arguments is normal here
 #![allow(clippy::too_many_arguments)]
 
+pub mod battles;
 pub mod characters;
 pub mod charts;
 pub mod classes;

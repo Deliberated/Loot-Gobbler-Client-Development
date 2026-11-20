@@ -26,7 +26,7 @@ mkdir "$work/run"
 sed -i 's/^sniffer=T/sniffer=F/' "$work/run/realmShark.properties" 2>/dev/null || true   # never start capturing
 (cd "$work/run" && unshare -rn java -javaagent:"$work/ui-agent.jar" -Djava.awt.headless=true -cp "$jar:$work/classes" \
     oracle.UiOracle "$out/java" $w $h "$@") > "$work/java.log" 2>&1 || { tail -20 "$work/java.log"; exit 1; }
-"$here/../target/release/ui-shot" "$out/rust" $w $h "$@" > /dev/null
+"$here/../target/release/ui-shot" "$out/rust" $w $h --data "$data" "$@" > /dev/null
 for j in "$out"/java/*.png; do
     n=$(basename "$j" .png)
     r="$out/rust/$n.png"

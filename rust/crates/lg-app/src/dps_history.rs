@@ -61,6 +61,16 @@ pub struct Run {
     pub bosses: Vec<Boss>,
 }
 
+impl Run {
+    /// The boss with the most life, the first of equals (Java `mainBoss`: Stream.max keeps the first).
+    pub fn main_boss(&self) -> Option<&Boss> {
+        self.bosses.iter().fold(None, |best: Option<&Boss>, b| match best {
+            Some(m) if m.max_hp >= b.max_hp => Some(m),
+            _ => Some(b),
+        })
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct DpsHistory {
     /// Java would write its file now (its `save()`): the app writes it.

@@ -12,6 +12,7 @@
 pub mod abilities;
 pub mod amulets;
 pub mod char_stats;
+pub mod difficulty;
 pub mod dungeons;
 pub mod dyes;
 pub mod enchants;
@@ -128,6 +129,8 @@ pub struct GameData {
     pub dungeons: dungeons::Dungeons,
     /// The ST sets (Java: `StSets`).
     pub st_sets: Vec<st_sets::StSet>,
+    /// How hard each dungeon is, as the game rates it.
+    pub difficulty: HashMap<String, f64>,
     /// The pieces the forge makes from set tokens.
     pub set_tokens: HashMap<i32, st_sets::TokenCost>,
     /// Dye and cloth item type -> texture code (Java: `Dyes`).
@@ -171,6 +174,7 @@ impl GameData {
         if let Some(s) = read("xml/equipmentsets.xml") {
             d.st_sets = st_sets::load(&s, &d.items);
         }
+        d.difficulty = difficulty::load(&assets.join("xml"));
         if let Some(s) = read("xml/forgeProperties.xml") {
             d.set_tokens = st_sets::set_tokens(&s, &d.items);
         }

@@ -89,6 +89,15 @@ fn main() -> ExitCode {
         }
         [cmd, dir] if cmd == "gamedata" => gamedata(std::path::Path::new(dir)),
         [cmd, dir] if cmd == "sprites" => sprites(std::path::Path::new(dir)),
+        [cmd, dir] if cmd == "difficulty" => {
+            let m = lg_gamedata::difficulty::load(&std::path::Path::new(dir).join("xml"));
+            let mut v: Vec<_> = m.into_iter().collect();
+            v.sort_by(|a, b| a.0.encode_utf16().cmp(b.0.encode_utf16()));
+            for (k, d) in v {
+                println!("{k}={d:?}");
+            }
+            ExitCode::SUCCESS
+        }
         [cmd, dir] if cmd == "suggest" => suggest(std::path::Path::new(dir)),
         [cmd, game, out] if cmd == "extract" => extract(std::path::Path::new(game), std::path::Path::new(out)),
         [cmd, rest @ ..] if cmd == "capture" => {

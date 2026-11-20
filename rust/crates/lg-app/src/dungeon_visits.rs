@@ -616,3 +616,62 @@ fn visit_line(v: &Visit) -> String {
         arr(&v.amulet_saves)
     )
 }
+
+/// Java `DungeonVisits.run`: the run with your boss damage of a visit, if any.
+pub fn run_of<'a>(v: &Visit, history: &'a crate::dps_history::DpsHistory) -> Option<&'a crate::dps_history::Run> {
+    if v.run_start == 0 {
+        return None;
+    }
+    history.runs.iter().find(|r| r.start == v.run_start)
+}
+
+/// Java `DungeonVisits.completed`: whether its boss died (None: not known).
+pub fn completed(v: &Visit, history: &crate::dps_history::DpsHistory) -> Option<bool> {
+    if v.victory {
+        return Some(true);
+    }
+    let run = run_of(v, history);
+    let Some(main) = run.and_then(|r| r.main_boss()) else {
+        return if v.run_start == 0 { Some(false) } else { None };
+    };
+    if main.max_hp <= 0 {
+        return None;
+    }
+    if main.end_hp >= 0 {
+        return Some(f64::from(main.end_hp) <= f64::from(main.max_hp) * 0.08);
+    }
+    if v.dungeon == crate::moonlight::DUNGEON || main.players.len() > 15 {
+        return None;
+    }
+    let damage: i64 = main.players.iter().map(|p| i64::from(p.damage)).sum();
+    Some(damage as f64 >= f64::from(main.max_hp) * 0.88)
+}
+
+/// Java `DungeonVisits.fameGained`: the most fame a character gained between entering and leaving.
+pub fn fame_gained(v: &Visit, chars: &crate::characters::Characters) -> i64 {
+    let end = v.start + v.duration_ms;
+    let mut best = 0;
+    for c in chars.all() {
+        let (Some(first), Some(last)) = (c.samples.first(), c.samples.last()) else { continue };
+        if last.t < v.start || first.t > end {
+            continue;
+        }
+        let (mut a, mut b): (Option<i64>, Option<i64>) = (None, None);
+        for s in &c.samples {
+            if s.t <= v.start {
+                a = if v.start - s.t <= 15_000 { Some(s.fame) } else { None };
+            } else if s.t <= end {
+                if a.is_none() {
+                    a = Some(s.fame);
+                }
+                b = Some(s.fame);
+            } else {
+                break;
+            }
+        }
+        if let Some(a) = a {
+            best = best.max(b.map_or(0, |b| (b - a).max(0)));
+        }
+    }
+    best
+}

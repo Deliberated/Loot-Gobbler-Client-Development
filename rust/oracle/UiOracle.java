@@ -22,6 +22,7 @@ public class UiOracle {
         int w = Integer.parseInt(args[1]), h = Integer.parseInt(args[2]);
         lootgobbler.AppLog.install();   // as the app starts: its log folder
         tomato.gui.TomatoGUI.loadThemePreset();
+        lootgobbler.DungeonDifficulty.preload();   // as the app starts (the tiles show it)
         tomato.backend.data.TomatoData data = new tomato.backend.data.TomatoData();
         tomato.gui.TomatoGUI gui = new tomato.gui.TomatoGUI(data);
         SwingUtilities.invokeAndWait(() -> {
