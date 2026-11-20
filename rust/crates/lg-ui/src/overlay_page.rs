@@ -41,6 +41,10 @@ const MAGIC_MATRIX: i32 = 0x0484;
 const HEAVY_MATRIX: i32 = 0x0485;
 
 /// Its setting's name; the dungeon overlay keeps the names it had when it was the only one.
+pub fn key_of(id: &str, what: &str) -> String {
+    if id == "dungeon" { format!("overlay{what}") } else { format!("overlay.{id}.{what}") }
+}
+
 fn key(o: &Overlay, what: &str) -> String {
     if o.id == "dungeon" { format!("overlay{what}") } else { format!("overlay.{}.{what}", o.id) }
 }

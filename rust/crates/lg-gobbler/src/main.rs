@@ -120,6 +120,12 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
     let options = eframe::NativeOptions { viewport: gui::viewport(&lg_app::properties::Properties::load(&own)), ..Default::default() };
+    // Linux: X11 (XWayland under Wayland), as Java's Swing: only there can the overlays be placed and kept on top
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("DISPLAY").is_some() && std::env::var_os("LG_WAYLAND").is_none() {
+        // SAFETY: no other thread runs yet
+        unsafe { std::env::remove_var("WAYLAND_DISPLAY") };
+    }
     let gui = gui::Gui::new(app, own, assets);
     match eframe::run_native("Loot Gobbler", options, Box::new(|_| Ok(Box::new(gui)))) {
         Ok(()) => ExitCode::SUCCESS,

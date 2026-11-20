@@ -28,6 +28,7 @@ pub struct Gui {
     seen_saves: usize,
     seen_matrix: i64,
     seen_at: i64,
+    overlays: lg_ui::overlay_windows::OverlayWindows,
 }
 
 impl Gui {
@@ -45,6 +46,7 @@ impl Gui {
             seen_saves: 0,
             seen_matrix: 0,
             seen_at: now_ms(),
+            overlays: Default::default(),
         };
         g.seen_saves = g.app.amulet_saves.count();
         g.seen_matrix = g.app.cooldowns.matrix_fired;
@@ -157,6 +159,11 @@ impl Gui {
 }
 
 impl eframe::App for Gui {
+    /// See-through where nothing is painted: the overlays show only their boxes.
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        [0.0; 4]
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         // what was captured since the last frame
         if let Some(c) = &self.capture {
@@ -166,6 +173,9 @@ impl eframe::App for Gui {
             }
         }
         self.window.shell.sniffing = self.capture.is_some();
+        let ids = ["dungeon", "mana", "dps", "buffs"];
+        let on_key = |id: &str| lg_ui::overlay_page::key_of(id, "On");
+        self.window.shell.overlays_on = ids.iter().any(|id| self.window.props.get(&on_key(id)) == Some("true"));
         self.sounds();
         // what the views asked for last frame is done before this one is drawn
         if let Err(e) = self.app.save_changed(&self.own) {
@@ -173,6 +183,11 @@ impl eframe::App for Gui {
         }
         let mut all = ui.new_child(egui::UiBuilder::new().max_rect(ui.ctx().content_rect()));
         self.window.show(&mut all, &self.app, now_ms());
+        let mut asks = Vec::new();
+        self.overlays.show(ui.ctx(), &mut self.window.icons, &self.app, &self.window.props, now_ms(), &mut asks);
+        for a in asks {
+            self.window.ask(a);
+        }
         for ask in self.window.take_asks() {
             match ask {
                 lg_ui::window::Ask::Set(k, v) => self.set(&k, &v),
@@ -190,6 +205,27 @@ impl eframe::App for Gui {
                         Some(("startup", id)) => s.startup(id),
                         _ => s.play(&what),
                     }
+                }
+            }
+        }
+        // Java `Overlay.toggleAll`: hide those on (and remember which), or show those again (the dungeon one if none)
+        if self.window.shell.clicked_overlay {
+            let ids = ["dungeon", "mana", "dps", "buffs"];
+            let on_key = |id: &str| lg_ui::overlay_page::key_of(id, "On");
+            let on: Vec<&str> = ids.iter().copied().filter(|id| self.window.props.get(&on_key(id)) == Some("true")).collect();
+            if !on.is_empty() {
+                for id in &on {
+                    self.set(&on_key(id), "false");
+                }
+                self.set("overlayLast", &on.join(","));
+            } else {
+                let last = self.window.props.get("overlayLast").unwrap_or("").to_string();
+                let again: Vec<&str> = ids.iter().copied().filter(|id| format!(",{last},").contains(&format!(",{id},"))).collect();
+                if again.is_empty() {
+                    self.set(&on_key("dungeon"), "true");
+                }
+                for id in again {
+                    self.set(&on_key(id), "true");
                 }
             }
         }

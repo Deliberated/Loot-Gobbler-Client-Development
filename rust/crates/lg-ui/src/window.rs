@@ -132,6 +132,11 @@ impl Window {
         asks
     }
 
+    /// Asks as a view would (for parts outside the views, e.g. the overlay windows).
+    pub fn ask(&mut self, a: Ask) {
+        self.asks.push(a);
+    }
+
     /// The question shown over the window, if any.
     pub fn asking(&self) -> Option<&Ask> {
         self.confirm.as_ref()
