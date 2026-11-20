@@ -1,0 +1,13 @@
+[package]
+name = "lg-ui"
+description = "Loot Gobbler's window (egui): the Java app's look, its tabs and views"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+egui = "0.37"
+# pictures of the window without showing it (bin/ui-shot), to compare with the Java app's
+egui_kittest = { version = "0.37", features = ["wgpu", "snapshot"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
