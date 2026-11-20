@@ -62,3 +62,28 @@ fn clear_all_dungeons_asks_first() {
         h.render().expect("render").save(format!("{dir}/question.png")).expect("save");
     }
 }
+
+#[test]
+fn open_later_shows_a_run_under_dps() {
+    let mut app = lg_app::App::new(lg_world::World::new(lg_gamedata::GameData::default()), 0);
+    app.dps_history.runs.push(lg_app::dps_history::Run { dungeon: "Pirate Cave".into(), start: 5, ..Default::default() });
+    let app = Box::leak(Box::new(app));
+    let mut win = Window::new(std::path::Path::new("/nonexistent"), lg_app::properties::Properties::in_memory(""));
+    win.open("Profile");
+    let mut asked = false;
+    let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1799.0, 1005.0)).build_ui_state(
+        |ui, win: &mut Window| {
+            if !asked {
+                lg_ui::window::open_later(ui.ctx(), "Battles:run:5");
+                asked = true;
+            }
+            let mut all = ui.new_child(egui::UiBuilder::new().max_rect(ui.ctx().content_rect()));
+            win.show(&mut all, app, 0);
+        },
+        win,
+    );
+    h.run_steps(3);
+    assert_eq!(h.state().shell.selected, "Battles");
+    assert_eq!(h.state().battles.page, 1);
+    assert_eq!(h.state().battles.dps.selected, Some(5));
+}

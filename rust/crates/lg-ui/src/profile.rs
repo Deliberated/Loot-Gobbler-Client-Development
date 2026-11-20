@@ -368,6 +368,7 @@ fn recent_exalts(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, most: &
         return false;
     }
     gained.sort_by_key(|(id, got)| (*id != most.class_type, -got.iter().sum::<i32>()));
+    let start = ui.cursor().min;
     caption(ui, p, &format!("EXALTATIONS ({EXALT_DAYS} DAYS)"));
     ui.add_space(4.0);
     for (id, got) in gained.iter().take(EXALT_CLASSES) {
@@ -392,6 +393,11 @@ fn recent_exalts(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, most: &
             }
         });
     }
+    // click: the Classes page
+    let r = egui::Rect::from_min_max(start, ui.min_rect().max);
+    if ui.interact(r, ui.scope_id().with("open-classes"), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+        crate::window::open_later(ui.ctx(), "Characters:classes");
+    }
     true
 }
 
@@ -401,7 +407,7 @@ fn amulet_saves(app: &App, now: i64) -> usize {
 
 /// The character's skin, class, stats maxed and fame (Java `characterBlock`).
 fn character_block(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, c: &Char, now: i64) {
-    ui.horizontal_top(|ui| {
+    let block = ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
         let id = if c.skin > 0 { c.skin } else { c.class_type };
         let tex = icons.skin(ui.ctx(), app.world.data(), id, c.tex1, c.tex2, 96);
@@ -418,6 +424,14 @@ fn character_block(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, c: &C
             }
         });
     });
+    // click: the character in the Characters tab
+    if ui
+        .interact(block.response.rect, ui.scope_id().with(("open-char", c.char_id)), Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
+    {
+        crate::window::open_later(ui.ctx(), format!("Characters:{}", c.char_id));
+    }
 }
 
 /// The fame all characters gained in the last 24 hours, at the right (Java `fameGain`; its chart comes later).
@@ -554,6 +568,16 @@ fn recent_drops(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, drops: &
         let font = text(18.0);
         let t = ago(now, d.time);
         crate::jtext::draw(ui.painter(), pos2(top.x + w, top.y + h / 2.0), egui::Align2::RIGHT_CENTER, &t, &font, p.ink_soft);
+        // click: the item in Inventory
+        let rr = egui::Rect::from_min_size(top, vec2(w, h));
+        if ui
+            .interact(rr, ui.scope_id().with(("open-item", d.item, d.time)), Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .clicked()
+        {
+            let name = data.items.item(d.item).map_or(String::new(), |i| i.name.clone());
+            crate::window::open_later(ui.ctx(), format!("Inventory:item:{name}"));
+        }
         ui.add_space(6.0);
     }
 }
@@ -652,7 +676,11 @@ fn recent_runs(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, runs: &[&
     crate::jtext::draw(&painter, pos2(left + loot_x, y), egui::Align2::LEFT_TOP, "LOOT", &small, p.ink_muted);
     for (k, r) in shown.iter().enumerate() {
         let h = 34.0f32.max(crate::jtext::height(&painter, &f));
-        let (row_r, _) = ui.allocate_exact_size(vec2(total, h + 8.0), Sense::hover());
+        let (row_r, row) = ui.allocate_exact_size(vec2(total, h + 8.0), Sense::click());
+        // click: the run in Battles
+        if row.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+            crate::window::open_later(ui.ctx(), format!("Battles:run:{}", r.start));
+        }
         let cy = row_r.center().y;
         // the dungeon's portal, then its name
         let icon_id = if r.guild_hall { 480 } else { data.dungeons.portal_by_name.get(&r.dungeon).copied().unwrap_or(-1) };

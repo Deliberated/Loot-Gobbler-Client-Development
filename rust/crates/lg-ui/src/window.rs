@@ -25,6 +25,13 @@ pub enum Ask {
     Confirm { title: String, text: String, yes: String, no: String, then: Box<Ask> },
 }
 
+/// Asks the window to open a tab or page after this frame (see [`Window::open`]; also "Battles:run:<start>" for a
+/// run under DPS, "Inventory:item:<id>" for an item). For views deep in helpers that have no context.
+pub fn open_later(ctx: &egui::Context, spec: impl Into<String>) {
+    let spec = spec.into();
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("lg-open"), spec));
+}
+
 pub struct Window {
     pub shell: shell::Shell,
     pub palette: theme::Palette,
@@ -79,10 +86,18 @@ impl Window {
         let (tab, page) = spec.split_once(':').map_or((spec, ""), |(t, p)| (t, p));
         self.shell.selected = tab.to_string();
         match (tab, page) {
+            ("Inventory", p) if p.starts_with("item:") => {
+                // Java `showItem`: the Items page, the item found by its name
+                self.inventory.page = 0;
+                self.inventory.search = p[5..].to_string();
+            }
             ("Inventory", p) => self.inventory.page = ["", "st", "log"].iter().position(|x| *x == p).unwrap_or(0),
             ("Characters", "classes") => self.characters.page = 1,
             ("Characters", "pets") => self.characters.page = 2,
-            ("Characters", id) if !id.is_empty() => self.characters.selected = id.parse().unwrap_or(0),
+            ("Characters", id) if !id.is_empty() => {
+                self.characters.page = 0;
+                self.characters.selected = id.parse().unwrap_or(0);
+            }
             ("Battles", p) => self.battles.page = ["", "dps", "overlay"].iter().position(|x| *x == p).unwrap_or(0),
             ("Social", p) => self.social.page = ["", "quests", "discord"].iter().position(|x| *x == p).unwrap_or(0),
             ("Guild", p) => self.guild.page = GUILD_PAGES.iter().position(|x| *x == p).unwrap_or(0),
@@ -191,5 +206,16 @@ impl Window {
             }
         });
         self.question(ui.ctx());
+        if let Some(spec) = ui.ctx().data_mut(|d| d.remove_temp::<String>(egui::Id::unique("lg-open"))) {
+            match spec.split_once(":run:").filter(|(t, _)| *t == "Battles") {
+                Some((_, start)) => {
+                    self.shell.selected = "Battles".into();
+                    self.battles.page = 1;
+                    self.battles.dps.show_run(&app.dps_history, start.parse().ok());
+                }
+                None => self.open(&spec),
+            }
+            ui.ctx().request_repaint();
+        }
     }
 }
