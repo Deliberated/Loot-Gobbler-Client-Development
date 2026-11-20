@@ -1243,3 +1243,94 @@ pub fn suggestion(app: &crate::App, en: &Enchantments, c: &crate::characters::Ch
     };
     Some(suggest(&input, class, &pool, &chosen, settings.scope, settings.enemy_def, &items, &locked, settings.second_chance))
 }
+
+/// What the stat boxes show (the second half of Java `ideal`): per stat the class maximum, what the suggested and the
+/// worn items add, what the enchantments add (as planned, and as the copies are), DPS, loot and regeneration.
+#[derive(Debug, Clone, Default)]
+pub struct Summary {
+    pub max: [i32; 8],
+    pub suggested: [i32; 8],
+    pub now: [i32; 8],
+    /// Enchantments as the suggestion leaves them (the planned ones with stats chosen, else as the copies are).
+    pub enchanted: [f64; 8],
+    pub have: [f64; 8],
+    pub has_weapon: bool,
+    pub dps: f64,
+    pub dps_now: f64,
+    pub loot: f64,
+    pub loot_now: f64,
+    pub regen: [f64; 2],
+    pub regen_now: [f64; 2],
+    /// The enchantments each pick ends up with.
+    pub finals: [Vec<usize>; 4],
+}
+
+/// Java `ideal`'s numbers for the picks.
+pub fn summary(app: &crate::App, en: &Enchantments, c: &crate::characters::Char, settings: &Settings, picks: &[Pick; 4]) -> Summary {
+    let data = app.world.data();
+    let class = data.classes.iter().find(|k| k.id == c.class_type);
+    let max = class.map_or([0; 8], |k| k.max_stats);
+    let mut s = Summary { max, ..Default::default() };
+    let chosen_empty = settings.chosen.is_empty();
+    let equipment = c.equipment.clone().unwrap_or_default();
+    let worn: Vec<Option<&Item>> = (0..4).map(|i| equipment.get(i).copied().filter(|x| *x > 0).and_then(|x| data.items.item(x))).collect();
+    let mut worn_items = [[0.0; 8]; 4];
+    for i in 0..4 {
+        worn_items[i] = bonuses(worn[i]);
+        for k in 0..8 {
+            s.now[k] += worn_items[i][k] as i32;
+        }
+        let b = bonuses(data.items.item(picks[i].id));
+        for k in 0..8 {
+            s.suggested[k] += b[k] as i32;
+        }
+    }
+    let now_d = s.now.map(f64::from);
+    let sug_d = s.suggested.map(f64::from);
+    let worn_lists: [Vec<usize>; 4] = [0, 1, 2, 3].map(|i| en.of(c.enchant_ids.as_ref().and_then(|e| e.get(i)).map(Vec::as_slice)));
+    let worn_ench = [0, 1, 2, 3].map(|i| en.gains(&worn_lists[i], &now_d));
+    let total_now = |stat: usize| total(Some(&max), &worn_items, &worn_ench, None, stat);
+    let def = settings.enemy_def;
+    s.dps_now = dps(en, data, worn[0], &worn_lists[0], total_now(2), total_now(5), def);
+    for i in 0..4 {
+        let mine = en.gains(&en.of(picks[i].enchants.as_deref()), &sug_d);
+        s.finals[i] = final_enchants(en, data, &picks[i]);
+        let fin = en.gains(&s.finals[i], &sug_d);
+        for k in 0..8 {
+            s.have[k] += mine[k];
+            s.enchanted[k] += fin[k];
+        }
+    }
+    if chosen_empty {
+        s.enchanted = s.have;
+    }
+    let att = f64::from(max[2]) + sug_d[2] + s.enchanted[2];
+    let dex = f64::from(max[5]) + sug_d[5] + s.enchanted[5];
+    let weapon = data.items.item(picks[0].id);
+    s.has_weapon = is_weapon(weapon) || is_weapon(worn[0]);
+    s.dps = dps(en, data, weapon, &s.finals[0], att, dex, def);
+    let sug_all: Vec<usize> = s.finals.iter().flatten().copied().collect();
+    let now_all: Vec<usize> = worn_lists.iter().flatten().copied().collect();
+    let mut others = 0.0;
+    if c.crucible {
+        others += c.crucible_loot.map_or(0.0, |m| (m - 1.0) * 100.0);
+    }
+    if c.ritual {
+        others += c.ritual_loot.map_or(0.0, |m| (m - 1.0) * 100.0);
+    }
+    if c.loot_drop_until > app.world.now() {
+        others += 50.0;
+    }
+    s.loot_now = others + en.loot(&now_all);
+    s.loot = others + en.loot(&sug_all);
+    for (k, (stat, imax, iattr)) in [("HP", 0usize, 6usize), ("MP", 1, 7)].into_iter().enumerate() {
+        s.regen_now[k] = en.regen(stat, total_now(imax), total_now(iattr), &now_all);
+        s.regen[k] = en.regen(
+            stat,
+            f64::from(max[imax]) + sug_d[imax] + s.enchanted[imax],
+            f64::from(max[iattr]) + sug_d[iattr] + s.enchanted[iattr],
+            &sug_all,
+        );
+    }
+    s
+}

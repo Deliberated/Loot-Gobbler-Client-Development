@@ -10,5 +10,6 @@ pub mod icons;
 pub mod jtext;
 pub mod profile;
 pub mod shell;
+pub mod suggested;
 pub mod theme;
 pub mod widgets;

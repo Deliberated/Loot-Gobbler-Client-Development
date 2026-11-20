@@ -36,11 +36,13 @@ pub struct CharactersView {
     pub selected: i32,
     grave: Option<egui::TextureHandle>,
     rarity: [Option<egui::TextureHandle>; 5],
+    /// The last suggestion worked out: for which character and settings, its picks and numbers.
+    suggestion: Option<(String, [lg_app::loadout::Pick; 4], lg_app::loadout::Summary)>,
 }
 
 impl Default for CharactersView {
     fn default() -> Self {
-        CharactersView { page: 0, range: 1, graveyard: false, selected: TOTAL, grave: None, rarity: Default::default() }
+        CharactersView { page: 0, range: 1, graveyard: false, selected: TOTAL, grave: None, rarity: Default::default(), suggestion: None }
     }
 }
 
@@ -563,9 +565,95 @@ impl CharactersView {
                 w,
                 "Loadout",
                 fixed::GOLD,
-                |_, _| {},
+                |ui, head| {
+                    // the loadout as a picture to share
+                    let painter = ui.painter().clone();
+                    let f = text(18.0);
+                    let bw = jtext::width(&painter, "Copy as image", &f) + 30.0;
+                    let r = Rect::from_min_max(pos2(head.right() - bw, head.top()), head.max);
+                    let hover = ui.interact(r, ui.scope_id().with("copy-loadout"), Sense::click()).hovered();
+                    painter.rect(r, 0.0, if hover { p.sand } else { p.header }, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
+                    jtext::draw(&painter, r.center(), Align2::CENTER_CENTER, "Copy as image", &f, p.ink);
+                },
                 |ui, r| crate::detail::loadout(ui, &p, app, icons, ch, r),
             );
+            // the suggestion, worked out again only when the character or the settings change
+            let key = format!(
+                "{}|{:?}|{}|{}|{}|{}|{}",
+                ch.char_id,
+                c.loadout.chosen,
+                c.loadout.scope,
+                c.loadout.enemy_def,
+                c.loadout.second_chance,
+                c.loadout.item_locks,
+                c.loadout.enchant_locks
+            );
+            if self.suggestion.as_ref().is_none_or(|s| s.0 != key)
+                && let Some(picks) = lg_app::loadout::suggestion(app, c.en, ch, c.loadout)
+            {
+                let sum = lg_app::loadout::summary(app, c.en, ch, c.loadout, &picks);
+                self.suggestion = Some((key, picks, sum));
+            }
+            if let Some((_, picks, sum)) = &self.suggestion {
+                let mut change = None;
+                let en = c.en;
+                let settings = c.loadout.clone();
+                let none_chosen = settings.chosen.is_empty();
+                let mut reset = false;
+                y += widgets::section_box(
+                    ui,
+                    &p,
+                    pos2(top.x, y),
+                    w,
+                    "Suggested Loadout",
+                    fixed::BLUE,
+                    |ui, head| {
+                        // after the title: the reset box, then (nothing chosen yet) what to do
+                        let painter = ui.painter().clone();
+                        let tw = jtext::width(&painter, "SUGGESTED LOADOUT", &crate::theme::head(17.0));
+                        let bx = Rect::from_center_size(
+                            pos2(head.left() + 10.0 + 8.0 + 8.0 + tw + 8.0 + 13.0, head.center().y),
+                            vec2(26.0, 26.0),
+                        );
+                        let hover = ui.interact(bx, ui.scope_id().with("reset"), Sense::click());
+                        reset_box(&painter, bx, hover.hovered(), &p);
+                        reset = hover.clicked();
+                        if none_chosen {
+                            jtext::draw(
+                                &painter,
+                                pos2(bx.right() + 8.0, head.center().y),
+                                Align2::LEFT_CENTER,
+                                "(click the preferred stats)",
+                                &text(18.0),
+                                fixed::MUTED,
+                            );
+                        }
+                    },
+                    |ui, r| {
+                        let (h, clicked) = crate::suggested::suggested(ui, &p, app, icons, &rarity, en, ch, &settings, picks, sum, r);
+                        change = clicked;
+                        h
+                    },
+                );
+                if reset {
+                    c.loadout.chosen.clear();
+                    c.loadout.scope = 0;
+                    c.loadout.enemy_def = 0.0;
+                    c.loadout.second_chance = 0;
+                }
+                match change {
+                    Some(crate::suggested::Change::Toggle(k)) => {
+                        if let Some(i) = c.loadout.chosen.iter().position(|x| *x == k) {
+                            c.loadout.chosen.remove(i);
+                        } else {
+                            c.loadout.chosen.push(k);
+                        }
+                    }
+                    Some(crate::suggested::Change::Scope) => c.loadout.scope = (c.loadout.scope + 1) % 3,
+                    Some(crate::suggested::Change::SecondChance) => c.loadout.second_chance = (c.loadout.second_chance + 1) % 3,
+                    _ => {}
+                }
+            }
             y += widgets::section_box(
                 ui,
                 &p,
@@ -794,6 +882,33 @@ fn visit_marks(app: &lg_app::App, icons: &mut Icons, ctx: &egui::Context) -> Vec
             end: x.start + x.duration_ms,
         })
         .collect()
+}
+
+/// Java `resetBox`: a framed box with a circular arrow, lit while hovered.
+fn reset_box(painter: &egui::Painter, r: Rect, hover: bool, p: &Palette) {
+    let g = p.gold;
+    painter.rect_filled(
+        r,
+        3.0,
+        if hover { Color32::from_rgba_unmultiplied(g.r(), g.g(), g.b(), 55) } else { Color32::from_black_alpha(70) },
+    );
+    painter.rect_stroke(r, 3.0, Stroke::new(1.5, if hover { g } else { Color32::from_white_alpha(60) }), StrokeKind::Inside);
+    let ink = if hover { g } else { fixed::MUTED };
+    let (c, rad) = (r.center(), 26.0 * 0.26);
+    // three quarters of a circle from 60 degrees round, open at the top right, the arrow head there
+    let pts: Vec<egui::Pos2> = (0..=29)
+        .map(|i| {
+            let a = (60.0 + 290.0 * i as f32 / 29.0).to_radians();
+            pos2(c.x + rad * a.cos(), c.y - rad * a.sin())
+        })
+        .collect();
+    painter.add(egui::Shape::line(pts, Stroke::new(2.0, ink)));
+    let (ax, ay) = (c.x + rad * 60f32.to_radians().cos(), c.y - rad * 60f32.to_radians().sin());
+    painter.add(egui::Shape::convex_polygon(
+        vec![pos2(ax + 4.5, ay - 1.5), pos2(ax - 1.0, ay - 4.0), pos2(ax + 0.5, ay + 3.0)],
+        ink,
+        Stroke::NONE,
+    ));
 }
 
 /// The blood ritual's pixel flame, 3 px per pixel.

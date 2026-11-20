@@ -39,6 +39,10 @@ pub struct Ctx<'a> {
     pub p: &'a Palette,
     pub icons: &'a mut Icons,
     pub now: i64,
+    /// The game's enchantments, for the suggested loadout.
+    pub en: &'a lg_app::loadout::Enchantments,
+    /// The suggested loadout's settings (what you aim for, the scope...).
+    pub loadout: &'a mut lg_app::loadout::Settings,
 }
 
 pub struct Profile {
