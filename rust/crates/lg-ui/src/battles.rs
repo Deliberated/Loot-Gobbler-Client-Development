@@ -800,21 +800,41 @@ fn detail(ui: &mut Ui, c: &mut Ctx, v: &Visit, current: bool, side: Rect) -> Opt
                 ty += jtext::height(&painter, &small()) + 2.0;
                 let gh = crate::damage_graph::height(&fights);
                 let gr = Rect::from_min_size(pos2(r.left(), ty), vec2(r.width(), gh));
-                let bar = crate::damage_graph::paint(&painter, ui.ctx(), icons, data, &p, v, &fights, now, gr);
-                if let Some(pos) = ui.interact(gr, ui.scope_id().with("graph"), Sense::hover()).hover_pos()
-                    && let Some(t) = crate::damage_graph::tip(data, v, &fights, now, gr, pos)
+                let view = crate::damage_graph::view_of(ui.ctx(), v.start);
+                let bar = crate::damage_graph::paint(&painter, ui.ctx(), icons, data, &p, v, &fights, now, gr, view);
+                let graph = ui.interact(gr, ui.scope_id().with("graph"), Sense::click());
+                if let Some(pos) = graph.hover_pos()
+                    && let Some(t) = crate::damage_graph::tip(data, v, &fights, now, gr, pos, view)
                 {
                     crate::damage_graph::show_tip(ui.ctx(), &p, pos, &t);
                 }
+                // a teardrop: scroll so its slice is in the middle
+                if graph.clicked()
+                    && let Some(pos) = graph.interact_pointer_pos()
+                    && let Some(to) = crate::damage_graph::teardrop_click(v, &fights, now, gr, pos, view)
+                {
+                    crate::damage_graph::set_view(ui.ctx(), v.start, Some(to));
+                }
                 ty += gh;
                 if let Some((at, len)) = bar {
-                    // the scrollbar under it, at its latest end
+                    // the scrollbar under it: dragged or clicked, the window moves (back at the end: it follows again)
                     ty += 2.0;
                     let track = Rect::from_min_size(pos2(r.left(), ty), vec2(r.width(), 18.0));
-                    let tw = (len * (track.width() - 6.0)).max(20.0);
-                    let thumb =
-                        Rect::from_min_size(pos2(track.left() + 3.0 + at * (track.width() - 6.0), track.top() + 5.0), vec2(tw, 8.0));
-                    painter.rect_filled(thumb, 4.0, p.line);
+                    let inner = track.width() - 6.0;
+                    let tw = (len * inner).max(20.0);
+                    let thumb = Rect::from_min_size(pos2(track.left() + 3.0 + at * inner, track.top() + 5.0), vec2(tw, 8.0));
+                    let bar = ui.interact(track, ui.scope_id().with(("graph-bar", v.start)), Sense::click_and_drag());
+                    painter.rect_filled(thumb, 4.0, if bar.dragged() || bar.hovered() { p.ink_soft } else { p.line });
+                    if (bar.dragged() || bar.clicked())
+                        && let Some(pos) = bar.interact_pointer_pos()
+                    {
+                        let (total, extent) = crate::damage_graph::seconds(v, now, gr);
+                        let max = total.max(extent);
+                        // the thumb's middle under the pointer
+                        let f = ((pos.x - track.left() - 3.0 - tw / 2.0) / inner).clamp(0.0, 1.0);
+                        let to = ((f * max as f32).round() as i64).clamp(0, max - extent);
+                        crate::damage_graph::set_view(ui.ctx(), v.start, if to >= max - extent { None } else { Some(to) });
+                    }
                     ty += 18.0;
                 }
                 ty - r.top()

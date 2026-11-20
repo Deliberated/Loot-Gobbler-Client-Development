@@ -166,6 +166,7 @@ pub fn paint(
     fights: &[Fight],
     now: i64,
     r: Rect,
+    view: Option<i64>,
 ) -> Option<(f32, f32)> {
     let window = WINDOW_MS;
     let (w, h) = (r.width(), r.height());
@@ -177,7 +178,7 @@ pub fn paint(
     let total = (span(v, now) as f64 / 1000.0).ceil() as i64;
     let extent = view_ms / 1000;
     let max = total.max(extent);
-    let view_start = (max - extent) * 1000;
+    let view_start = start_of(view, total, extent);
     let at = |x: f32, y: f32| pos2(r.left() + x, r.top() + y);
     let x_of = |t: i64| PAD_LEFT + ((t - view_start) as f64 * f64::from(SLICE_PX) / window as f64).round() as f32;
     let small = text(16.0);
@@ -503,7 +504,7 @@ fn teardrop(
 /// Java `getToolTipText` of the graph painted in `r`, for the pointer at `pos`: a teardrop's dangerous moments,
 /// a boss fight in the lane, your death, your amulet, else the number of the slice (dealt above the line, taken
 /// below it).
-pub fn tip(data: &GameData, v: &Visit, fights: &[Fight], now: i64, r: Rect, pos: Pos2) -> Option<String> {
+pub fn tip(data: &GameData, v: &Visit, fights: &[Fight], now: i64, r: Rect, pos: Pos2, view: Option<i64>) -> Option<String> {
     let window = WINDOW_MS;
     let (w, h) = (r.width(), r.height());
     let lane = if fights.is_empty() { 0.0 } else { LANE };
@@ -513,7 +514,7 @@ pub fn tip(data: &GameData, v: &Visit, fights: &[Fight], now: i64, r: Rect, pos:
     let view_ms = fit * window;
     let total = (span(v, now) as f64 / 1000.0).ceil() as i64;
     let extent = view_ms / 1000;
-    let view_start = (total.max(extent) - extent) * 1000;
+    let view_start = start_of(view, total, extent);
     let x_of = |t: i64| PAD_LEFT + ((t - view_start) as f64 * f64::from(SLICE_PX) / window as f64).round() as f32;
     let (x, y) = (pos.x - r.left(), pos.y - r.top());
     let mid = PAD_TOP + ((h - pad_bottom - PAD_TOP) * 2.0 / 5.0).floor();
@@ -594,4 +595,59 @@ pub fn show_tip(ctx: &egui::Context, p: &Palette, pos: Pos2, t: &str) {
     for (k, l) in t.lines().enumerate() {
         jtext::draw(&painter, pos2(r.left() + 6.0, r.top() + 4.0 + k as f32 * lh), Align2::LEFT_TOP, l, &f, p.ink);
     }
+}
+
+/// Where the window starts (ms): the second scrolled to (None: the latest end), kept within the visit.
+fn start_of(view: Option<i64>, total: i64, extent: i64) -> i64 {
+    let last = total.max(extent) - extent;
+    view.map_or(last, |v| v.clamp(0, last)) * 1000
+}
+
+/// A visit's graph scrolled to (its start second), kept while the app runs; None: following its latest end.
+pub fn view_of(ctx: &egui::Context, visit: i64) -> Option<i64> {
+    ctx.data(|d| d.get_temp::<i64>(egui::Id::unique(("graph-view", visit))))
+}
+
+pub fn set_view(ctx: &egui::Context, visit: i64, view: Option<i64>) {
+    ctx.data_mut(|d| match view {
+        Some(s) => {
+            d.insert_temp(egui::Id::unique(("graph-view", visit)), s);
+        }
+        None => d.remove::<i64>(egui::Id::unique(("graph-view", visit))),
+    });
+}
+
+/// The graph's seconds: the visit's, and how many the window shows.
+pub fn seconds(v: &Visit, now: i64, r: Rect) -> (i64, i64) {
+    let fit = (((r.width() - PAD_LEFT - PAD_RIGHT + SLICE_PX - 1.0) / SLICE_PX).floor()).max(1.0) as i64;
+    ((span(v, now) as f64 / 1000.0).ceil() as i64, fit * WINDOW_MS / 1000)
+}
+
+/// A click on a teardrop: the second to scroll to, so its slice is in the middle (Java's bubble click).
+pub fn teardrop_click(v: &Visit, fights: &[Fight], now: i64, r: Rect, pos: Pos2, view: Option<i64>) -> Option<i64> {
+    let (total, extent) = seconds(v, now, r);
+    let view_start = start_of(view, total, extent);
+    let view_ms = extent * 1000;
+    let lane = if fights.is_empty() { 0.0 } else { LANE };
+    let h = r.height();
+    let base = h - PAD_BOTTOM - lane;
+    let mid = PAD_TOP + ((h - PAD_BOTTOM - lane - PAD_TOP) * 2.0 / 5.0).floor();
+    let cy = ((mid + base) / 2.0).floor();
+    let (x, y) = (pos.x - r.left(), pos.y - r.top());
+    if (y - cy).abs() > BUBBLE {
+        return None;
+    }
+    let sl = slices(v, WINDOW_MS, now);
+    let thr = threshold(v);
+    let (first, last) = (view_start / WINDOW_MS, (view_start + view_ms) / WINDOW_MS);
+    let reach = (BUBBLE * 1.9).floor() + BUBBLE;
+    let danger = |i: &usize| sl.damage[*i] >= thr;
+    let target = if x >= PAD_LEFT + 4.0 && x <= PAD_LEFT + 4.0 + reach {
+        (0..sl.damage.len()).filter(danger).rfind(|i| (*i as i64) < first)
+    } else if x <= r.width() - PAD_RIGHT - 4.0 && x >= r.width() - PAD_RIGHT - 4.0 - reach {
+        (0..sl.damage.len()).filter(danger).find(|i| *i as i64 > last)
+    } else {
+        None
+    }?;
+    Some(((target as i64 * WINDOW_MS - view_ms / 2) / 1000).max(0))
 }
