@@ -381,3 +381,29 @@ pub fn brighter(c: Color32) -> Color32 {
     }
     Color32::from_rgb(if c.r() > 0 { f(c.r()) } else { 0 }, if c.g() > 0 { f(c.g()) } else { 0 }, if c.b() > 0 { f(c.b()) } else { 0 })
 }
+
+/// A one-line text field (Java `JTextField` with a placeholder): paper with a line border, gold when focused;
+/// the text typed goes into `value`. Gives whether it changed.
+pub fn search_field(ui: &mut Ui, p: &Palette, r: Rect, value: &mut String, placeholder: &str, id: &str) -> bool {
+    let painter = ui.painter().clone();
+    let bg = painter.add(Shape::Noop);
+    let font = text(18.0);
+    let inner = r.shrink2(vec2(8.0, 2.0));
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::left_to_right(egui::Align::Center)));
+    child.visuals_mut().extreme_bg_color = Color32::TRANSPARENT;
+    child.visuals_mut().selection.bg_fill = p.text_sel;
+    child.visuals_mut().text_cursor.stroke = Stroke::new(1.5, p.ink);
+    let edit = egui::TextEdit::singleline(value)
+        .id_salt(id)
+        .frame(egui::Frame::NONE)
+        .font(font.clone())
+        .text_color(p.ink)
+        .hint_text(egui::RichText::new(placeholder).font(font).color(p.ink_muted))
+        .desired_width(inner.width())
+        .margin(vec2(0.0, 0.0));
+    let resp = child.add(edit);
+    let focused = resp.has_focus();
+    painter.set(bg, Shape::rect_filled(r, 0.0, p.paper));
+    painter.rect_stroke(r, 0.0, Stroke::new(1.0, if focused { p.gold } else { p.line }), StrokeKind::Inside);
+    resp.changed()
+}

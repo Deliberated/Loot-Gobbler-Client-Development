@@ -163,6 +163,14 @@ impl Collection {
         c
     }
 
+    /// Java `clear`: the whole collection history gone.
+    pub fn clear(&mut self) {
+        self.order.clear();
+        self.entries.clear();
+        self.changed = true;
+        self.dirty = true;
+    }
+
     pub fn entry(&self, item: i32) -> Option<&Entry> {
         self.entries.get(&item)
     }

@@ -129,7 +129,8 @@ impl eframe::App for Gui {
                 lg_ui::window::Ask::ClearVisits => self.app.dungeon_visits.clear(),
                 lg_ui::window::Ask::HideRun(start) => self.app.dps_history.remove(start),
                 lg_ui::window::Ask::ClearRuns => self.app.dps_history.clear(),
-                lg_ui::window::Ask::Confirm { .. } => {}
+                lg_ui::window::Ask::ClearCollection => self.app.collection.clear(),
+                lg_ui::window::Ask::Confirm { .. } | lg_ui::window::Ask::Nothing => {}
             }
         }
         if self.window.shell.clicked_sniffer {

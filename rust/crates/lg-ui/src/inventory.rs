@@ -235,9 +235,34 @@ impl InventoryView {
             })
             .collect();
         let q = self.search.trim().to_lowercase();
+        // Java `matching`: name, type (slot), UT / ST / T14, "reusable" / "quick slot", or an enchantment found on it
+        let has_enchant = |id: i32| {
+            if self.upe_char != 0 && !owned_set.contains(&id) {
+                return false;
+            }
+            app.collection.entry(id).filter(|_| owned_set.contains(&id)).is_some_and(|e| {
+                e.history
+                    .iter()
+                    .flatten()
+                    .filter_map(|f| f.enchant_ids.as_ref())
+                    .flatten()
+                    .any(|eid| *eid >= 0 && data.enchant_looks.get(eid).is_some_and(|l| l.name.to_lowercase().contains(&q)))
+            })
+        };
         let grid: Vec<i32> = universe
             .into_iter()
-            .filter(|id| q.is_empty() || data.items.item(*id).is_some_and(|i| i.name.to_lowercase().contains(&q)))
+            .filter(|id| {
+                q.is_empty()
+                    || data.items.item(*id).is_some_and(|i| {
+                        i.name.to_lowercase().contains(&q)
+                            || i.slot_name().to_lowercase().contains(&q)
+                            || i.tier_tag().to_lowercase().replace(['(', ')'], "") == q
+                            || (!i.tier.is_empty() && q == format!("t{}", i.tier))
+                            || (i.quickslot_only
+                                && ("reusable".starts_with(&q) || "quick slot".starts_with(&q) || "quickslot".starts_with(&q)))
+                    })
+                    || has_enchant(*id)
+            })
             .collect();
 
         // the split: the side 380 px, the grid snapped down to whole columns
@@ -253,6 +278,7 @@ impl InventoryView {
             "Collection".to_string()
         };
         let mut filter = self.filter;
+        let mut search = self.search.clone();
         let icons = &mut *c.icons;
         widgets::section(
             ui,
@@ -268,17 +294,9 @@ impl InventoryView {
                 if let Some(i) = widgets::segmented(ui, &p, pos2(fx, head.top()), h, &FILTERS, filter, true, &[]) {
                     filter = i;
                 }
-                // the search box (typing comes with the window)
+                // the search box
                 let sr = Rect::from_min_size(pos2(fx - 8.0 - 220.0, head.top() + 3.0), vec2(220.0, h - 6.0));
-                painter.rect(sr, 0.0, p.paper, Stroke::new(1.0, p.line), StrokeKind::Inside);
-                jtext::draw(
-                    &painter,
-                    pos2(sr.left() + 8.0, sr.center().y),
-                    Align2::LEFT_CENTER,
-                    "Search items or enchants",
-                    &text(18.0),
-                    p.ink_muted,
-                );
+                crate::widgets::search_field(ui, &p, sr, &mut search, "Search items or enchants", "collection-search");
             },
             |ui, r| {
                 egui::ScrollArea::vertical().id_salt("collection-grid").show(ui, |ui| {
@@ -332,6 +350,7 @@ impl InventoryView {
             },
         );
         self.filter = filter;
+        self.search = search;
 
         // the side: progress and actions on top, recent finds below
         let painter = ui.painter().clone();
@@ -371,6 +390,7 @@ impl InventoryView {
         let acts =
             Rect::from_min_size(pos2(side.left(), prog.bottom() + 8.0), vec2(side.width(), head + 2.0 + 20.0 + 3.0 * bh + 2.0 * 6.0));
         let upe_shown = self.upe_char != 0;
+        let mut clicked: Option<usize> = None;
         widgets::section(
             ui,
             &p,
@@ -387,11 +407,56 @@ impl InventoryView {
                     if *danger && upe_shown {
                         continue;
                     }
-                    button(ui, &p, Rect::from_min_size(pos2(x, y), vec2(w, bh)), label, *danger, &format!("inv-{i}"));
+                    if button(ui, &p, Rect::from_min_size(pos2(x, y), vec2(w, bh)), label, *danger, &format!("inv-{i}")) {
+                        clicked = Some(i);
+                    }
                     y += bh + 6.0;
                 }
             },
         );
+        match clicked {
+            // Java `copyText`: "- Name (Shiny) xN" per item held, sorted, under a head line
+            Some(0) => {
+                let mut lines: Vec<String> = owned
+                    .iter()
+                    .map(|id| {
+                        let item = data.items.item(*id);
+                        let mut line = item
+                            .filter(|i| !i.name.is_empty())
+                            .map_or_else(|| data.object_name(*id).map_or(format!("Item #{id}"), str::to_string), |i| i.name.clone());
+                        if item.is_some_and(|i| i.is_shiny()) && !line.contains("Shiny") {
+                            line += " (Shiny)";
+                        }
+                        let n = held(*id);
+                        if n > 1 {
+                            line += &format!(" x{n}");
+                        }
+                        line
+                    })
+                    .collect();
+                lines.sort_by_key(|l| l.to_lowercase());
+                let mut t = format!("ROTMG Collection \u{2014} {} items\n", owned.len());
+                for l in lines {
+                    t += &format!("- {l}\n");
+                }
+                ui.ctx().copy_text(t);
+                c.asks.push(crate::window::Ask::Confirm {
+                    title: "Copy as text".into(),
+                    text: "Collection copied to the clipboard as text.".into(),
+                    yes: "OK".into(),
+                    no: String::new(),
+                    then: Box::new(crate::window::Ask::Nothing),
+                });
+            }
+            Some(2) => c.asks.push(crate::window::Ask::Confirm {
+                title: "Clear collection".into(),
+                text: "Delete your whole collection history? This cannot be undone.".into(),
+                yes: "Yes".into(),
+                no: "No".into(),
+                then: Box::new(crate::window::Ask::ClearCollection),
+            }),
+            _ => {}
+        }
         let recent = Rect::from_min_max(pos2(side.left(), acts.bottom() + 8.0), side.max);
         let icons = &mut *c.icons;
         let mut by_last: Vec<(i32, String, String, i32)> = if self.upe_char != 0 {

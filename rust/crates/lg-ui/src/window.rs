@@ -21,7 +21,12 @@ pub enum Ask {
     HideRun(i64),
     /// Every saved run gone.
     ClearRuns,
-    /// Ask first (Java `JOptionPane.showConfirmDialog`): title, text, the yes and no buttons; yes asks `then`.
+    /// The whole collection history gone.
+    ClearCollection,
+    /// Nothing (what a message's button asks).
+    Nothing,
+    /// Ask first (Java `JOptionPane.showConfirmDialog`): title, text, the yes and no buttons; yes asks `then`. With
+    /// `no` empty it is a message (`showMessageDialog`): one button, nothing asked.
     Confirm { title: String, text: String, yes: String, no: String, then: Box<Ask> },
 }
 
@@ -157,8 +162,16 @@ impl Window {
             let bw = |t: &str| (crate::jtext::width(&painter, &t.to_uppercase(), &small) + 32.0).max(108.0);
             let nr = egui::Rect::from_min_size(egui::pos2(r.right() - 16.0 - bw(no), r.bottom() - 16.0 - 36.0), egui::vec2(bw(no), 36.0));
             let yr = egui::Rect::from_min_size(egui::pos2(nr.left() - 8.0 - bw(yes), nr.top()), egui::vec2(bw(yes), 36.0));
-            if crate::inventory::button(ui, &p, yr, yes, false, "question-yes") {
+            if !no.is_empty() && crate::inventory::button(ui, &p, yr, yes, false, "question-yes") {
                 answer = Some(true);
+            }
+            if no.is_empty() {
+                // a message: its one button at the right
+                let one = egui::Rect::from_min_size(egui::pos2(r.right() - 16.0 - bw(yes), nr.top()), egui::vec2(bw(yes), 36.0));
+                if crate::inventory::button(ui, &p, one, yes, false, "question-ok") {
+                    answer = Some(false);
+                }
+                return;
             }
             if crate::inventory::button(ui, &p, nr, no, false, "question-no") {
                 answer = Some(false);

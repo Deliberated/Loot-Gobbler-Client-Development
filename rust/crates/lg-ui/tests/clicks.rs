@@ -87,3 +87,22 @@ fn open_later_shows_a_run_under_dps() {
     assert_eq!(h.state().battles.page, 1);
     assert_eq!(h.state().battles.dps.selected, Some(5));
 }
+
+#[test]
+fn typing_into_the_inventory_search() {
+    let app = Box::leak(Box::new(lg_app::App::new(lg_world::World::new(lg_gamedata::GameData::default()), 0)));
+    let mut win = Window::new(std::path::Path::new("/nonexistent"), lg_app::properties::Properties::in_memory(""));
+    win.open("Inventory");
+    let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1799.0, 1005.0)).build_ui_state(
+        |ui, win: &mut Window| {
+            let mut all = ui.new_child(egui::UiBuilder::new().max_rect(ui.ctx().content_rect()));
+            win.show(&mut all, app, 0);
+        },
+        win,
+    );
+    h.run_steps(2);
+    click(&mut h, Pos2::new(946.0, 150.0));
+    h.input_mut().events.push(Event::Text("lute".into()));
+    h.run_steps(2);
+    assert_eq!(h.state().inventory.search, "lute");
+}
