@@ -1388,6 +1388,48 @@ impl Upe {
         self.runs.insert(char_id, run);
     }
 
+    /// Java `setMode`: a run not started yet may take any mode it can start; a started one only turns its guild
+    /// version on or off (off only while it never equipped or used a guild mate's item). Whether it switched.
+    pub fn set_mode(&mut self, c: &Ctx, char_id: i32, mode: &str) -> bool {
+        if !MODES.contains(&mode) {
+            return false;
+        }
+        let Some(mut run) = self.runs.remove(&char_id) else { return false };
+        let ok = (|| {
+            if !(run.standing() || run.potential()) {
+                return false;
+            }
+            repair(&mut run);
+            if mode == run.mode {
+                return true;
+            }
+            if run.marked {
+                if base(mode) != base(&run.mode) || (!guild(mode) && run.guild_locked) {
+                    return false;
+                }
+            } else if !run.can_start(mode, run.no_pet) {
+                return false;
+            }
+            run.mode = mode.to_string();
+            self.check(c, &mut run, c.now);
+            self.dirty = true;
+            true
+        })();
+        self.runs.insert(char_id, run);
+        ok
+    }
+
+    /// Java `setNoPet`: on only before the run starts and while no pet follows it; off any time. Whether it changed.
+    pub fn set_no_pet(&mut self, char_id: i32, no_pet: bool) -> bool {
+        let Some(run) = self.runs.get_mut(&char_id) else { return false };
+        if run.no_pet == no_pet || (no_pet && (run.marked || !run.potential() || run.pet)) {
+            return false;
+        }
+        run.no_pet = no_pet;
+        self.dirty = true;
+        true
+    }
+
     /// For the comparison with Java.
     pub fn dump(&self) -> String {
         let q = |s: &str| lg_protocol::dump::to_string(&s.to_string());

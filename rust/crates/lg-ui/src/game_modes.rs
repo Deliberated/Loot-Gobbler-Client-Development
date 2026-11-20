@@ -398,24 +398,35 @@ fn card(
         );
     }
     // the buttons, right to left at the card's right edge
-    let mut buttons: Vec<(String, bool)> = Vec::new();
+    use crate::window::Ask;
+    let id = r.char_id;
+    // each button: its label, primary, enabled, what it does (an ask, or a page to open)
+    let mut buttons: Vec<(String, bool, bool, Result<Ask, String>)> = Vec::new();
     if c.alive && r.potential() {
-        buttons.push((format!("Start {}{}", upe::label(mode), if no_pet { " without pet" } else { "" }), true));
+        let ask = Ask::UpeMark { char_id: id, on: true, mode: Some(mode.to_string()), no_pet: Some(no_pet) };
+        buttons.push((
+            format!("Start {}{}", upe::label(mode), if no_pet { " without pet" } else { "" }),
+            true,
+            r.can_start(mode, no_pet),
+            Ok(ask),
+        ));
     }
     if c.alive && r.marked && r.broken.is_none() {
-        let other = upe::with_guild(&r.mode, !upe::guild(&r.mode));
-        buttons.push((format!("{}{}", if upe::guild(&r.mode) { "Guild off: " } else { "Guild on: " }, upe::label(&other)), false));
+        let on = upe::guild(&r.mode);
+        let other = upe::with_guild(&r.mode, !on);
+        let label = format!("{}{}", if on { "Guild off: " } else { "Guild on: " }, upe::label(&other));
+        buttons.push((label, false, !(on && r.guild_locked), Ok(Ask::UpeMode(id, other))));
     }
     if c.alive && r.marked && r.broken.is_none() && r.no_pet {
-        buttons.push(("Allow a pet".into(), false));
+        buttons.push(("Allow a pet".into(), false, true, Ok(Ask::UpeNoPet(id, false))));
     }
     if c.alive && r.marked && r.broken.is_none() {
-        buttons.push(("End run".into(), false));
+        buttons.push(("End run".into(), false, true, Ok(Ask::UpeMark { char_id: id, on: false, mode: None, no_pet: None })));
     }
     if r.marked {
-        buttons.push(("Finds".into(), false));
+        buttons.push(("Finds".into(), false, true, Err(format!("Inventory:upe:{id}"))));
     }
-    buttons.push(("Open".into(), false));
+    buttons.push(("Open".into(), false, true, Err(format!("Characters:{id}"))));
     let lines = 3 + r.notes.len();
     let text_h = jtext::height(&painter, &text(22.0))
         + jtext::height(&painter, &text(15.0))
@@ -452,16 +463,28 @@ fn card(
         ty = t.bottom() + 2.0;
     }
     let mut bx = rect.right() - 10.0;
-    for (i, (label, primary)) in buttons.iter().enumerate().rev() {
+    for (i, (label, primary, enabled, action)) in buttons.iter().enumerate().rev() {
         // FlatLaf buttons are at least 72 px wide, scaled
         let bw = (jtext::width(&painter, &label.to_uppercase(), &small()) + 32.0).max(108.0);
         bx -= bw;
         let br = Rect::from_min_size(pos2(bx, rect.center().y - 18.0), vec2(bw, 36.0));
-        if *primary {
+        let clicked = if !*enabled {
+            // greyed out, as a disabled button
+            painter.rect(br, 0.0, p.header, Stroke::new(1.5, p.line), StrokeKind::Inside);
+            jtext::draw(&painter, br.center(), Align2::CENTER_CENTER, &label.to_uppercase(), &small(), p.ink_muted);
+            false
+        } else if *primary {
             painter.rect(br, 0.0, p.gold, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
             jtext::draw(&painter, br.center(), Align2::CENTER_CENTER, &label.to_uppercase(), &small(), p.on_accent);
+            ui.interact(br, ui.scope_id().with(("mode-start", r.char_id, i)), egui::Sense::click()).clicked()
         } else {
-            crate::inventory::button(ui, p, br, label, false, &format!("mode-{}-{i}", r.char_id));
+            crate::inventory::button(ui, p, br, label, false, &format!("mode-{}-{i}", r.char_id))
+        };
+        if clicked {
+            match action {
+                Ok(ask) => crate::window::ask_later(ui.ctx(), ask.clone()),
+                Err(spec) => crate::window::open_later(ui.ctx(), spec.clone()),
+            }
         }
         bx -= 6.0;
     }

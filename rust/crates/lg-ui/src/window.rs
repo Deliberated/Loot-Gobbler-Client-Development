@@ -27,6 +27,12 @@ pub enum Ask {
     Nothing,
     /// Play a sound: a bundled file ("pm.wav"), "item:<setting key>" or "startup:<id>" (Settings' previews).
     Play(String),
+    /// Game Modes: start (with the mode and no-pet choice) or end a character's run.
+    UpeMark { char_id: i32, on: bool, mode: Option<String>, no_pet: Option<bool> },
+    /// Game Modes: a run's mode changed (its guild version on or off).
+    UpeMode(i32, String),
+    /// Game Modes: playing without a pet on or off.
+    UpeNoPet(i32, bool),
     /// Ask first (Java `JOptionPane.showConfirmDialog`): title, text, the yes and no buttons; yes asks `then`. With
     /// `no` empty it is a message (`showMessageDialog`): one button, nothing asked.
     Confirm { title: String, text: String, yes: String, no: String, then: Box<Ask> },
@@ -37,6 +43,11 @@ pub enum Ask {
 pub fn open_later(ctx: &egui::Context, spec: impl Into<String>) {
     let spec = spec.into();
     ctx.data_mut(|d| d.insert_temp(egui::Id::unique("lg-open"), spec));
+}
+
+/// Asks after this frame, from helpers deep in a view without its context (see [`open_later`]).
+pub fn ask_later(ctx: &egui::Context, ask: Ask) {
+    ctx.data_mut(|d| d.get_temp_mut_or_default::<Vec<Ask>>(egui::Id::unique("lg-asks")).push(ask));
 }
 
 pub struct Window {
@@ -100,6 +111,11 @@ impl Window {
         let (tab, page) = spec.split_once(':').map_or((spec, ""), |(t, p)| (t, p));
         self.shell.selected = tab.to_string();
         match (tab, page) {
+            ("Inventory", p) if p.starts_with("upe:") => {
+                // Java `showUpe`: the run's own finds
+                self.inventory.page = 0;
+                self.inventory.upe_char = p[4..].parse().unwrap_or(0);
+            }
             ("Inventory", p) if p.starts_with("item:") => {
                 // Java `showItem`: the Items page, the item found by its name
                 self.inventory.page = 0;
@@ -263,6 +279,9 @@ impl Window {
         });
         self.question(ui.ctx());
         self.grab_card(ui, app);
+        if let Some(later) = ui.ctx().data_mut(|d| d.remove_temp::<Vec<Ask>>(egui::Id::unique("lg-asks"))) {
+            self.asks.extend(later);
+        }
         if let Some(spec) = ui.ctx().data_mut(|d| d.remove_temp::<String>(egui::Id::unique("lg-open"))) {
             match spec.split_once(":run:").filter(|(t, _)| *t == "Battles") {
                 Some((_, start)) => {

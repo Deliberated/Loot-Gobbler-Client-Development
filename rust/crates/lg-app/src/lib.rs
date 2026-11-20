@@ -199,6 +199,23 @@ impl App {
         self.characters.playing().map_or(0, |c| c.char_id)
     }
 
+    /// Game Modes: a run started or ended (Java `Upe.mark`).
+    pub fn upe_mark(&mut self, char_id: i32, on: bool, mode: Option<&str>, no_pet: Option<bool>) {
+        let c = upe_ctx!(self);
+        self.upe.mark(&c, char_id, on, mode, no_pet);
+    }
+
+    /// Game Modes: a run's mode changed (Java `Upe.setMode`).
+    pub fn upe_mode(&mut self, char_id: i32, mode: &str) {
+        let c = upe_ctx!(self);
+        self.upe.set_mode(&c, char_id, mode);
+    }
+
+    /// Game Modes: playing without a pet on or off (Java `Upe.setNoPet`).
+    pub fn upe_no_pet(&mut self, char_id: i32, no_pet: bool) {
+        self.upe.set_no_pet(char_id, no_pet);
+    }
+
     /// One packet captured at `now` (ms since 1970).
     pub fn packet(&mut self, p: &Decoded, now: i64) -> Result<(), Abort> {
         self.world.set_time(now);

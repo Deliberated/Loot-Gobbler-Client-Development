@@ -197,6 +197,9 @@ impl eframe::App for Gui {
                 lg_ui::window::Ask::HideRun(start) => self.app.dps_history.remove(start),
                 lg_ui::window::Ask::ClearRuns => self.app.dps_history.clear(),
                 lg_ui::window::Ask::ClearCollection => self.app.collection.clear(),
+                lg_ui::window::Ask::UpeMark { char_id, on, mode, no_pet } => self.app.upe_mark(char_id, on, mode.as_deref(), no_pet),
+                lg_ui::window::Ask::UpeMode(char_id, mode) => self.app.upe_mode(char_id, &mode),
+                lg_ui::window::Ask::UpeNoPet(char_id, no_pet) => self.app.upe_no_pet(char_id, no_pet),
                 lg_ui::window::Ask::Confirm { .. } | lg_ui::window::Ask::Nothing => {}
                 lg_ui::window::Ask::Play(what) => {
                     let s = crate::sound::Sounds(&self.window.props);
