@@ -129,6 +129,23 @@ pub fn skin_image(sprites: &mut Sprites, data: &GameData, sprite: i32, tex1: i32
 }
 
 impl Icons {
+    /// A sprite by sheet and index scaled to a size, pixel-sharp, no outline (Java `EnchantIcons.icon`).
+    pub fn sheet(&mut self, ctx: &egui::Context, sheet: &str, index: i32, size: u32) -> Option<TextureHandle> {
+        let key = format!("sheet-{sheet}-{index}-{size}");
+        if let Some(t) = self.skins.get(&key) {
+            return Some(t.clone());
+        }
+        let im = self.sprites.sprite(sheet, index)?;
+        let out = scale(&im, size, size);
+        let tex = ctx.load_texture(
+            key.clone(),
+            ColorImage::from_rgba_unmultiplied([out.w as usize, out.h as usize], &out.rgba),
+            TextureOptions::NEAREST,
+        );
+        self.skins.insert(key, tex.clone());
+        Some(tex)
+    }
+
     /// A character's look with its dyes (Java `CharactersView.skin` / `Dyes.icon`): the plain icon without dyes.
     pub fn skin(&mut self, ctx: &egui::Context, data: &GameData, sprite: i32, tex1: i32, tex2: i32, size: u32) -> Option<TextureHandle> {
         if tex1 == 0 && tex2 == 0 {

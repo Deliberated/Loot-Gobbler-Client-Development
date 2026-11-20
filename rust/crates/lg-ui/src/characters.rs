@@ -270,8 +270,9 @@ impl CharactersView {
         side_ui.set_clip_rect(right.intersect(ui.clip_rect()));
         if self.selected == TOTAL {
             self.total_panel(&mut side_ui, c, &alive, since, right);
-        } else {
-            widgets::muted(&mut side_ui, "Details come next.");
+        } else if let Some(ch) = app.characters.get(self.selected) {
+            let ch = ch.clone();
+            self.detail_panel(&mut side_ui, c, &ch, since, right);
         }
     }
 
@@ -543,6 +544,51 @@ impl CharactersView {
         let [w, h] = t.size();
         let (w, h) = ((w as f32 * s).round(), (h as f32 * s).round());
         painter.image(t.id(), Rect::from_min_size(pos2(at.x - w + 1.0, at.y - h + 1.0), vec2(w, h)), uv(), Color32::WHITE);
+    }
+
+    /// One character's boxes (Java `renderPanel`): loadout, inventory, fame gain (the suggested loadout comes next).
+    fn detail_panel(&mut self, ui: &mut Ui, c: &mut Ctx, ch: &Char, since: i64, rect: Rect) {
+        let p = *c.p;
+        let app = c.app;
+        let rarity = self.rarity.clone();
+        egui::ScrollArea::vertical().id_salt("character-detail").show(ui, |ui| {
+            let top = ui.cursor().min;
+            let w = rect.width() - 12.0;
+            let icons = &mut *c.icons;
+            let mut y = top.y;
+            y += widgets::section_box(
+                ui,
+                &p,
+                pos2(top.x, y),
+                w,
+                "Loadout",
+                fixed::GOLD,
+                |_, _| {},
+                |ui, r| crate::detail::loadout(ui, &p, app, icons, ch, r),
+            );
+            y += widgets::section_box(
+                ui,
+                &p,
+                pos2(top.x, y),
+                w,
+                "Inventory",
+                fixed::PURPLE,
+                |_, _| {},
+                |ui, r| crate::detail::inventory(ui, &p, app, icons, &rarity, ch, r),
+            );
+            let marks = visit_marks(app, icons, ui.ctx());
+            y += widgets::section_box(
+                ui,
+                &p,
+                pos2(top.x, y),
+                w,
+                "Fame Gain",
+                fixed::GREEN,
+                |_, _| {},
+                |ui, r| crate::detail::fame(ui, &p, app, icons, ch, since, r, &marks),
+            );
+            ui.allocate_exact_size(vec2(w, y - top.y), Sense::hover());
+        });
     }
 
     /// Everyone's fame gain (Java `renderTotal`): KPIs, the chart, each character's part.

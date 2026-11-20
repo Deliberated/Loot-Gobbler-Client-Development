@@ -76,6 +76,44 @@ fn numeric_child(children: &[JavaNode]) -> f32 {
     1.0
 }
 
+/// An enchantment's name and icon as the Loot Gobbler views show them (Java `EnchantIcons`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnchantLook {
+    pub name: String,
+    /// Sprite sheet and index of its icon.
+    pub texture: Option<(String, i32)>,
+}
+
+/// Java `EnchantIcons.load`: every `Enchantment` by its `type`: its `DisplayId` (else its `id`) and the `File` and
+/// `Index` inside its `Texture`. A number Java cannot read ends the reading, keeping what came before.
+pub fn looks(doc: &str) -> HashMap<i32, EnchantLook> {
+    let mut out = HashMap::new();
+    let Ok(root) = xml::parse(doc) else { return out };
+    let mut all = if root.name == "Enchantment" { vec![&root] } else { Vec::new() };
+    all.extend(root.descendants("Enchantment"));
+    for e in all {
+        let Some(t) = e.attr("type") else { continue };
+        let Some(kind) = crate::decode_int(t.trim()).ok() else { return out };
+        let name = e.descendants("DisplayId").last().map(|d| d.text_content().trim().to_string());
+        let mut sheet = None;
+        let mut index = 0;
+        for tex in e.descendants("Texture") {
+            if let Some(f) = tex.descendants("File").last() {
+                sheet = Some(f.text_content().trim().to_string());
+            }
+            if let Some(i) = tex.descendants("Index").last() {
+                match crate::decode_int(i.text_content().trim()) {
+                    Ok(v) => index = v,
+                    Err(_) => return out,
+                }
+            }
+        }
+        let name = name.or_else(|| e.attr("id").map(str::to_string)).unwrap_or_else(|| "null".into());
+        out.insert(kind, EnchantLook { name, texture: sheet.map(|s| (s, index)) });
+    }
+    out
+}
+
 /// Reads `enchantments.xml` (Java: `ParseEnchants.loadEnchants`). Where Java throws (a `type` element instead of an
 /// attribute) it stops, keeping what came before: the second part tells.
 pub fn parse(doc: &str) -> (HashMap<i16, Enchant>, Option<String>) {

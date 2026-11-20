@@ -80,6 +80,8 @@ pub struct Class {
     pub base_gear: [i32; 4],
     /// The classes using the same weapon type, this one included.
     pub weapon_group: Vec<i32>,
+    /// The item slot types it wears: weapon, ability, armor, ring.
+    pub slot_types: Option<[i32; 4]>,
 }
 
 /// Loot bags by object type, and which of them count as drops (Java: `LootBags`, purple and better).
@@ -121,6 +123,8 @@ pub struct GameData {
     pub classes: Vec<Class>,
     pub abilities: abilities::Abilities,
     pub enchants: HashMap<i16, enchants::Enchant>,
+    /// Enchantment names and icons as the views show them.
+    pub enchant_looks: HashMap<i32, enchants::EnchantLook>,
     pub dungeons: dungeons::Dungeons,
     /// The ST sets (Java: `StSets`).
     pub st_sets: Vec<st_sets::StSet>,
@@ -171,6 +175,7 @@ impl GameData {
         if let Some(s) = read("xml/enchantments.xml") {
             let (e, problem) = enchants::parse(&s);
             d.enchants = e;
+            d.enchant_looks = enchants::looks(&s);
             d.problems.extend(problem);
         }
         d
@@ -372,7 +377,12 @@ fn read_classes(s: &str, classes: &mut Vec<Class>) -> Result<(), String> {
             *gear = decode_int(items.get(i).ok_or("too few starting items")?.trim())?;
         }
         weapon_groups.entry(base_gear[0]).or_default().push(id);
-        classes.push(Class { id, name, max_stats, base_gear, weapon_group: Vec::new() });
+        // the slot types of weapon, ability, armor, ring (Java `ClassSlots`: the first four of SlotTypes)
+        let slot_types = object.child("SlotTypes").map(|e| e.text()).and_then(|t| {
+            let parts: Vec<i32> = t.split(',').take(4).filter_map(|x| x.trim().parse().ok()).collect();
+            <[i32; 4]>::try_from(parts).ok()
+        });
+        classes.push(Class { id, name, max_stats, base_gear, weapon_group: Vec::new(), slot_types });
     }
     for c in classes.iter_mut() {
         c.weapon_group = weapon_groups[&c.base_gear[0]].clone();

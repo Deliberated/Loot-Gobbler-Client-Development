@@ -289,3 +289,56 @@ pub fn kpi(ui: &mut Ui, p: &Palette, r: Rect, caption_text: &str, value: &str) {
 pub fn kpi_height(painter: &egui::Painter) -> f32 {
     jtext::height(painter, &small()) + jtext::height(painter, &text(24.0)) + 10.0
 }
+
+/// A [`section`] as tall as its content (Java `CharactersView.box`: the content inside a 10 px border, 8 px below the
+/// box): `body` draws from the given top left within the width and gives back how tall it was. Gives the box's
+/// height with the gap.
+pub fn section_box(
+    ui: &mut Ui,
+    p: &Palette,
+    at: egui::Pos2,
+    w: f32,
+    title: &str,
+    accent: Color32,
+    actions: impl FnOnce(&mut Ui, Rect),
+    body: impl FnOnce(&mut Ui, Rect) -> f32,
+) -> f32 {
+    let painter = ui.painter().clone();
+    let bg = painter.add(Shape::Noop);
+    let font = theme::head(17.0);
+    let head_h = jtext::height(&painter, &font) + 12.0;
+    let head = Rect::from_min_size(at + vec2(1.0, 1.0), vec2(w - 2.0, head_h));
+    let sq = Rect::from_min_size(pos2(head.left() + 10.0, head.center().y - 4.0), vec2(8.0, 8.0));
+    painter.rect_filled(sq, 0.0, accent);
+    jtext::draw(&painter, pos2(sq.right() + 8.0, head.center().y), Align2::LEFT_CENTER, &title.to_uppercase(), &font, p.ink_soft);
+    let mut a = ui.new_child(egui::UiBuilder::new().max_rect(head));
+    actions(&mut a, Rect::from_min_max(pos2(head.left(), head.top() + 2.0), pos2(head.right() - 4.0, head.bottom() - 2.0)));
+    let inner = Rect::from_min_size(pos2(at.x + 11.0, head.bottom() + 1.0 + 10.0), vec2(w - 22.0, f32::INFINITY));
+    let mut b = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::top_down(egui::Align::Min)));
+    b.spacing_mut().item_spacing = vec2(0.0, 0.0);
+    let content = body(&mut b, inner);
+    let h = 1.0 + head_h + 1.0 + 10.0 + content + 10.0 + 1.0;
+    let rect = Rect::from_min_size(at, vec2(w, h));
+    painter.set(
+        bg,
+        Shape::Vec(vec![
+            Shape::rect_filled(rect, 0.0, p.paper),
+            Shape::rect_filled(head, 0.0, p.header),
+            Shape::rect_filled(Rect::from_min_size(pos2(rect.left(), head.bottom()), vec2(w, 1.0)), 0.0, p.line),
+        ]),
+    );
+    painter.rect_stroke(rect, 0.0, Stroke::new(1.0, p.line), StrokeKind::Inside);
+    h + 8.0
+}
+
+/// Text cut to fit a width, ending in "..." (Java's label when it gets less room than it needs).
+pub fn fit(painter: &egui::Painter, t: &str, font: &FontId, w: f32) -> String {
+    if jtext::width(painter, t, font) <= w {
+        return t.to_string();
+    }
+    let mut s: String = t.to_string();
+    while !s.is_empty() && jtext::width(painter, &format!("{s}..."), font) > w {
+        s.pop();
+    }
+    format!("{}...", s.trim_end())
+}

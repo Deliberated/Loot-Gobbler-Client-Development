@@ -5,6 +5,7 @@
 
 pub mod characters;
 pub mod charts;
+pub mod detail;
 pub mod icons;
 pub mod jtext;
 pub mod profile;

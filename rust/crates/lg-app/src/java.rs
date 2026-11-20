@@ -147,3 +147,64 @@ mod tests {
         assert_eq!(property(props, "none"), None);
     }
 }
+
+/// `java.util.Random`: the same numbers from the same seed.
+#[derive(Debug, Clone)]
+pub struct JavaRandom {
+    seed: i64,
+}
+
+impl JavaRandom {
+    const MULT: i64 = 0x5_DEEC_E66D;
+    const MASK: i64 = (1 << 48) - 1;
+
+    pub fn new(seed: i64) -> JavaRandom {
+        JavaRandom { seed: (seed ^ Self::MULT) & Self::MASK }
+    }
+
+    fn next(&mut self, bits: u32) -> i32 {
+        self.seed = (self.seed.wrapping_mul(Self::MULT).wrapping_add(0xB)) & Self::MASK;
+        (self.seed >> (48 - bits)) as i32
+    }
+
+    /// `nextInt(bound)`.
+    pub fn next_int(&mut self, bound: i32) -> i32 {
+        let mut r = self.next(31);
+        let m = bound - 1;
+        if bound & m == 0 {
+            return ((i64::from(bound) * i64::from(r)) >> 31) as i32;
+        }
+        let mut u = r;
+        loop {
+            r = u % bound;
+            if u.wrapping_sub(r).wrapping_add(m) >= 0 {
+                return r;
+            }
+            u = self.next(31);
+        }
+    }
+}
+
+/// `Collections.shuffle(list, random)`.
+pub fn shuffle<T>(v: &mut [T], rnd: &mut JavaRandom) {
+    for i in (2..=v.len()).rev() {
+        let j = rnd.next_int(i as i32) as usize;
+        v.swap(i - 1, j);
+    }
+}
+
+#[cfg(test)]
+mod random_tests {
+    use super::*;
+
+    /// Numbers Java 25 gives: new Random(42).nextInt(10) x5, and Collections.shuffle of 0..9 with new Random(504).
+    #[test]
+    fn as_java() {
+        let mut r = JavaRandom::new(42);
+        let got: Vec<i32> = (0..5).map(|_| r.next_int(10)).collect();
+        assert_eq!(got, [0, 3, 8, 4, 0]);
+        let mut v: Vec<i32> = (0..10).collect();
+        shuffle(&mut v, &mut JavaRandom::new(504));
+        assert_eq!(v, [1, 8, 9, 4, 3, 2, 6, 0, 5, 7]);
+    }
+}
