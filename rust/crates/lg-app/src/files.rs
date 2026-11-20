@@ -118,7 +118,9 @@ impl App {
             write("collection.json", gson_out::pretty(&collection(&self.collection)))?;
         }
         if std::mem::take(&mut self.holdings.dirty) {
-            write("holdings.json", holdings(&mut self.holdings))?;
+            // as it was at the last save
+            let text = self.holdings.saved.take().unwrap_or_else(|| holdings_json(&self.holdings));
+            write("holdings.json", text)?;
         }
         self.append_journal(dir)?;
         if std::mem::take(&mut self.profile.dirty) {
@@ -424,7 +426,7 @@ fn slot(s: &crate::holdings::Slot) -> String {
     Obj::new().int("item", s.item).raw("enchantIds", s.enchant_ids.as_deref().map(ints)).end()
 }
 
-fn holdings(h: &mut crate::holdings::Holdings) -> String {
+pub(crate) fn holdings_json(h: &crate::holdings::Holdings) -> String {
     let places = gson_out::map(h.java_place_order().into_iter().map(|k| {
         let p = &h.places[&k];
         let sections = gson_out::map(p.sections.iter().map(|(n, s)| (n.clone(), Some(array(s.iter().map(slot))))));

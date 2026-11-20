@@ -101,6 +101,25 @@ public final class ClockAgent {
         if (!INLINED.get()) Thread.sleep(ms);
     }
 
+    // --- sound: a silent clip, so every machine behaves as one with a sound device (CI has none: there Tomato's
+    // Sound class could not load, and every packet touching it would throw), and nothing is heard -------------------
+
+    public static javax.sound.sampled.Clip clip() {
+        return (javax.sound.sampled.Clip) java.lang.reflect.Proxy.newProxyInstance(ClockAgent.class.getClassLoader(),
+                new Class<?>[]{javax.sound.sampled.Clip.class}, (proxy, m, args) -> {
+                    Class<?> r = m.getReturnType();
+                    if (m.getName().equals("toString")) return "silent clip";
+                    if (m.getName().equals("hashCode")) return System.identityHashCode(proxy);
+                    if (m.getName().equals("equals")) return proxy == args[0];
+                    if (r == boolean.class) return false;
+                    if (r == int.class) return 0;
+                    if (r == long.class) return 0L;
+                    if (r == float.class) return 0f;
+                    if (r == double.class) return 0d;
+                    return null;
+                });
+    }
+
     private static final ClassDesc SELF = ClassDesc.of("oracle.ClockAgent");
 
     /** owner.name()descriptor -> the replacement here. */
@@ -147,6 +166,11 @@ public final class ClockAgent {
                 if (owner.equals("java/lang/Thread") && m.equals("start") && d.equals("()V")
                         && i.opcode() == java.lang.classfile.Opcode.INVOKEVIRTUAL) {
                     b.invokestatic(SELF, "start", MethodTypeDesc.ofDescriptor("(Ljava/lang/Thread;)V"));
+                    return;
+                }
+                if (owner.equals("javax/sound/sampled/AudioSystem") && m.equals("getClip") && d.equals("()Ljavax/sound/sampled/Clip;")
+                        && i.opcode() == java.lang.classfile.Opcode.INVOKESTATIC) {
+                    b.invokestatic(SELF, "clip", MethodTypeDesc.ofDescriptor(d));
                     return;
                 }
                 if (owner.equals("java/lang/Thread") && m.equals("sleep") && d.equals("(J)V")

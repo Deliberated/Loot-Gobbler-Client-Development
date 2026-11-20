@@ -150,6 +150,8 @@ pub struct Holdings {
     /// The places gone in the order put (Java's `HashMap` order), and the journal lines already in the file.
     pub(crate) gone_keys: Vec<String>,
     pub(crate) journal_written: usize,
+    /// The file's text at the last save, until written.
+    pub(crate) saved: Option<String>,
 }
 
 /// What the character list says a character holds (Java: `Holdings.Listed`).
@@ -265,7 +267,7 @@ impl Holdings {
         }
         let n = self.places.len();
         self.line(c, "start", &format!("seeded {n} places from saved data (until the game shows them)"));
-        self.dirty = true;
+        self.save();
         if self.known() {
             self.retire(c);
         }
@@ -341,7 +343,7 @@ impl Holdings {
             }
         }
         if changed {
-            self.dirty = true;
+            self.save();
         }
     }
 
@@ -559,7 +561,7 @@ impl Holdings {
             self.line(c, &key, &l);
         }
         if changed {
-            self.dirty = true;
+            self.save();
         }
     }
 
@@ -613,7 +615,7 @@ impl Holdings {
             self.line(c, &key, &format!("seen in the vault, page {page}: {l}"));
         }
         if changed {
-            self.dirty = true;
+            self.save();
         }
     }
 
@@ -654,7 +656,14 @@ impl Holdings {
         self.places.insert(key.to_string(), now);
         self.track(key);
         self.line(c, key, &format!("{why}: {total} copies ({change}){tail}"));
+        self.save();
+    }
+
+    /// Java `save()`: the file's text as it is now (written by the app after the packet; later changes in memory
+    /// wait for the next save, as in Java).
+    pub(crate) fn save(&mut self) {
         self.dirty = true;
+        self.saved = Some(crate::files::holdings_json(self));
     }
 
     /// A place put (Java: `state.places.put`): a new key goes to the end of Java's order.
@@ -731,7 +740,7 @@ impl Holdings {
             changed = true;
         }
         if changed {
-            self.dirty = true;
+            self.save();
         }
     }
 
