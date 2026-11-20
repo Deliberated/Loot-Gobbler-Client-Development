@@ -362,6 +362,12 @@ pub struct Items {
 struct Stop;
 
 impl Items {
+    /// An item with just an id and a name, for tests.
+    #[cfg(test)]
+    pub(crate) fn insert_for_test(&mut self, id: i32, name: &str) {
+        self.items.insert(id, Item { name: name.into(), ..Item::new(id) });
+    }
+
     pub fn item(&self, id: i32) -> Option<&Item> {
         self.items.get(&id)
     }

@@ -128,6 +128,8 @@ pub struct GameData {
     pub dungeons: dungeons::Dungeons,
     /// The ST sets (Java: `StSets`).
     pub st_sets: Vec<st_sets::StSet>,
+    /// The pieces the forge makes from set tokens.
+    pub set_tokens: HashMap<i32, st_sets::TokenCost>,
     /// Dye and cloth item type -> texture code (Java: `Dyes`).
     pub dyes: HashMap<i32, i32>,
     /// The items as Loot Gobbler knows them (Java: `ItemDb`).
@@ -168,6 +170,9 @@ impl GameData {
         d.problems.extend(problems);
         if let Some(s) = read("xml/equipmentsets.xml") {
             d.st_sets = st_sets::load(&s, &d.items);
+        }
+        if let Some(s) = read("xml/forgeProperties.xml") {
+            d.set_tokens = st_sets::set_tokens(&s, &d.items);
         }
         let (dungeons, problems) = dungeons::Dungeons::load(&assets.join("xml"));
         d.dungeons = dungeons;

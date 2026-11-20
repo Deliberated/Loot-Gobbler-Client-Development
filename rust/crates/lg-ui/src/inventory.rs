@@ -27,6 +27,47 @@ pub struct InventoryView {
     pub search: String,
     /// The game mode character whose finds are shown (0: everything).
     pub upe_char: i32,
+    pub st_filter: usize,
+    pub st_class: Option<String>,
+}
+
+/// What you hold and how much, as the Items page counts it (Java `collected`, `held`, `bestEnchants`).
+struct Owned {
+    /// The collectible items you hold, in the collection's order.
+    items: Vec<i32>,
+    set: std::collections::HashSet<i32>,
+    best: HashMap<i32, i32>,
+}
+
+fn owned(app: &lg_app::App, upe_char: i32) -> Owned {
+    let data = app.world.data();
+    if upe_char != 0 {
+        let g = gathered(app, upe_char);
+        let items: Vec<i32> = g.keys().copied().collect();
+        return Owned { set: items.iter().copied().collect(), items, best: g.iter().map(|(k, v)| (*k, v.1)).collect() };
+    }
+    let living = lg_app::loadout::living(app);
+    let time = app.zone.local_date_time(app.world.now());
+    let hctx = lg_app::holdings::Ctx { data, now: app.world.now(), time: &time };
+    let known = app.holdings.known();
+    let (counts, best) = if known { app.holdings.counts_and_best(&hctx, &living) } else { (HashMap::new(), HashMap::new()) };
+    let mut best_of = HashMap::new();
+    let mut items = Vec::new();
+    for (id, e) in app.collection.all() {
+        let n = if known { counts.get(&id).copied().unwrap_or(0) } else { e.held() };
+        if n == 0 || !data.items.collectible.contains(&id) {
+            continue;
+        }
+        items.push(id);
+        best_of.insert(
+            id,
+            match best.get(&id) {
+                Some(b) if known && *b >= 0 => *b,
+                _ => e.max_enchants(),
+            },
+        );
+    }
+    Owned { set: items.iter().copied().collect(), items, best: best_of }
 }
 
 /// A button as FlatLaf draws it: header colour, black frame, the text in the button font (danger: red).
@@ -69,11 +110,11 @@ impl InventoryView {
             let w = self.upe_column(ui, c, body);
             body = Rect::from_min_max(pos2(body.left() + w, body.top()), body.max);
         }
-        if self.page != 0 {
-            jtext::draw(&painter, body.min + vec2(8.0, 8.0), Align2::LEFT_TOP, "Coming soon.", &text(18.0), fixed::MUTED);
-            return;
+        match self.page {
+            1 => self.st_sets(ui, c, rarity, body),
+            2 => self.log(ui, c, body),
+            _ => self.items(ui, c, rarity, body),
         }
-        self.items(ui, c, rarity, body);
     }
 
     /// The column picking whose finds are shown: all, then per game mode its characters (Java `renderUpeColumn`).
@@ -410,6 +451,379 @@ impl InventoryView {
                         p.ink,
                     );
                     y += rh + 4.0;
+                }
+            },
+        );
+    }
+}
+
+impl InventoryView {
+    /// The Log page: every item you hold, newest find first: when first found, what, how many (Java `logView`).
+    fn log(&mut self, ui: &mut Ui, c: &mut Ctx, body: Rect) {
+        let p = *c.p;
+        let app = c.app;
+        let data = app.world.data();
+        let o = owned(app, self.upe_char);
+        let mut rows: Vec<(i32, String, String, i32)> = o
+            .items
+            .iter()
+            .filter_map(|id| {
+                app.collection.entry(*id).map(|e| {
+                    (
+                        *id,
+                        e.last.clone().unwrap_or_else(|| "null".into()),
+                        e.first.as_deref().map_or(String::new(), |f| f[..f.len().min(10)].to_string()),
+                        e.count,
+                    )
+                })
+            })
+            .collect();
+        rows.sort_by(|a, b| b.1.cmp(&a.1));
+        let icons = &mut *c.icons;
+        widgets::section(
+            ui,
+            &p,
+            body,
+            "Collection · Log",
+            fixed::GOLD,
+            |_, _| {},
+            |ui, r| {
+                let painter = ui.painter().clone();
+                let f = text(18.0);
+                // the table header, then the rows (36 px, every second one in the header colour)
+                let hh = jtext::height(&painter, &small()) + 8.0;
+                let head = Rect::from_min_size(r.min, vec2(r.width(), hh));
+                painter.rect_filled(head, 0.0, p.header);
+                painter.rect_filled(Rect::from_min_size(pos2(head.left(), head.bottom() - 1.0), vec2(head.width(), 1.0)), 0.0, p.line);
+                let w = r.width() - 12.0;
+                let cols = [(0.0, 120.0, "Date"), (120.0, 44.0, ""), (164.0, w - 164.0 - 80.0, "Item"), (w - 80.0, 80.0, "Count")];
+                for (x, cw, t) in cols {
+                    jtext::draw(&painter, pos2(r.left() + x + 10.0, head.center().y), Align2::LEFT_CENTER, t, &small(), p.ink_soft);
+                    if x > 0.0 {
+                        painter.rect_filled(Rect::from_min_size(pos2(r.left() + x, head.top() + 4.0), vec2(1.0, hh - 8.0)), 0.0, p.line);
+                    }
+                    let _ = cw;
+                }
+                let rr = Rect::from_min_max(pos2(r.left(), head.bottom()), r.max);
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rr));
+                child.set_clip_rect(rr.intersect(ui.clip_rect()));
+                egui::ScrollArea::vertical().id_salt("collection-log").show(&mut child, |ui| {
+                    let top = ui.cursor().min;
+                    let painter = ui.painter().clone();
+                    for (i, (id, _, first, count)) in rows.iter().enumerate() {
+                        let y = top.y + i as f32 * 36.0;
+                        let row = Rect::from_min_size(pos2(top.x, y), vec2(w, 36.0));
+                        painter.rect_filled(row, 0.0, if i % 2 == 1 { p.header } else { p.paper });
+                        jtext::draw(&painter, pos2(row.left() + 10.0, row.center().y), Align2::LEFT_CENTER, first, &f, p.ink);
+                        if let Some(t) = icons.object(ui.ctx(), data, *id, ICON as u32) {
+                            painter.image(
+                                t.id(),
+                                Rect::from_min_size(pos2(row.left() + 120.0 + 10.0, row.center().y - ICON / 2.0), vec2(ICON, ICON)),
+                                uv(),
+                                Color32::WHITE,
+                            );
+                        }
+                        let name = data.items.item(*id).map_or(format!("Item {id}"), |it| it.name.clone());
+                        jtext::draw(&painter, pos2(row.left() + 164.0 + 10.0, row.center().y), Align2::LEFT_CENTER, &name, &f, p.ink);
+                        jtext::draw(
+                            &painter,
+                            pos2(row.right() - 10.0, row.center().y),
+                            Align2::RIGHT_CENTER,
+                            &format!("x{count}"),
+                            &f,
+                            fixed::GOLD,
+                        );
+                    }
+                    // the table fills the view (Java `setFillsViewportHeight`)
+                    let h = (rows.len() as f32 * 36.0).max(rr.height());
+                    painter.rect_filled(
+                        Rect::from_min_max(pos2(top.x, top.y + rows.len() as f32 * 36.0), pos2(top.x + w, top.y + h)),
+                        0.0,
+                        p.paper,
+                    );
+                    ui.allocate_exact_size(vec2(w, rows.len() as f32 * 36.0), Sense::hover());
+                });
+            },
+        );
+    }
+
+    /// The ST Sets page (Java `StSetsView`): a card per set with its four pieces, beside the progress, the sets one
+    /// piece away and the sets per class.
+    fn st_sets(&mut self, ui: &mut Ui, c: &mut Ctx, rarity: &Rarity, body: Rect) {
+        const CARD_MIN_WIDTH: f32 = 330.0;
+        const GAP: f32 = 8.0;
+        const TILE: f32 = 44.0;
+        let p = *c.p;
+        let app = c.app;
+        let data = app.world.data();
+        let o = owned(app, self.upe_char);
+        let has = |id: i32| o.set.contains(&id);
+        let sets = &data.st_sets;
+        let n_of = |s: &lg_gamedata::st_sets::StSet| s.owned(&has);
+        let token_of =
+            |s: &lg_gamedata::st_sets::StSet| s.pieces.iter().find_map(|id| data.set_tokens.get(id).map(|t| t.token)).unwrap_or(0);
+        let mut shown: Vec<&lg_gamedata::st_sets::StSet> = sets
+            .iter()
+            .filter(|s| {
+                let n = n_of(s);
+                let ok = match self.st_filter {
+                    1 => n == 4,
+                    2 => n < 4,
+                    3 => token_of(s) != 0,
+                    _ => true,
+                };
+                ok && self.st_class.as_ref().is_none_or(|k| *k == s.class_name)
+            })
+            .collect();
+        shown.sort_by(|a, b| n_of(b).cmp(&n_of(a)).then(a.title.cmp(&b.title)));
+        // the split: the side 280 px, the cards snapped down to whole columns
+        let overhead = 2.0 + 12.0;
+        let main_w = body.width() - 280.0 - 8.0;
+        let cols = (((main_w - overhead - 20.0 + GAP) / (CARD_MIN_WIDTH + GAP)).floor()).max(1.0);
+        let main = Rect::from_min_size(body.min, vec2(overhead + cols * (CARD_MIN_WIDTH + GAP) - GAP + 20.0, body.height()));
+        let side = Rect::from_min_max(pos2(main.right() + 8.0, body.top()), body.max);
+        let filters = ["All", "Complete", "In progress", "Tokens"];
+        let mut filter = self.st_filter;
+        let icons = &mut *c.icons;
+        widgets::section(
+            ui,
+            &p,
+            main,
+            "Collection · ST Sets",
+            fixed::GOLD,
+            |ui, head| {
+                let painter = ui.painter().clone();
+                let h = head.height();
+                let fw = widgets::segmented_width(&painter, &filters, true);
+                let fx = head.right() - fw;
+                if let Some(i) = widgets::segmented(ui, &p, pos2(fx, head.top()), h, &filters, filter, true, &[]) {
+                    filter = i;
+                }
+                // the class box (a drop-down in the window)
+                let cr = Rect::from_min_size(pos2(fx - 4.0 - 140.0, head.top() + 3.0), vec2(140.0, h - 6.0));
+                painter.rect(cr, 0.0, p.paper, Stroke::new(1.0, p.line), StrokeKind::Inside);
+                jtext::draw(&painter, pos2(cr.left() + 8.0, cr.center().y), Align2::LEFT_CENTER, "All classes", &text(18.0), p.ink);
+                let (ax, ay) = (cr.right() - 14.0, cr.center().y);
+                painter.line_segment([pos2(ax - 4.0, ay - 2.0), pos2(ax, ay + 2.0)], Stroke::new(1.5, p.ink));
+                painter.line_segment([pos2(ax + 4.0, ay - 2.0), pos2(ax, ay + 2.0)], Stroke::new(1.5, p.ink));
+            },
+            |ui, r| {
+                egui::ScrollArea::vertical().id_salt("st-sets").show(ui, |ui| {
+                    let top = ui.cursor().min;
+                    let painter = ui.painter().clone();
+                    let cw = ((r.width() - 12.0 - 20.0 - (cols - 1.0) * GAP) / cols).floor();
+                    let lh = jtext::height(&painter, &text(18.0));
+                    let ch = 6.0 + 72.0 + 2.0 + lh + 2.0 + 6.0;
+                    if shown.is_empty() {
+                        jtext::draw(
+                            &painter,
+                            top + vec2(10.0, 10.0),
+                            Align2::LEFT_TOP,
+                            if sets.is_empty() { "Loading sets..." } else { "No sets match." },
+                            &text(18.0),
+                            fixed::MUTED,
+                        );
+                    }
+                    for (i, s) in shown.iter().enumerate() {
+                        let (col, row) = (i as f32 % cols, (i as f32 / cols).floor());
+                        let cr = Rect::from_min_size(pos2(top.x + 10.0 + col * (cw + GAP), top.y + 10.0 + row * (ch + GAP)), vec2(cw, ch));
+                        let n = n_of(s);
+                        let done = n == 4;
+                        painter.rect_filled(cr, 0.0, if done { mix(p.gold, p.paper, 0.45) } else { p.header });
+                        painter.rect_stroke(
+                            cr,
+                            0.0,
+                            Stroke::new(if done { 2.0 } else { 1.0 }, if done { p.gold } else { Color32::BLACK }),
+                            StrokeKind::Inside,
+                        );
+                        if s.skin != 0
+                            && let Some(t) = icons.object(ui.ctx(), data, s.skin, 64)
+                        {
+                            painter.image(
+                                t.id(),
+                                Rect::from_center_size(pos2(cr.left() + 6.0 + 36.0, cr.top() + 6.0 + 36.0), vec2(64.0, 64.0)),
+                                uv(),
+                                Color32::WHITE,
+                            );
+                        }
+                        // the four pieces beside the skin
+                        let tx = cr.left() + 6.0 + 72.0 + 10.0;
+                        let ty = cr.top() + 6.0 + (72.0 - TILE) / 2.0;
+                        for (k, id) in s.pieces.iter().enumerate() {
+                            let tr = Rect::from_min_size(pos2(tx + k as f32 * (TILE + 6.0), ty), vec2(TILE, TILE));
+                            let have = has(*id);
+                            painter.rect_filled(
+                                tr,
+                                0.0,
+                                if have { mix(p.gold, Color32::from_rgb(0xFF, 0xF6, 0xC0), 0.7) } else { Color32::from_rgb(5, 5, 5) },
+                            );
+                            if let Some(t) = icons.object(ui.ctx(), data, *id, (TILE - 10.0) as u32) {
+                                painter.image(
+                                    t.id(),
+                                    Rect::from_center_size(tr.center(), vec2(TILE - 10.0, TILE - 10.0)),
+                                    uv(),
+                                    if have { Color32::WHITE } else { Color32::from_white_alpha(64) },
+                                );
+                            }
+                            if have && app.collection.entry(*id).is_some() {
+                                enchant_badge(
+                                    &painter,
+                                    rarity,
+                                    pos2(tr.right() - 3.0, tr.bottom() - 3.0),
+                                    o.best.get(id).copied().unwrap_or(0).max(0) as usize,
+                                    5.0,
+                                );
+                            }
+                            painter.rect_stroke(tr, 0.0, Stroke::new(1.0, Color32::BLACK), StrokeKind::Inside);
+                        }
+                        let token = token_of(s);
+                        if token != 0
+                            && let Some(t) = icons.object(ui.ctx(), data, token, 30)
+                        {
+                            painter.image(
+                                t.id(),
+                                Rect::from_min_size(pos2(cr.right() - 30.0 - 10.0, cr.top() + 8.0), vec2(30.0, 30.0)),
+                                uv(),
+                                Color32::WHITE,
+                            );
+                        }
+                        // along the bottom: the name (underlined, smaller to fit), the class and count
+                        let by = cr.bottom() - 6.0 - lh / 2.0 - 1.0;
+                        let cls = format!("{}{}", s.class_name, if done { String::new() } else { format!("   {n} / 4") });
+                        let cls_w = 8.0 + 6.0 + jtext::width(&painter, &cls, &text(18.0));
+                        let cx = cr.right() - 10.0 - cls_w;
+                        painter.rect_filled(
+                            Rect::from_min_size(pos2(cx, by - 4.0), vec2(8.0, 8.0)),
+                            0.0,
+                            crate::classes::class_color(&s.class_name),
+                        );
+                        jtext::draw(&painter, pos2(cx + 14.0, by), Align2::LEFT_CENTER, &cls, &text(18.0), p.ink);
+                        let room = cx - 10.0 - (cr.left() + 6.0);
+                        let mut size = 18.0;
+                        while jtext::width(&painter, &s.title, &text(size)) > room && size > 12.0 {
+                            size -= 1.0;
+                        }
+                        let t = widgets::fit(&painter, &s.title, &text(size), room);
+                        let tr = jtext::draw(&painter, pos2(cr.left() + 6.0, by), Align2::LEFT_CENTER, &t, &text(size), p.ink);
+                        painter.rect_filled(Rect::from_min_size(pos2(tr.left(), tr.bottom() - 1.0), vec2(tr.width(), 1.0)), 0.0, p.ink);
+                    }
+                    let rows = (shown.len() as f32 / cols).ceil();
+                    ui.allocate_exact_size(vec2(r.width() - 12.0, 20.0 + rows * (ch + GAP)), Sense::hover());
+                });
+            },
+        );
+        self.st_filter = filter;
+
+        // the side: set progress, almost complete, by class
+        let painter = ui.painter().clone();
+        let lh = jtext::height(&painter, &text(18.0));
+        let sh = jtext::height(&painter, &small());
+        let head = widgets::section_head_height(&painter);
+        let complete = sets.iter().filter(|s| n_of(s) == 4).count();
+        let pieces: usize = sets.iter().map(&n_of).sum();
+        let prog = Rect::from_min_size(side.min, vec2(side.width(), head + 2.0 + 20.0 + 2.0 * (sh + 10.0 + lh) + 6.0));
+        widgets::section(
+            ui,
+            &p,
+            prog,
+            "Set Progress",
+            fixed::GREEN,
+            |_, _| {},
+            |ui, r| {
+                let painter = ui.painter();
+                let (x, w) = (r.left() + 10.0, r.width() - 20.0);
+                let mut y = r.top() + 10.0;
+                for (k, (cap, have, total, color)) in
+                    [("SETS COMPLETE", complete, sets.len(), p.gold), ("PIECES COLLECTED", pieces, sets.len() * 4, fixed::GREEN)]
+                        .iter()
+                        .enumerate()
+                {
+                    if k > 0 {
+                        y += 6.0;
+                    }
+                    let t = jtext::draw(painter, pos2(x, y), Align2::LEFT_TOP, cap, &small(), p.ink_muted);
+                    y = t.bottom();
+                    let pct = if *total == 0 { 0.0 } else { 100.0 * *have as f64 / *total as f64 };
+                    painter.rect_filled(Rect::from_min_size(pos2(x, y), vec2(w, 10.0)), 0.0, p.line);
+                    painter.rect_filled(Rect::from_min_size(pos2(x, y), vec2((w * pct as f32 / 100.0).round(), 10.0)), 0.0, *color);
+                    y += 10.0;
+                    let t =
+                        jtext::draw(painter, pos2(x, y), Align2::LEFT_TOP, &format!("{have} / {total}   {pct:.1}%"), &text(18.0), p.ink);
+                    y = t.bottom();
+                }
+            },
+        );
+        let mut close: Vec<&lg_gamedata::st_sets::StSet> = sets.iter().filter(|s| n_of(s) == 3).collect();
+        close.sort_by(|a, b| a.title.cmp(&b.title));
+        close.truncate(8);
+        let row_h = lh.max(22.0);
+        let almost_h = if close.is_empty() { lh } else { close.len() as f32 * row_h };
+        let almost = Rect::from_min_size(pos2(side.left(), prog.bottom() + 8.0), vec2(side.width(), head + 2.0 + 16.0 + almost_h));
+        let icons = &mut *c.icons;
+        widgets::section(
+            ui,
+            &p,
+            almost,
+            "Almost Complete",
+            fixed::BLUE,
+            |_, _| {},
+            |ui, r| {
+                let painter = ui.painter().clone();
+                let (x, mut y) = (r.left() + 10.0, r.top() + 8.0);
+                if close.is_empty() {
+                    jtext::draw(&painter, pos2(x, y), Align2::LEFT_TOP, "No set is one piece away.", &text(18.0), fixed::MUTED);
+                }
+                for s in &close {
+                    let missing = s.pieces.iter().copied().find(|id| !has(*id)).unwrap_or(0);
+                    if let Some(t) = icons.object(ui.ctx(), data, missing, ICON as u32) {
+                        painter.image(
+                            t.id(),
+                            Rect::from_min_size(pos2(x, y + (row_h - 22.0) / 2.0), vec2(22.0, 22.0)),
+                            uv(),
+                            Color32::WHITE,
+                        );
+                    }
+                    jtext::draw(&painter, pos2(x + 30.0, y + row_h / 2.0), Align2::LEFT_CENTER, &s.title, &text(18.0), p.ink);
+                    y += row_h;
+                }
+            },
+        );
+        let by_class = Rect::from_min_max(pos2(side.left(), almost.bottom() + 8.0), side.max);
+        widgets::section(
+            ui,
+            &p,
+            by_class,
+            "By Class",
+            fixed::PURPLE,
+            |_, _| {},
+            |ui, r| {
+                let painter = ui.painter();
+                let mut per: std::collections::BTreeMap<&str, (usize, usize)> = std::collections::BTreeMap::new();
+                for s in sets {
+                    let v = per.entry(s.class_name.as_str()).or_default();
+                    v.1 += 1;
+                    if n_of(s) == 4 {
+                        v.0 += 1;
+                    }
+                }
+                let (x, w) = (r.left() + 10.0, r.width() - 20.0 - 12.0);
+                let mut y = r.top() + 8.0;
+                for (cls, (done, total)) in per {
+                    painter.rect_filled(
+                        Rect::from_min_size(pos2(x, y + lh / 2.0 - 4.0), vec2(8.0, 8.0)),
+                        0.0,
+                        crate::classes::class_color(cls),
+                    );
+                    jtext::draw(painter, pos2(x + 16.0, y + lh / 2.0), Align2::LEFT_CENTER, cls, &text(18.0), p.ink);
+                    jtext::draw(painter, pos2(x + w, y + lh / 2.0), Align2::RIGHT_CENTER, &format!("{done} / {total}"), &text(18.0), p.ink);
+                    y += lh + 2.0;
+                    painter.rect_filled(Rect::from_min_size(pos2(x, y), vec2(w, 5.0)), 0.0, p.line);
+                    painter.rect_filled(
+                        Rect::from_min_size(pos2(x, y), vec2(if total == 0 { 0.0 } else { w * done as f32 / total as f32 }, 5.0)),
+                        0.0,
+                        p.gold,
+                    );
+                    y += 5.0 + 5.0;
                 }
             },
         );

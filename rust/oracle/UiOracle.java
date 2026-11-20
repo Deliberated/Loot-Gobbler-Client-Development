@@ -43,6 +43,16 @@ public class UiOracle {
             String arg = name.contains(":") ? name.substring(name.indexOf(':') + 1) : null;
             SwingUtilities.invokeAndWait(() -> {
                 tabs.show(tab);
+                if (arg != null && tab.equals("Inventory")) {
+                    try {
+                        Object cp = find(main, lootgobbler.ui.CollectionPanel.class);
+                        Object picker = field(cp, "viewPicker");
+                        picker.getClass().getMethod("select", int.class).invoke(picker, arg.equals("st") ? 1 : 2);
+                        ((CardLayout) field(cp, "cards")).show((Container) field(cp, "views"), arg);
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                }
                 if (arg != null && tab.equals("Characters")) {
                     lootgobbler.ui.CharactersView cv = find(main, lootgobbler.ui.CharactersView.class);
                     if (arg.equals("classes")) cv.showClass(-1);

@@ -154,3 +154,71 @@ pub fn load(doc: &str, items: &Items) -> Vec<StSet> {
     }
     out
 }
+
+/// What crafting a piece from a set token costs (Java `SetTokens.Cost`): the token, how many, and the slot of the
+/// ST item that goes in with them ("Weapon"...), if one does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TokenCost {
+    pub token: i32,
+    pub amount: i32,
+    pub st_slot: Option<String>,
+}
+
+/// Java `SetTokens.load`: from `forgeProperties.xml`, the pieces the forge makes from a set token.
+pub fn set_tokens(doc: &str, items: &Items) -> std::collections::HashMap<i32, TokenCost> {
+    let mut out = std::collections::HashMap::new();
+    let mut rest = doc;
+    const OPEN: &str = "<ForgeProperties type=\"";
+    while let Some(i) = rest.find(OPEN) {
+        rest = &rest[i + OPEN.len()..];
+        let Some(q) = rest.find('"') else { break };
+        let kind = &rest[..q];
+        let Some(gt) = rest.find('>') else { break };
+        let Some(end) = rest.find("</ForgeProperties>") else { break };
+        if gt > end || !kind.starts_with("0x") {
+            continue;
+        }
+        let body = &rest[gt + 1..end];
+        rest = &rest[end..];
+        let Some(piece) = crate::decode_int_pub(kind) else { continue };
+        // the first required item: quantity and id
+        const REQUIRED: &str = "<RequiredItem quantity=\"";
+        let Some(r) = body.find(REQUIRED) else { continue };
+        let after = &body[r + REQUIRED.len()..];
+        let Some(q2) = after.find("\">") else { continue };
+        let Ok(amount) = after[..q2].parse::<i32>() else { continue };
+        let Some(close) = after.find("</RequiredItem>") else { continue };
+        let Some(token) = crate::decode_int_pub(&after[q2 + 2..close]) else { continue };
+        if !items.item(token).is_some_and(|t| t.name.to_lowercase().contains("set token")) {
+            continue;
+        }
+        let st_slot = ["WEAPON", "ABILITY", "ARMOR", "RING"]
+            .iter()
+            .find(|s| body.contains(&format!(">ST_{s}</RequireDismantleWithLabel>")))
+            .map(|s| {
+                let lower = s.to_lowercase();
+                format!("{}{}", &s[..1], &lower[1..])
+            });
+        out.insert(piece, TokenCost { token, amount, st_slot });
+    }
+    out
+}
+
+#[cfg(test)]
+mod token_tests {
+    use super::*;
+
+    #[test]
+    fn reads_set_token_recipes() {
+        let mut items = Items::default();
+        items.insert_for_test(0x7ed2, "Resurrected Huntress Set Token");
+        let doc = r#"<ForgeProperties type="0x1234" id="Piece">
+    <RequiredItem quantity="2">0x7ed2</RequiredItem>
+    <RequireDismantleWithLabel amount="1">ST_ARMOR</RequireDismantleWithLabel>
+  </ForgeProperties>
+  <ForgeProperties type="0x99" id="Other"><RequiredItem quantity="1">0x1</RequiredItem></ForgeProperties>"#;
+        let t = set_tokens(doc, &items);
+        assert_eq!(t.get(&0x1234), Some(&TokenCost { token: 0x7ed2, amount: 2, st_slot: Some("Armor".into()) }));
+        assert_eq!(t.len(), 1);
+    }
+}
