@@ -461,7 +461,9 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                 {
                     let bx = x + 6.0 + (i % 3) as f32 * (cw + 8.0);
                     let by = ty + 4.0 + (i / 3) as f32 * (36.0 + 6.0);
-                    crate::inventory::button(ui, &p, Rect::from_min_size(pos2(bx, by), vec2(cw, 36.0)), b, false, b);
+                    if crate::inventory::button(ui, &p, Rect::from_min_size(pos2(bx, by), vec2(cw, 36.0)), b, false, b) {
+                        zones.borrow_mut().push(Zone::Ask(crate::window::Ask::OpenDialog(i)));
+                    }
                 }
                 ty += 4.0 + 2.0 * 36.0 + 6.0 + 4.0;
                 ty - r.top() + 2.0

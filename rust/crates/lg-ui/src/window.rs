@@ -33,6 +33,8 @@ pub enum Ask {
     UpeMode(i32, String),
     /// Game Modes: playing without a pet on or off.
     UpeNoPet(i32, bool),
+    /// Settings > Ping Lists: the editor (0 chat, 1 item, 2 enchant, 3 entity, 4 dungeon pings, 5 ping sounds).
+    OpenDialog(usize),
     /// A file (a WAV for an item sound) or a folder (the logs') picked for a setting, with the dialog's title.
     Choose { key: String, title: String, folder: bool },
     /// Ask first (Java `JOptionPane.showConfirmDialog`): title, text, the yes and no buttons; yes asks `then`. With
@@ -73,6 +75,10 @@ pub struct Window {
     confirm: Option<Ask>,
     /// "Copy as image": the character whose card is drawn for the grab, and for how many frames yet.
     card: Option<(i32, u8)>,
+    /// A ping editor open over the window.
+    dialog: Option<crate::dialogs::Dialog>,
+    /// A ping editor to open next frame (it needs the game data).
+    pending_dialog: Option<usize>,
 }
 
 fn now_ms() -> i64 {
@@ -104,6 +110,8 @@ impl Window {
             asks: Vec::new(),
             confirm: None,
             card: None,
+            dialog: None,
+            pending_dialog: None,
         }
     }
 
@@ -141,6 +149,16 @@ impl Window {
     /// at once (the caller writes them to the file); a new theme is applied.
     pub fn take_asks(&mut self) -> Vec<Ask> {
         let mut asks = std::mem::take(&mut self.asks);
+        // the ping editors open here (Java plays a sound as one opens)
+        if let Some(i) = asks.iter().position(|a| matches!(a, Ask::OpenDialog(_))) {
+            let Ask::OpenDialog(k) = asks.remove(i) else { unreachable!() };
+            self.pending_dialog = Some(k);
+            match k {
+                0 => asks.push(Ask::Play("pm.wav".into())),
+                1 | 3 => asks.push(Ask::Play("custom.wav".into())),
+                _ => {}
+            }
+        }
         // a question is shown, not done
         if let Some(i) = asks.iter().position(|a| matches!(a, Ask::Confirm { .. })) {
             self.confirm = Some(asks.remove(i));
@@ -279,6 +297,23 @@ impl Window {
                 _ => {}
             }
         });
+        if let Some(k) = self.pending_dialog.take() {
+            use crate::dialogs::Dialog;
+            let data = app.world.data();
+            self.dialog = Some(match k {
+                0 => Dialog::list(&self.props, "chatPingMessages", "Chat Messages Ping Customization", "Chat Message", false),
+                1 => Dialog::list(&self.props, "itemPings", "Item Ping Customization", "Item ID or Name", false),
+                2 => Dialog::enchants(&self.props, data),
+                3 => Dialog::list(&self.props, "entityIdPings", "Entity ID Ping Customization", "Entity ID", true),
+                4 => Dialog::dungeons(&self.props, data),
+                _ => Dialog::ping_sounds(&self.props),
+            });
+        }
+        if let Some(d) = &mut self.dialog
+            && !crate::dialogs::show(ui.ctx(), &self.palette, &self.props, d, &mut self.asks)
+        {
+            self.dialog = None;
+        }
         self.question(ui.ctx());
         self.grab_card(ui, app);
         if let Some(later) = ui.ctx().data_mut(|d| d.remove_temp::<Vec<Ask>>(egui::Id::unique("lg-asks"))) {

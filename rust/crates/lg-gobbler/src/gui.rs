@@ -262,12 +262,18 @@ impl eframe::App for Gui {
                 lg_ui::window::Ask::UpeMode(char_id, mode) => self.app.upe_mode(char_id, &mode),
                 lg_ui::window::Ask::UpeNoPet(char_id, no_pet) => self.app.upe_no_pet(char_id, no_pet),
                 lg_ui::window::Ask::Choose { key, title, folder } => self.choose(key, title, folder),
-                lg_ui::window::Ask::Confirm { .. } | lg_ui::window::Ask::Nothing => {}
+                lg_ui::window::Ask::Confirm { .. } | lg_ui::window::Ask::Nothing | lg_ui::window::Ask::OpenDialog(_) => {}
                 lg_ui::window::Ask::Play(what) => {
                     let s = crate::sound::Sounds(&self.window.props);
                     match what.split_once(':') {
                         Some(("item", key)) => s.item(key),
                         Some(("startup", id)) => s.startup(id),
+                        Some(("ping", key)) => s.ping(match key {
+                            "pingSound.enchant" => crate::sound::Ping::Enchant,
+                            "pingSound.dungeon" => crate::sound::Ping::Dungeon,
+                            "pingSound.item" => crate::sound::Ping::Item,
+                            _ => crate::sound::Ping::Entity,
+                        }),
                         _ => s.play(&what),
                     }
                 }

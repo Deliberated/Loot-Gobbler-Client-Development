@@ -10,6 +10,7 @@ pub mod charts;
 pub mod classes;
 pub mod damage_graph;
 pub mod detail;
+pub mod dialogs;
 pub mod dps;
 pub mod game_modes;
 pub mod guild;

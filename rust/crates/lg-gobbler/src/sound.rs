@@ -132,9 +132,12 @@ pub fn play(name_or_file: &str, volume: i32) {
     if volume <= 0 {
         return;
     }
+    // a bundled sound, a WAV file, else the bundled sound of that file's name (Java kept them as paths into its
+    // own sound folder)
+    let base = std::path::Path::new(name_or_file).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let pcm = match sound(name_or_file) {
         Some(p) => p.clone(),
-        None => match std::fs::read(name_or_file).ok().and_then(|b| decode(&b)) {
+        None => match std::fs::read(name_or_file).ok().and_then(|b| decode(&b)).or_else(|| sound(&base).cloned()) {
             Some(p) => p,
             None => return,
         },

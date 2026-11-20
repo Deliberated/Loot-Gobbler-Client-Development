@@ -65,8 +65,12 @@ fn main() {
             let ch = app.characters.get(id).expect("character");
             let rect = std::cell::Cell::new(egui::Rect::NOTHING);
             let mut themed = false;
-            let mut harness =
-                egui_kittest::Harness::builder().with_size(egui::vec2(w, h)).with_pixels_per_point(1.0).wgpu().build_ui(|ui| {
+            let mut harness = egui_kittest::Harness::builder()
+                .with_size(egui::vec2(w, h))
+                .with_pixels_per_point(1.0)
+                .with_accessibility_check(false)
+                .wgpu()
+                .build_ui(|ui| {
                     if !themed {
                         lg_ui::theme::apply(ui.ctx(), &win.palette);
                         themed = true;
@@ -109,13 +113,26 @@ fn main() {
                 win.open("Battles:dps");
                 win.battles.dps.show_run(&app.dps_history, Some(start));
             }
-            None => win.open(&tab),
+            None => match tab.strip_prefix("Settings:dialog:").and_then(|t| t.parse::<usize>().ok()) {
+                // a ping editor open over Settings
+                Some(k) => {
+                    win.open("Settings");
+                    win.ask(lg_ui::window::Ask::OpenDialog(k));
+                    win.take_asks();
+                }
+                None => win.open(&tab),
+            },
         }
-        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(w, h)).with_pixels_per_point(1.0).wgpu().build_ui(|ui| {
-            // the whole window, without the margin the harness puts around it
-            let mut all = ui.new_child(egui::UiBuilder::new().max_rect(ui.ctx().content_rect()));
-            win.show(&mut all, &app, now);
-        });
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(w, h))
+            .with_pixels_per_point(1.0)
+            .with_accessibility_check(false)
+            .wgpu()
+            .build_ui(|ui| {
+                // the whole window, without the margin the harness puts around it
+                let mut all = ui.new_child(egui::UiBuilder::new().max_rect(ui.ctx().content_rect()));
+                win.show(&mut all, &app, now);
+            });
         harness.run_steps(3);
         if let Some(at) = hover {
             harness.input_mut().events.push(egui::Event::PointerMoved(at));
