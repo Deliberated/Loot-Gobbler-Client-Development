@@ -35,6 +35,11 @@ impl Properties {
         self.values.get(key).map(String::as_str)
     }
 
+    /// A setting changed without writing the file (it is written elsewhere, or there is none).
+    pub fn set_in_memory(&mut self, key: &str, value: &str) {
+        self.values.insert(key.into(), value.into());
+    }
+
     /// Java `setProperties`: the setting changed and the file written.
     pub fn set(&mut self, key: &str, value: &str, now_ms: i64, zone: &Zone) -> std::io::Result<()> {
         let Some(file) = self.file.clone() else {

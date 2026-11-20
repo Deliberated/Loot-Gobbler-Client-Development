@@ -6,6 +6,15 @@ use crate::{battles, characters, game_modes, guild, inventory, profile, shell, s
 use lg_app::properties::Properties;
 use std::path::Path;
 
+/// What a view asks the app to do (the views only read the records and the settings).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Ask {
+    /// Save a setting.
+    Set(String, String),
+    /// Empty the chat log.
+    ClearChat,
+}
+
 pub struct Window {
     pub shell: shell::Shell,
     pub palette: theme::Palette,
@@ -21,6 +30,8 @@ pub struct Window {
     pub social: social::SocialView,
     pub guild: guild::GuildView,
     themed: bool,
+    /// What the views asked for in the last frame; the app takes them (`take_asks`).
+    asks: Vec<Ask>,
 }
 
 const GUILD_PAGES: [&str; 6] = ["Loot Caravan", "Quest Map", "Leaderboard", "Recent Drops", "Member", "Quests"];
@@ -45,6 +56,7 @@ impl Window {
             social: social::SocialView::default(),
             guild: guild::GuildView::default(),
             themed: false,
+            asks: Vec::new(),
         }
     }
 
@@ -65,6 +77,22 @@ impl Window {
         }
     }
 
+    /// What the views asked for since the last call. Settings asked to be saved are taken into the shown settings
+    /// at once (the caller writes them to the file); a new theme is applied.
+    pub fn take_asks(&mut self) -> Vec<Ask> {
+        let asks = std::mem::take(&mut self.asks);
+        for a in &asks {
+            if let Ask::Set(k, v) = a {
+                self.props.set_in_memory(k, v);
+                if k == "theme" {
+                    self.palette = theme::palette(Some(v));
+                    self.themed = false;
+                }
+            }
+        }
+        asks
+    }
+
     /// The whole window in `ui`.
     pub fn show(&mut self, ui: &mut egui::Ui, app: &lg_app::App, now: i64) {
         if !self.themed {
@@ -72,9 +100,10 @@ impl Window {
             self.themed = true;
         }
         let palette = self.palette;
-        let Window { shell, icons, en, loadout, props, profile, characters, inventory, game_modes, battles, social, guild, .. } = self;
+        let Window { shell, icons, en, loadout, props, profile, characters, inventory, game_modes, battles, social, guild, asks, .. } =
+            self;
         shell.show(ui, &palette, |ui, tab| {
-            let mut c = profile::Ctx { app, p: &palette, icons, now, en, loadout, props };
+            let mut c = profile::Ctx { app, p: &palette, icons, now, en, loadout, props, asks };
             match tab {
                 "Profile" => profile.show(ui, &mut c),
                 "Inventory" => {

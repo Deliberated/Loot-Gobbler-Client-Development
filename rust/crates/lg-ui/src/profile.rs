@@ -45,6 +45,15 @@ pub struct Ctx<'a> {
     pub loadout: &'a mut lg_app::loadout::Settings,
     /// The app's settings file (`realmShark.properties`).
     pub props: &'a lg_app::properties::Properties,
+    /// What the views ask for this frame: settings to save, things to do to the records.
+    pub asks: &'a mut Vec<crate::window::Ask>,
+}
+
+impl Ctx<'_> {
+    /// A setting to save (Java `PropertiesManager.setProperties`).
+    pub fn set(&mut self, key: &str, value: &str) {
+        self.asks.push(crate::window::Ask::Set(key.to_string(), value.to_string()));
+    }
 }
 
 pub struct Profile {

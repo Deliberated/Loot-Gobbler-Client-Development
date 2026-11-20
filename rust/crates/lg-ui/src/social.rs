@@ -92,6 +92,7 @@ fn chat(ui: &mut Ui, c: &mut Ctx, r: Rect) {
     let p = *c.p;
     let app = c.app;
     let props = c.props;
+    let asks = &mut *c.asks;
     let painter = ui.painter().clone();
     let f = text(18.0);
     let side_w = 216.0;
@@ -159,7 +160,9 @@ fn chat(ui: &mut Ui, c: &mut Ctx, r: Rect) {
             jtext::draw(painter, pos2(x, y), Align2::LEFT_TOP, "Show channels:", &f, p.ink);
             y += jtext::height(painter, &f) + 8.0;
             let bw = jtext::width(painter, "CLEAR CHAT", &small()) + 32.0;
-            crate::inventory::button(ui, &p, Rect::from_min_size(pos2(x, y), vec2(bw, 36.0)), "Clear chat", true, "clear-chat");
+            if crate::inventory::button(ui, &p, Rect::from_min_size(pos2(x, y), vec2(bw, 36.0)), "Clear chat", true, "clear-chat") {
+                asks.push(crate::window::Ask::ClearChat);
+            }
             y += 36.0 + 12.0;
             let w = b.right() + 1.0 - 12.0 - x;
             for ch in CHANNELS {
@@ -176,7 +179,9 @@ fn chat(ui: &mut Ui, c: &mut Ctx, r: Rect) {
                     &crate::theme::head(17.0),
                     p.ink,
                 );
-                ui.interact(rr, ui.scope_id().with(("channel", ch.label())), Sense::click());
+                if ui.interact(rr, ui.scope_id().with(("channel", ch.label())), Sense::click()).clicked() {
+                    asks.push(crate::window::Ask::Set(format!("chatShow{}", ch.label()), (!shown(ch)).to_string()));
+                }
                 y += 42.0 + 6.0;
             }
         },

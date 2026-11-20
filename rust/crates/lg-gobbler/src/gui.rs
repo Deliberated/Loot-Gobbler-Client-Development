@@ -117,6 +117,12 @@ impl eframe::App for Gui {
         self.window.shell.sniffing = self.capture.is_some();
         let mut all = ui.new_child(egui::UiBuilder::new().max_rect(ui.ctx().content_rect()));
         self.window.show(&mut all, &self.app, now_ms());
+        for ask in self.window.take_asks() {
+            match ask {
+                lg_ui::window::Ask::Set(k, v) => self.set(&k, &v),
+                lg_ui::window::Ask::ClearChat => self.app.chat.clear(),
+            }
+        }
         if self.window.shell.clicked_sniffer {
             if let Some(mut c) = self.capture.take() {
                 c.stop();

@@ -106,6 +106,16 @@ impl ItemSound {
     }
 }
 
+/// Where a click changes a setting, found while painting and answered after it.
+enum Zone {
+    /// A click sets the key to the value.
+    Set(Rect, String, String),
+    /// A slider: the key gets the value under the pointer (track from, to; values min..max) when let go.
+    Slider(Rect, String, f32, f32, i32, i32),
+    /// Asked already (a picker was clicked).
+    Now(String, String),
+}
+
 fn bool_prop(props: &Properties, key: &str, by_default: bool) -> bool {
     props.get(key).map_or(by_default, |v| v == "true")
 }
@@ -120,21 +130,21 @@ pub fn slider(painter: &egui::Painter, p: &Palette, x: f32, cy: f32, w: f32, fra
 }
 
 /// A check box with its text (Java `JCheckBox`); gives its right edge.
-fn check(painter: &egui::Painter, p: &Palette, x: f32, cy: f32, label: &str, on: bool) -> f32 {
+fn check(painter: &egui::Painter, p: &Palette, x: f32, cy: f32, label: &str, on: bool) -> Rect {
     let b = pixel_check(painter, p, pos2(x, cy - 9.5), on);
     if label.is_empty() {
-        return b.right();
+        return b;
     }
-    jtext::draw(painter, pos2(b.right() + 6.0, cy), Align2::LEFT_CENTER, label, &text(18.0), p.ink).right()
+    b.union(jtext::draw(painter, pos2(b.right() + 6.0, cy), Align2::LEFT_CENTER, label, &text(18.0), p.ink))
 }
 
 /// A button at its left edge, centred on `cy`; gives its rect.
-fn button(ui: &Ui, p: &Palette, x: f32, cy: f32, label: &str) -> Rect {
+fn button(ui: &Ui, p: &Palette, x: f32, cy: f32, label: &str) -> (Rect, bool) {
     // FlatLaf's buttons are at least 72 (x 1.5) wide
     let w = (jtext::width(ui.painter(), &label.to_uppercase(), &small()) + 32.0).max(108.0);
     let r = Rect::from_min_size(pos2(x, cy - 18.0), vec2(w, 36.0));
-    crate::inventory::button(ui, p, r, label, false, label);
-    r
+    let clicked = crate::inventory::button(ui, p, r, label, false, &format!("{label}-{x}-{cy}"));
+    (r, clicked)
 }
 
 /// A drop-down (Java `JComboBox`) showing one entry.
@@ -165,8 +175,11 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
     let props = c.props;
     let data = c.app.world.data();
     let icons = &mut *c.icons;
+    let asks = &mut *c.asks;
+    let mut set = |k: &str, v: &str| asks.push(crate::window::Ask::Set(k.to_string(), v.to_string()));
     let f = text(18.0);
     let all = ui.max_rect();
+    let zones = std::cell::RefCell::new(Vec::<Zone>::new());
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(all));
     egui::ScrollArea::vertical().id_salt("settings").show(&mut child, |ui| {
         let top = ui.cursor().min;
@@ -185,21 +198,26 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                          x: f32,
                          y: f32,
                          w: f32,
-                         items: &[(String, bool, Option<i32>)],
+                         items: &[(String, bool, Option<i32>, &str)],
                          icons: &mut crate::icons::Icons|
          -> f32 {
             let cw = ((w - 12.0 - 2.0 * 24.0) / 3.0).floor();
             let ch = 26.0;
-            for (i, (label, on, bag)) in items.iter().enumerate() {
+            for (i, (label, on, bag, key)) in items.iter().enumerate() {
                 let cx = x + 6.0 + (i % 3) as f32 * (cw + 24.0);
                 let cy = y + 4.0 + (i / 3) as f32 * (ch + 4.0) + ch / 2.0;
+                zones.borrow_mut().push(Zone::Set(
+                    Rect::from_min_size(pos2(cx, cy - ch / 2.0), vec2(cw, ch)),
+                    key.to_string(),
+                    (!on).to_string(),
+                ));
                 match bag {
                     None => {
                         check(painter, &p, cx, cy, label, *on);
                     }
                     Some(id) => {
                         let r = check(painter, &p, cx + 2.0, cy, "", *on);
-                        let ix = r + 2.0 + 6.0;
+                        let ix = r.right() + 2.0 + 6.0;
                         if let Some(t) = icons.object(&ctx, data, *id, 22) {
                             painter.image(
                                 t.id(),
@@ -231,7 +249,16 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                 let cy = ty + 4.0 + 15.0;
                 let lr = jtext::draw(&painter, pos2(x + 6.0, cy), Align2::LEFT_CENTER, "Volume", &f, p.ink);
                 let vol = props.get("soundVolume").and_then(|v| v.parse::<i32>().ok()).unwrap_or(DEFAULT_VOLUME);
-                slider(&painter, &p, lr.right() + 6.0 + 24.0 + 6.0, cy, 300.0, vol as f32 / 100.0);
+                let sx = lr.right() + 6.0 + 24.0 + 6.0;
+                slider(&painter, &p, sx, cy, 300.0, vol as f32 / 100.0);
+                zones.borrow_mut().push(Zone::Slider(
+                    Rect::from_min_size(pos2(sx, cy - 15.0), vec2(300.0, 30.0)),
+                    "soundVolume".into(),
+                    sx + 15.0,
+                    sx + 285.0,
+                    0,
+                    100,
+                ));
                 ty += 30.0 + 8.0;
                 let toggles = [
                     ("PM ping", "chatPing", false),
@@ -245,8 +272,8 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                     ("Blue bag", "blueBagSound", false),
                     ("Trade", "tradePing", false),
                 ];
-                let items: Vec<(String, bool, Option<i32>)> =
-                    toggles.iter().map(|(l, k, d)| (l.to_string(), bool_prop(props, k, *d), None)).collect();
+                let items: Vec<(String, bool, Option<i32>, &str)> =
+                    toggles.iter().map(|(l, k, d)| (l.to_string(), bool_prop(props, k, *d), None, *k)).collect();
                 ty += grid_rows(&painter, x, ty, r.width() + 2.0, &items, icons);
                 ty - r.top() + 2.0
             },
@@ -267,7 +294,9 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                 ty += hint(&painter, x, ty, "Played once when Loot Gobbler opens.");
                 let saved = props.get("startupSound").filter(|s| STARTUP_IDS.contains(s)).unwrap_or("goldbag");
                 let sel = STARTUP_IDS.iter().position(|s| *s == saved).unwrap_or(5);
-                widgets::segmented(ui, &p, pos2(x + 6.0, ty + 4.0), 36.0, &STARTUP_LABELS, sel, true, &[]);
+                if let Some(i) = widgets::segmented(ui, &p, pos2(x + 6.0, ty + 4.0), 36.0, &STARTUP_LABELS, sel, true, &[]) {
+                    zones.borrow_mut().push(Zone::Now("startupSound".into(), STARTUP_IDS[i].into()));
+                }
                 let sw = widgets::segmented_width(&painter, &STARTUP_LABELS, true);
                 button(ui, &p, x + 6.0 + sw + 6.0 + 8.0 + 6.0, ty + 4.0 + 18.0, "Play");
                 ty += row_h;
@@ -325,6 +354,14 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                     jtext::draw(&painter, pos2(lx, cy), Align2::LEFT_CENTER, &lt, &f, p.ink);
                     let sx = lx - 6.0 - 150.0;
                     slider(&painter, &p, sx, cy, 150.0, vol as f32 / 100.0);
+                    zones.borrow_mut().push(Zone::Slider(
+                        Rect::from_min_size(pos2(sx, cy - 15.0), vec2(150.0, 30.0)),
+                        format!("{}Volume", s.key),
+                        sx + 15.0,
+                        sx + 135.0,
+                        0,
+                        100,
+                    ));
                     jtext::draw(&painter, pos2(sx - 6.0, cy), Align2::RIGHT_CENTER, "Volume", &f, p.ink);
                     ty += head_h;
                     ty += hint(&painter, x, ty, when);
@@ -344,7 +381,13 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                     let cr = jtext::draw(&painter, pos2(bx, cy), Align2::LEFT_CENTER, &cur, &f, p.ink);
                     bx = cr.right() + 6.0 + 12.0 + 6.0;
                     for b in ["Play", "Choose...", "Default", "Off"] {
-                        bx = button(ui, &p, bx, cy, b).right() + 6.0;
+                        let (br, clicked) = button(ui, &p, bx, cy, b);
+                        if clicked && b == "Default" {
+                            zones.borrow_mut().push(Zone::Now(s.key.into(), String::new()));
+                        } else if clicked && b == "Off" {
+                            zones.borrow_mut().push(Zone::Now(s.key.into(), "off".into()));
+                        }
+                        bx = br.right() + 6.0;
                     }
                     ty += row_h;
                 }
@@ -406,8 +449,8 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                     ("Pink bags", 1286, "filterPinkBag", false),
                     ("Brown bags", 1280, "filterBrownBag", false),
                 ];
-                let items: Vec<(String, bool, Option<i32>)> =
-                    bags.iter().map(|(l, id, k, d)| (l.to_string(), bool_prop(props, k, *d), Some(*id))).collect();
+                let items: Vec<(String, bool, Option<i32>, &str)> =
+                    bags.iter().map(|(l, id, k, d)| (l.to_string(), bool_prop(props, k, *d), Some(*id), *k)).collect();
                 ty += grid_rows(&painter, x, ty, r.width() + 2.0, &items, icons);
                 ty - r.top() + 2.0
             },
@@ -426,7 +469,9 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                 let key = crate::theme::THEMES.iter().find(|t| Some(t.0) == saved).map_or("treasureHoard", |t| t.0);
                 let labels: Vec<&str> = crate::theme::THEMES.iter().map(|t| t.1).collect();
                 let sel = crate::theme::THEMES.iter().position(|t| t.0 == key).unwrap_or(2);
-                widgets::segmented(ui, &p, pos2(r.left() + 1.0, r.top()), 36.0, &labels, sel, true, &[]);
+                if let Some(i) = widgets::segmented(ui, &p, pos2(r.left() + 1.0, r.top()), 36.0, &labels, sel, true, &[]) {
+                    zones.borrow_mut().push(Zone::Now("theme".into(), crate::theme::THEMES[i].0.into()));
+                }
                 36.0 + 2.0
             },
         );
@@ -449,7 +494,9 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                     ty,
                     "Writes what the app reports, errors included, to one file per day. View and export them under Info > Logs.",
                 );
-                check(&painter, &p, x + 6.0, ty + 4.0 + 13.0, "Write log files", props.get("logging") == Some("true"));
+                let on = props.get("logging") == Some("true");
+                let cr = check(&painter, &p, x + 6.0, ty + 4.0 + 13.0, "Write log files", on);
+                zones.borrow_mut().push(Zone::Set(cr, "logging".into(), (!on).to_string()));
                 ty += 26.0 + 8.0;
                 let cy = ty + row_h / 2.0;
                 let dir = props
@@ -458,8 +505,12 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                     .unwrap_or_else(|| std::env::current_dir().unwrap_or_default().join("logs").display().to_string());
                 let lr = jtext::draw(&painter, pos2(x + 6.0, cy), Align2::LEFT_CENTER, "Folder", &f, p.ink);
                 let dr = jtext::draw(&painter, pos2(lr.right() + 6.0 + 12.0 + 6.0, cy), Align2::LEFT_CENTER, &dir, &f, p.ink);
-                let b = button(ui, &p, dr.right() + 6.0 + 8.0 + 6.0, cy, "Change...");
-                button(ui, &p, b.right() + 6.0, cy, "Default");
+                let (b, _) = button(ui, &p, dr.right() + 6.0 + 8.0 + 6.0, cy, "Change...");
+                if button(ui, &p, b.right() + 6.0, cy, "Default").1 {
+                    zones
+                        .borrow_mut()
+                        .push(Zone::Now("logDir".into(), std::env::current_dir().unwrap_or_default().join("logs").display().to_string()));
+                }
                 ty += row_h;
                 let cy = ty + (32.0 + 8.0) / 2.0;
                 let keep = props.get("logKeepDays").and_then(|v| v.parse::<i32>().ok()).map_or(14, |v| v.max(0));
@@ -498,11 +549,37 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                 let mut ty = r.top();
                 ty += hint(&painter, x, ty, "The tour through Loot Gobbler. Info > Newcomer's Guide starts the quick tour at any time.");
                 let next = props.get("guideDoneVersion") != Some("2");
-                check(&painter, &p, x + 6.0, ty + 4.0 + 13.0, "Show the whole guide on the next start, as if never seen", next);
+                let cr = check(&painter, &p, x + 6.0, ty + 4.0 + 13.0, "Show the whole guide on the next start, as if never seen", next);
+                // Java `setOnNextStart`: on, it starts from the beginning
+                zones.borrow_mut().push(Zone::Set(cr, "guideDoneVersion".into(), if next { "2".into() } else { String::new() }));
+                if !next {
+                    zones.borrow_mut().push(Zone::Set(cr, "guideActive".into(), "false".into()));
+                    zones.borrow_mut().push(Zone::Set(cr, "guideStep".into(), "0".into()));
+                }
                 ty += 26.0 + 8.0;
                 ty - r.top() + 2.0
             },
         );
         ui.allocate_exact_size(vec2(w + 16.0, y - top.y), egui::Sense::hover());
+        for (k, z) in zones.take().into_iter().enumerate() {
+            match z {
+                Zone::Now(key, value) => set(&key, &value),
+                Zone::Set(rect, key, value) => {
+                    if ui.interact(rect, ui.scope_id().with(("set", k)), egui::Sense::click()).clicked() {
+                        set(&key, &value);
+                    }
+                }
+                Zone::Slider(rect, key, from, to, min, max) => {
+                    let resp = ui.interact(rect, ui.scope_id().with(("slider", &key)), egui::Sense::click_and_drag());
+                    if (resp.clicked() || resp.drag_stopped())
+                        && let Some(pos) = resp.interact_pointer_pos()
+                    {
+                        let f = ((pos.x - from) / (to - from)).clamp(0.0, 1.0);
+                        let v = min + (f * (max - min) as f32).round() as i32;
+                        set(&key, &v.to_string());
+                    }
+                }
+            }
+        }
     });
 }

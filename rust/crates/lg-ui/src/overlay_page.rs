@@ -55,6 +55,7 @@ pub fn show(ui: &mut Ui, c: &mut Ctx, body: Rect) {
     let app = c.app;
     let data = app.world.data();
     let props = c.props;
+    let asks = std::cell::RefCell::new(Vec::new());
     let now = c.now;
     let icons = &mut *c.icons;
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body));
@@ -91,7 +92,9 @@ pub fn show(ui: &mut Ui, c: &mut Ctx, body: Rect) {
                     let tx = head.left() + 10.0 - 1.0 + 8.0 + 8.0 + jtext::width(painter, &title.to_uppercase(), &crate::theme::head(17.0)) + 14.0;
                     jtext::draw_bold(painter, pos2(tx, head.center().y), Align2::LEFT_CENTER, if on { "ON" } else { "OFF" }, &f, if on { Color32::from_rgb(0x4C, 0xAF, 0x50) } else { fixed::MUTED });
                     let sw = widgets::segmented_width(painter, &["Off", "On"], true);
-                    widgets::segmented(ui, &p, pos2(head.right() - 6.0 - sw, head.top()), head.height(), &["Off", "On"], usize::from(on), true, &[]);
+                    if let Some(i) = widgets::segmented(ui, &p, pos2(head.right() - 6.0 - sw, head.top()), head.height(), &["Off", "On"], usize::from(on), true, &[]) {
+                        asks.borrow_mut().push(crate::window::Ask::Set(key(o, "On"), (i == 1).to_string()));
+                    }
                 },
                 |ui, r| {
                     let painter = ui.painter().clone();
@@ -133,7 +136,17 @@ pub fn show(ui: &mut Ui, c: &mut Ctx, body: Rect) {
                     painter.rect_filled(Rect::from_min_max(track.min, pos2(tx, track.bottom())), 1.5, Color32::from_rgb(0xE8, 0xB8, 0x3A));
                     painter.circle_filled(pos2(tx, cy), 9.0, Color32::from_rgb(0xE8, 0xB8, 0x3A));
                     jtext::draw(&painter, pos2(sx + sw + 6.0, cy), Align2::LEFT_CENTER, &format!("{op}%"), &f, p.ink);
-                    ui.interact(Rect::from_min_size(pos2(sx, y), vec2(sw, row_h)), ui.scope_id().with(("opacity", o.id)), Sense::click_and_drag());
+                    let resp = ui.interact(Rect::from_min_size(pos2(sx, y), vec2(sw, row_h)), ui.scope_id().with(("opacity", o.id)), Sense::click_and_drag());
+                    if (resp.clicked() || resp.dragged() || resp.drag_stopped())
+                        && let Some(pos) = resp.interact_pointer_pos()
+                    {
+                        // follows while dragging, as in Java
+                        let f = ((pos.x - track.left()) / track.width()).clamp(0.0, 1.0);
+                        let v = MIN_OPACITY + (f * (100 - MIN_OPACITY) as f32).round() as i32;
+                        if v != op {
+                            asks.borrow_mut().push(crate::window::Ask::Set(key(o, "Opacity"), v.to_string()));
+                        }
+                    }
                     y += row_h;
                     y - r.top() + 10.0 - 10.0
                 },
@@ -141,6 +154,7 @@ pub fn show(ui: &mut Ui, c: &mut Ctx, body: Rect) {
         }
         ui.allocate_exact_size(vec2(w, y - top.y), Sense::hover());
     });
+    c.asks.extend(asks.take());
 }
 
 fn stage_height(painter: &egui::Painter, id: &str) -> f32 {
