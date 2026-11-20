@@ -64,6 +64,48 @@ pub struct DungeonStats {
 }
 
 impl DungeonStats {
+    /// Tomato's `dungeon.stats` as the Java app kept it (Java: `DungeonStatData.load`), read only; its `data` only.
+    pub fn import(path: &std::path::Path) -> Option<DungeonStats> {
+        use crate::json::{self, Json};
+        let text = std::fs::read_to_string(path).ok()?;
+        let root = json::parse(&text).ok()?;
+        let Json::Object(_) = root else { return None };
+        let int = |v: &Json| v.as_int().ok();
+        let int_map = |v: Option<&Json>| -> Option<BTreeMap<i32, i32>> {
+            match v {
+                None | Some(Json::Null) => Some(BTreeMap::new()),
+                Some(Json::Object(o)) => o.iter().map(|(k, v)| Some((k.parse().ok()?, int(v)?))).collect(),
+                Some(_) => None,
+            }
+        };
+        let mut out = DungeonStats::default();
+        match root.get("data") {
+            None => {}
+            Some(Json::Object(d)) => {
+                for (name, info) in d {
+                    let Json::Object(_) = info else { return None };
+                    let mut i = DungeonInfo {
+                        entered: info.get("enteredDungeon").map_or(Some(0), int)?,
+                        total_time_ms: match info.get("totalTime") {
+                            None => 0,
+                            Some(v) => v.as_string().ok()?.parse().ok()?,
+                        },
+                        damaged: int_map(info.get("entityDamaged"))?,
+                        loot: BTreeMap::new(),
+                    };
+                    if let Some(Json::Object(l)) = info.get("entityLoot") {
+                        for (k, v) in l {
+                            i.loot.insert(k.parse().ok()?, int_map(v.get("lootList"))?);
+                        }
+                    }
+                    out.data.insert(name.clone(), i);
+                }
+            }
+            Some(_) => return None,
+        }
+        Some(out)
+    }
+
     /// The dungeon to count into: Java's `info`, or nothing for a different one ("dungeon mismatch").
     fn current(&mut self, dungeon: &str) -> Option<&mut DungeonInfo> {
         match &self.info {

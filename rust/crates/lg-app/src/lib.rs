@@ -151,6 +151,10 @@ impl App {
             missions: missions::Missions::default(),
             zone: localtime::Zone::system(),
         };
+        // TomatoData.bootload: Tomato's dungeon statistics
+        if let Some(ds) = java_data.and_then(|d| lg_world::loot::DungeonStats::import(&d.join("dungeon.stats"))) {
+            app.world.dungeon_stats = ds;
+        }
         // the app builds every store at startup (Java: ServerSync.get()): Holdings seeds itself from the saved
         // characters then
         let time = app.zone.local_date_time(now);
