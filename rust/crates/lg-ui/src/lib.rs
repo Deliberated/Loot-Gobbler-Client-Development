@@ -20,6 +20,7 @@ pub mod overlays;
 pub mod pets;
 pub mod profile;
 pub mod server;
+pub mod settings;
 pub mod shell;
 pub mod social;
 pub mod suggested;

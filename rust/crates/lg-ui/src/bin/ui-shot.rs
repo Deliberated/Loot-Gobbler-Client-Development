@@ -87,6 +87,7 @@ fn main() {
                         guild.show(ui, &mut c)
                     }
                     "Server" => lg_ui::server::show(ui, &mut c),
+                    "Settings" => lg_ui::settings::show(ui, &mut c),
                     "Social" | "Social:quests" | "Social:discord" => {
                         social.page = match tab {
                             "Social:quests" => 1,
