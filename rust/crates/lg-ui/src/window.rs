@@ -33,6 +33,8 @@ pub enum Ask {
     UpeMode(i32, String),
     /// Game Modes: playing without a pet on or off.
     UpeNoPet(i32, bool),
+    /// A file (a WAV for an item sound) or a folder (the logs') picked for a setting, with the dialog's title.
+    Choose { key: String, title: String, folder: bool },
     /// Ask first (Java `JOptionPane.showConfirmDialog`): title, text, the yes and no buttons; yes asks `then`. With
     /// `no` empty it is a message (`showMessageDialog`): one button, nothing asked.
     Confirm { title: String, text: String, yes: String, no: String, then: Box<Ask> },

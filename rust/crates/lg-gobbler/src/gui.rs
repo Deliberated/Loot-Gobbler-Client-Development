@@ -29,6 +29,8 @@ pub struct Gui {
     seen_matrix: i64,
     seen_at: i64,
     overlays: lg_ui::overlay_windows::OverlayWindows,
+    /// A file or folder picker open on its thread: the setting it is for, and where its answer comes.
+    choosing: Option<(String, std::sync::mpsc::Receiver<Option<PathBuf>>)>,
 }
 
 impl Gui {
@@ -47,6 +49,7 @@ impl Gui {
             seen_matrix: 0,
             seen_at: now_ms(),
             overlays: Default::default(),
+            choosing: None,
         };
         g.seen_saves = g.app.amulet_saves.count();
         g.seen_matrix = g.app.cooldowns.matrix_fired;
@@ -88,6 +91,57 @@ impl Gui {
 }
 
 impl Gui {
+    /// Java `JFileChooser`: the system's picker on a thread of its own (the window goes on drawing), starting where
+    /// the current choice is; one at a time.
+    fn choose(&mut self, key: String, title: String, folder: bool) {
+        if self.choosing.is_some() {
+            return;
+        }
+        let current = self.window.props.get(&key).map(PathBuf::from);
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut d = rfd::FileDialog::new().set_title(&title);
+            let start = current.as_ref().map(|c| if folder { c.clone() } else { c.parent().map(PathBuf::from).unwrap_or_default() });
+            if let Some(dir) = start.filter(|d| d.is_dir()) {
+                d = d.set_directory(dir);
+            }
+            let picked = if folder { d.pick_folder() } else { d.add_filter("WAV sound (*.wav)", &["wav"]).pick_file() };
+            let _ = tx.send(picked);
+        });
+        self.choosing = Some((key, rx));
+    }
+
+    /// The picker's answer, once it came: an item sound's WAV (played; one that cannot be played is refused), or
+    /// the log folder.
+    fn chosen(&mut self) {
+        let Some((key, rx)) = &self.choosing else { return };
+        let picked = match rx.try_recv() {
+            Ok(p) => p,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(_) => None,
+        };
+        let key = key.clone();
+        self.choosing = None;
+        let Some(path) = picked else { return };
+        let path = std::path::absolute(&path).unwrap_or(path);
+        if key == "logDir" {
+            self.set(&key, &path.display().to_string());
+            return;
+        }
+        if std::fs::read(&path).ok().and_then(|b| crate::sound::decode(&b)).is_some() {
+            self.set(&key, &path.display().to_string());
+            crate::sound::Sounds(&self.window.props).item(&key);
+        } else {
+            self.window.ask(lg_ui::window::Ask::Confirm {
+                title: "Item Sounds".into(),
+                text: "This file cannot be played. Please choose a WAV file.".into(),
+                yes: "OK".into(),
+                no: String::new(),
+                then: Box::new(lg_ui::window::Ask::Nothing),
+            });
+        }
+    }
+
     /// What should sound since the last frame: the app's bags, chat and trade requests, and the item sounds Java's
     /// timers play (an amulet save and its recharge, the matrix firing, a cooldown running out).
     fn sounds(&mut self) {
@@ -177,6 +231,7 @@ impl eframe::App for Gui {
         let on_key = |id: &str| lg_ui::overlay_page::key_of(id, "On");
         self.window.shell.overlays_on = ids.iter().any(|id| self.window.props.get(&on_key(id)) == Some("true"));
         self.sounds();
+        self.chosen();
         // what the views asked for last frame is done before this one is drawn
         if let Err(e) = self.app.save_changed(&self.own) {
             eprintln!("cannot save into {}: {e}", self.own.display());
@@ -200,6 +255,7 @@ impl eframe::App for Gui {
                 lg_ui::window::Ask::UpeMark { char_id, on, mode, no_pet } => self.app.upe_mark(char_id, on, mode.as_deref(), no_pet),
                 lg_ui::window::Ask::UpeMode(char_id, mode) => self.app.upe_mode(char_id, &mode),
                 lg_ui::window::Ask::UpeNoPet(char_id, no_pet) => self.app.upe_no_pet(char_id, no_pet),
+                lg_ui::window::Ask::Choose { key, title, folder } => self.choose(key, title, folder),
                 lg_ui::window::Ask::Confirm { .. } | lg_ui::window::Ask::Nothing => {}
                 lg_ui::window::Ask::Play(what) => {
                     let s = crate::sound::Sounds(&self.window.props);

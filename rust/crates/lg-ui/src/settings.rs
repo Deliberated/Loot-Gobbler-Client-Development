@@ -116,6 +116,8 @@ enum Zone {
     Now(String, String),
     /// A sound to play (a Play button).
     Play(String),
+    /// Anything else asked of the app.
+    Ask(crate::window::Ask),
 }
 
 /// What a changed setting lets you hear (Java plays it with every click): the ping or bag sound switched, the
@@ -416,7 +418,13 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                     bx = cr.right() + 6.0 + 12.0 + 6.0;
                     for b in ["Play", "Choose...", "Default", "Off"] {
                         let (br, clicked) = button(ui, &p, bx, cy, b);
-                        if clicked && b == "Play" {
+                        if clicked && b == "Choose..." {
+                            zones.borrow_mut().push(Zone::Ask(crate::window::Ask::Choose {
+                                key: s.key.into(),
+                                title: format!("Sound for the {}", s.item),
+                                folder: false,
+                            }));
+                        } else if clicked && b == "Play" {
                             zones.borrow_mut().push(Zone::Play(format!("item:{}", s.key)));
                         } else if clicked && b == "Default" {
                             zones.borrow_mut().push(Zone::Now(s.key.into(), String::new()));
@@ -541,7 +549,14 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                     .unwrap_or_else(|| std::env::current_dir().unwrap_or_default().join("logs").display().to_string());
                 let lr = jtext::draw(&painter, pos2(x + 6.0, cy), Align2::LEFT_CENTER, "Folder", &f, p.ink);
                 let dr = jtext::draw(&painter, pos2(lr.right() + 6.0 + 12.0 + 6.0, cy), Align2::LEFT_CENTER, &dir, &f, p.ink);
-                let (b, _) = button(ui, &p, dr.right() + 6.0 + 8.0 + 6.0, cy, "Change...");
+                let (b, change) = button(ui, &p, dr.right() + 6.0 + 8.0 + 6.0, cy, "Change...");
+                if change {
+                    zones.borrow_mut().push(Zone::Ask(crate::window::Ask::Choose {
+                        key: "logDir".into(),
+                        title: "Folder for log files".into(),
+                        folder: true,
+                    }));
+                }
                 if button(ui, &p, b.right() + 6.0, cy, "Default").1 {
                     zones
                         .borrow_mut()
@@ -601,6 +616,7 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
             match z {
                 Zone::Now(key, value) => set(asks, &key, &value),
                 Zone::Play(what) => asks.push(crate::window::Ask::Play(what)),
+                Zone::Ask(a) => asks.push(a),
                 Zone::Set(rect, key, value) => {
                     if ui.interact(rect, ui.scope_id().with(("set", k)), egui::Sense::click()).clicked() {
                         set(asks, &key, &value);

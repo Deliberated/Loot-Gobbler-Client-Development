@@ -22,3 +22,5 @@ lg-ui = { path = "../lg-ui" }
 libloading = "0.8"
 egui = "0.37"
 eframe = "0.37"
+# file pickers: the desktop portal on Linux (no system headers), the system's dialog elsewhere
+rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
