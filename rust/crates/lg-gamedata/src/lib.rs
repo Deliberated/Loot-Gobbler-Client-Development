@@ -15,6 +15,7 @@ pub mod char_stats;
 pub mod dungeons;
 pub mod dyes;
 pub mod enchants;
+pub mod extract;
 pub mod items;
 pub mod st_sets;
 pub mod xml;
@@ -313,11 +314,14 @@ fn parse_tiles(s: &str, problems: &mut Vec<String>) -> HashMap<i32, Tile> {
 }
 
 /// Java's `Integer.decode`: decimal, or hex after `0x`/`#`, with an optional sign.
-fn decode_int(s: &str) -> Result<i32, String> {
+pub(crate) fn decode_int(s: &str) -> Result<i32, String> {
     let (neg, body) = match s.strip_prefix('-') {
         Some(b) => (true, b),
         None => (false, s.strip_prefix('+').unwrap_or(s)),
     };
+    if body.starts_with(['+', '-']) || body.contains(['+', '-']) {
+        return Err(format!("not a number: {s:?}"));
+    }
     let v = if let Some(h) = body.strip_prefix("0x").or_else(|| body.strip_prefix("0X")).or_else(|| body.strip_prefix('#')) {
         i64::from_str_radix(h, 16)
     } else if body.len() > 1 && body.starts_with('0') {

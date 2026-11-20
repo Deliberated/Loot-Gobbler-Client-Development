@@ -43,9 +43,14 @@ pub fn is_blank(s: &str) -> bool {
 
 /// `java.util.Properties.load`: the value of `key`, if there.
 pub fn property(text: &str, key: &str) -> Option<String> {
+    properties(text).into_iter().rev().find(|(k, _)| k == key).map(|(_, v)| v)
+}
+
+/// `java.util.Properties.load`: every key and value in the file's order (a key again: the later one counts).
+pub fn properties(text: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
     let mut logical = String::new();
     let mut lines = text.split('\n').map(|l| l.strip_suffix('\r').unwrap_or(l)).peekable();
-    let mut found = None;
     while let Some(first) = lines.next() {
         let line = first.trim_start_matches([' ', '\t', '\u{c}']);
         if line.is_empty() || line.starts_with('#') || line.starts_with('!') {
@@ -60,12 +65,9 @@ pub fn property(text: &str, key: &str) -> Option<String> {
             cur = lines.next().unwrap_or("").trim_start_matches([' ', '\t', '\u{c}']).to_string();
         }
         logical.push_str(&cur);
-        let (k, v) = split_property(&logical);
-        if k == key {
-            found = Some(v);
-        }
+        out.push(split_property(&logical));
     }
-    found
+    out
 }
 
 fn split_property(line: &str) -> (String, String) {

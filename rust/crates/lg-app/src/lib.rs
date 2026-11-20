@@ -5,6 +5,7 @@
 //! world tells the app while it works ([`lg_world::Event`]) is taken right after, in order.
 
 pub mod amulet_saves;
+pub mod assets;
 pub mod char_list;
 pub mod characters;
 pub mod collection;
@@ -29,6 +30,7 @@ pub mod pc_stats;
 mod pc_stats_table;
 pub mod pet_store;
 pub mod profile;
+pub mod properties;
 pub mod realm_character;
 pub mod tinkerer;
 pub mod upe;

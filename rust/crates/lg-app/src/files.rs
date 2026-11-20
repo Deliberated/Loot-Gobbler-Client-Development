@@ -557,6 +557,17 @@ pub fn own_folder() -> std::io::Result<std::path::PathBuf> {
     Ok(exe.parent().map_or_else(|| std::path::PathBuf::from("."), Path::to_path_buf))
 }
 
+/// On a first start (no data in the own folder yet) the Java app's settings (`realmShark.properties`) copied
+/// over, as they are, before anything else reads them. True if copied.
+pub fn take_over_settings(own: &Path, java: &Path) -> std::io::Result<bool> {
+    let (from, to) = (java.join(crate::properties::FILE), own.join(crate::properties::FILE));
+    if holds_data(own) || to.exists() || !from.is_file() {
+        return Ok(false);
+    }
+    std::fs::copy(from, to)?;
+    Ok(true)
+}
+
 /// Whether a folder holds the app's data.
 pub fn holds_data(dir: &Path) -> bool {
     KEPT.iter().any(|f| dir.join(f).exists())

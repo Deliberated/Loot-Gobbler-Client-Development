@@ -147,6 +147,14 @@ pub fn parse(doc: &str) -> Result<Element, String> {
     p.element()
 }
 
+/// Where the root element ends (the byte after it).
+pub fn root_end(doc: &str) -> Option<usize> {
+    let mut p = Parser { s: doc.as_bytes(), at: 0, doc };
+    p.misc().ok()?;
+    p.element().ok()?;
+    Some(p.at)
+}
+
 struct Parser<'a> {
     s: &'a [u8],
     at: usize,

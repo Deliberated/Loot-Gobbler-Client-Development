@@ -6,6 +6,9 @@
 //!   lg-replay decoded-ids               the ids of the packets that have a decoder, for oracle/compare.sh
 //!   lg-replay gamedata <assets>         the game data read from an assets folder, to compare with Java
 //!   lg-replay <session.pcap> --stats    only the summary
+//!   lg-replay extract <resources.assets> <assets>
+//!                                       the game data extracted from the game as the Java app does, then each
+//!                                       sprite sheet's pixels as oracle/AssetOracle.java prints them
 //!   lg-replay <session.pcap> --world <assets> [--java-data <dir>] [--web <dir>] [--save <dir>]
 //!                                       the world state after each packet the world is fed, to compare
 //!                                       with Java (oracle/compare.sh): a checksum, the whole state on map changes
@@ -83,6 +86,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         [cmd, dir] if cmd == "gamedata" => gamedata(std::path::Path::new(dir)),
+        [cmd, game, out] if cmd == "extract" => extract(std::path::Path::new(game), std::path::Path::new(out)),
         [cmd, rest @ ..] if cmd == "capture" => {
             let all = rest.iter().any(|f| f == "--all");
             let assets = rest.iter().position(|f| f == "--world").and_then(|i| rest.get(i + 1));
@@ -500,6 +504,28 @@ fn world(
     }
     full(&mut out, "end", &w.dump());
     let _ = out.flush();
+    ExitCode::SUCCESS
+}
+
+/// The extraction, then `png <name> <width> <height> <crc of the ARGB pixels>` per sprite sheet written.
+fn extract(game: &std::path::Path, out: &std::path::Path) -> ExitCode {
+    if let Err(e) = lg_gamedata::extract::extract(game, out, &mut |_| {}) {
+        eprintln!("{e}");
+        return ExitCode::FAILURE;
+    }
+    let dir = out.join("sprites");
+    let mut names: Vec<String> = std::fs::read_dir(&dir)
+        .map(|d| d.filter_map(Result::ok).map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.ends_with(".png")).collect())
+        .unwrap_or_default();
+    names.sort();
+    for n in names {
+        let dec = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(dir.join(&n)).expect("png")));
+        let mut r = dec.read_info().expect("png");
+        let mut buf = vec![0; r.output_buffer_size()];
+        let info = r.next_frame(&mut buf).expect("png");
+        let argb: Vec<u8> = buf[..info.buffer_size()].as_chunks::<4>().0.iter().flat_map(|p| [p[3], p[0], p[1], p[2]]).collect();
+        println!("png {n} {} {} {:08x}", info.width, info.height, lg_replay::crc32(&argb));
+    }
     ExitCode::SUCCESS
 }
 

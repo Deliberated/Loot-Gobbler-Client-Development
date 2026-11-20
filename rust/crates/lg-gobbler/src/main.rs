@@ -2,9 +2,12 @@
 //! into its own folder (next to the program, or `--data`) in the Java app's formats. On a first start the Java
 //! app's folder (`--java`) is taken over: read only, copied in full.
 //!
-//!   loot-gobbler [--java <Java app folder>] [--data <folder>] [--assets <folder>] [--offline] [--pcap <file>]
+//!   loot-gobbler [--java <Java app folder>] [--data <folder>] [--path <resources.assets>] [--assets <folder>]
+//!                [--offline] [--pcap <file>]
 //!
-//! `--assets`: the game data (ObjectID.list, xml/...), by default `assets` in the own folder, else in the Java one.
+//! The game data (ObjectID.list, xml/...) is extracted from the game into `assets` in the own folder when the game's
+//! file changed, as the Java app does (`--path`: the game's `resources.assets`, if it is not found by itself).
+//! `--assets`: game data from another folder instead, as it is.
 //! `--offline`: never ask the game's web API (character list, exaltations, friends, missions).
 //! `--pcap`: a recording instead of capturing, played as if it happened now.
 
@@ -16,12 +19,13 @@ struct Options {
     java: Option<PathBuf>,
     data: Option<PathBuf>,
     assets: Option<PathBuf>,
+    game: Option<PathBuf>,
     offline: bool,
     pcap: Option<PathBuf>,
 }
 
 fn options() -> Result<Options, String> {
-    let mut o = Options { java: None, data: None, assets: None, offline: false, pcap: None };
+    let mut o = Options { java: None, data: None, assets: None, game: None, offline: false, pcap: None };
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         let mut value = || args.next().map(PathBuf::from).ok_or(format!("{a} needs a value"));
@@ -29,6 +33,7 @@ fn options() -> Result<Options, String> {
             "--java" => o.java = Some(value()?),
             "--data" => o.data = Some(value()?),
             "--assets" => o.assets = Some(value()?),
+            "--path" => o.game = Some(value()?),
             "--pcap" => o.pcap = Some(value()?),
             "--offline" => o.offline = true,
             _ => return Err(format!("unknown: {a}")),
@@ -45,7 +50,9 @@ fn main() -> ExitCode {
     let o = match options() {
         Ok(o) => o,
         Err(e) => {
-            eprintln!("{e}\nusage: loot-gobbler [--java <dir>] [--data <dir>] [--assets <dir>] [--offline] [--pcap <file>]");
+            eprintln!(
+                "{e}\nusage: loot-gobbler [--java <dir>] [--data <dir>] [--path <resources.assets>] [--assets <dir>] [--offline] [--pcap <file>]"
+            );
             return ExitCode::FAILURE;
         }
     };
@@ -60,13 +67,17 @@ fn main() -> ExitCode {
         eprintln!("cannot make {}: {e}", own.display());
         return ExitCode::FAILURE;
     }
-    let assets = o.assets.clone().unwrap_or_else(|| {
-        let mine = own.join("assets");
-        match &o.java {
-            Some(j) if !mine.exists() => j.join("assets"),
-            _ => mine,
+    if let Some(j) = &o.java {
+        match lg_app::files::take_over_settings(&own, j) {
+            Ok(true) => eprintln!("took the Java app's settings over"),
+            Ok(false) => {}
+            Err(e) => eprintln!("cannot copy the Java app's settings: {e}"),
         }
-    });
+    }
+    let assets = match &o.assets {
+        Some(a) => a.clone(),
+        None => own_assets(&own, &o),
+    };
     let game = lg_gamedata::GameData::load(&assets);
     for p in &game.problems {
         eprintln!("{p}");
@@ -93,6 +104,44 @@ fn main() -> ExitCode {
     match &o.pcap {
         Some(f) => play(&mut app, &own, f),
         None => capture(&mut app, &own),
+    }
+}
+
+/// The game data in the own folder, extracted if the game's file changed (Java: `AssetCheck`); without the game
+/// and without own game data, the Java app's.
+fn own_assets(own: &Path, o: &Options) -> PathBuf {
+    let zone = lg_app::localtime::Zone::system();
+    let mut props = lg_app::properties::Properties::load(own);
+    let game = o.game.clone().or_else(lg_gamedata::extract::find_game_file).or_else(|| {
+        // Java keeps the folder you chose but never reads it again
+        props.get("realmResPath").map(PathBuf::from).filter(|p| p.is_file())
+    });
+    match &game {
+        Some(g) => eprintln!("game files: {}", g.display()),
+        None => eprintln!("game files not found; give --path <resources.assets>"),
+    }
+    let version = concat!("v", env!("CARGO_PKG_VERSION"));
+    let started = std::time::Instant::now();
+    let mut last = String::new();
+    let mut progress = |s: &str| {
+        // the counting steps only every so often
+        let step = s.trim_end_matches(|c: char| c.is_ascii_digit() || c == 'K' || c == ' ');
+        if step != last {
+            eprintln!("  {s}");
+            last = step.to_string();
+        }
+    };
+    match lg_app::assets::check(own, &mut props, game.as_deref(), version, now_ms(), &zone, &mut progress) {
+        Ok(lg_app::assets::Outcome::Extracted) => {
+            eprintln!("game data extracted in {:.1} s", started.elapsed().as_secs_f64());
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!("cannot extract the game data: {e}"),
+    }
+    let mine = own.join("assets");
+    match &o.java {
+        Some(j) if !mine.join("ObjectID.list").exists() => j.join("assets"),
+        _ => mine,
     }
 }
 
