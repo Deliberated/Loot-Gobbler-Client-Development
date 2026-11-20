@@ -172,6 +172,8 @@ impl DpsView {
         let icons = &mut *c.icons;
         let data = app.world.data();
         let mut toggle: Option<String> = None;
+        let pending = std::cell::RefCell::new(Vec::new());
+        let zone = &app.zone;
         widgets::section(
             ui,
             &p,
@@ -180,14 +182,18 @@ impl DpsView {
             fixed::GOLD,
             |ui, head| {
                 let bw = jtext::width(ui.painter(), "COPY ALL", &small()) + 32.0;
-                crate::inventory::button(
+                if crate::inventory::button(
                     ui,
                     &p,
                     Rect::from_min_size(pos2(head.right() - bw, head.top()), vec2(bw, head.height())),
                     "Copy all",
                     false,
                     "dps-copy-all",
-                );
+                ) && let Some(run) = shown
+                {
+                    let text: String = run.bosses.iter().map(|b| boss_text(data, zone, run, b) + "\n").collect();
+                    ui.ctx().copy_text(text);
+                }
             },
             |ui, _| {
                 egui::ScrollArea::vertical().id_salt("boss-damage").show(ui, |ui| {
@@ -214,7 +220,7 @@ impl DpsView {
                                 let b = &run.bosses[i];
                                 let key = boss_key(run, is_live, b, i);
                                 let open = is_live != self.expanded.contains(&key);
-                                let (h, clicked) = boss_block(ui, &p, icons, data, run, b, open, pos2(x, y), w, &key);
+                                let (h, clicked) = boss_block(ui, &p, icons, data, run, b, open, pos2(x, y), w, &key, zone);
                                 if clicked {
                                     toggle = Some(key);
                                 }
@@ -240,14 +246,22 @@ impl DpsView {
             fixed::BLUE,
             |ui, head| {
                 let bw = jtext::width(ui.painter(), "CLEAR ALL", &small()) + 32.0;
-                crate::inventory::button(
+                if crate::inventory::button(
                     ui,
                     &p,
                     Rect::from_min_size(pos2(head.right() - bw, head.top()), vec2(bw, head.height())),
                     "Clear all",
                     true,
                     "dps-clear-all",
-                );
+                ) {
+                    pending.borrow_mut().push(crate::window::Ask::Confirm {
+                        title: "Clear all".into(),
+                        text: "Delete all past dungeons?".into(),
+                        yes: "Yes".into(),
+                        no: "No".into(),
+                        then: Box::new(crate::window::Ask::ClearRuns),
+                    });
+                }
             },
             |ui, _| {
                 egui::ScrollArea::vertical().id_salt("run-history").show(ui, |ui| {
@@ -258,7 +272,7 @@ impl DpsView {
                     let mut y = top.y + 8.0;
                     if let Some(l) = live {
                         let sel = self.selected.is_none() && held.is_none();
-                        if history_row(ui, &p, icons, app, l, true, sel, pos2(x, y), w) {
+                        if history_row(ui, &p, icons, app, l, true, sel, pos2(x, y), w).0 {
                             pick = Some(None);
                         }
                         y += row_height(&painter);
@@ -276,8 +290,13 @@ impl DpsView {
                     }
                     for run in &runs {
                         let sel = self.selected == Some(run.start) || held.is_some_and(|h| std::ptr::eq(h, *run));
-                        if history_row(ui, &p, icons, app, run, false, sel, pos2(x, y), w) {
+                        let (clicked, removed) = history_row(ui, &p, icons, app, run, false, sel, pos2(x, y), w);
+                        if clicked {
                             pick = Some(Some(run.start));
+                        }
+                        if removed {
+                            // only marked removed (Java `DpsHistory.remove`), no question asked
+                            pending.borrow_mut().push(crate::window::Ask::HideRun(run.start));
                         }
                         y += row_height(&painter);
                     }
@@ -285,11 +304,20 @@ impl DpsView {
                 });
             },
         );
+        c.asks.extend(pending.take());
         if let Some(sel) = pick {
             self.selected = sel;
             if let Some(run) = sel.and_then(|s| runs.iter().find(|r| r.start == s)) {
                 self.open_latest(run);
             }
+        }
+    }
+
+    /// Java `showRun`: a saved run (None: the one in progress, followed live) with its latest boss opened.
+    pub fn show_run(&mut self, history: &lg_app::dps_history::DpsHistory, start: Option<i64>) {
+        self.selected = start;
+        if let Some(run) = start.and_then(|s| history.runs.iter().find(|r| r.start == s)) {
+            self.open_latest(run);
         }
     }
 
@@ -316,11 +344,13 @@ fn history_row(
     selected: bool,
     at: egui::Pos2,
     w: f32,
-) -> bool {
+) -> (bool, bool) {
     let painter = ui.painter();
     let data = app.world.data();
     let h = row_height(painter);
     let rr = Rect::from_min_size(at, vec2(w, h));
+    // the row first: its delete button lies over it
+    let row = ui.interact(rr, ui.scope_id().with(("run", r.start)), Sense::click());
     painter.rect(rr, 0.0, p.header, Stroke::new(1.0, p.line), StrokeKind::Inside);
     if selected {
         painter.rect_stroke(rr, 0.0, Stroke::new(2.0, p.gold), StrokeKind::Inside);
@@ -350,10 +380,11 @@ fn history_row(
     jtext::draw(painter, pos2(tx, ty + lh), Align2::LEFT_TOP, &when_text, &text(18.0), if selected { p.gold } else { fixed::MUTED });
     // at the right: delete, your rank before it
     let mut rx = rr.right() - 6.0;
+    let mut removed = false;
     if !current {
         let bw = 36.0;
         let br = Rect::from_min_size(pos2(rx - bw, rr.center().y - 18.0), vec2(bw, 36.0));
-        crate::inventory::button(ui, p, br, "x", true, &format!("run-x-{}", r.start));
+        removed = crate::inventory::button(ui, p, br, "x", true, &format!("run-x-{}", r.start));
         rx = br.left() - 8.0;
     }
     if !r.guild_hall {
@@ -363,7 +394,7 @@ fn history_row(
         };
         jtext::draw(painter, pos2(rx, rr.center().y), Align2::RIGHT_CENTER, &t, &text(18.0), color);
     }
-    ui.interact(rr, ui.scope_id().with(("run", r.start)), Sense::click()).clicked()
+    (row.clicked() && !removed, removed)
 }
 
 /// One boss (Java `bossBlock`): its head (icon, name, fight length, players; your place, copy) and, when open, the
@@ -379,6 +410,7 @@ fn boss_block(
     at: egui::Pos2,
     w: f32,
     key: &str,
+    zone: &lg_app::localtime::Zone,
 ) -> (f32, bool) {
     let painter = ui.painter();
     let f = text(18.0);
@@ -429,7 +461,9 @@ fn boss_block(
     }
     let bw = jtext::width(painter, "COPY LOG", &small()) + 32.0;
     let br = Rect::from_min_size(pos2(hr.right() - 7.0 - bw, hr.center().y - 18.0), vec2(bw, 36.0));
-    crate::inventory::button(ui, p, br, "Copy log", false, &format!("copy-{key}"));
+    if crate::inventory::button(ui, p, br, "Copy log", false, &format!("copy-{key}")) {
+        ui.ctx().copy_text(boss_text(data, zone, run, b));
+    }
     if let Some(i) = b.players.iter().position(|x| x.me) {
         let place = if run.guild_hall { loadout_rank(run, b) } else { i + 1 };
         let of = if run.guild_hall { run.bosses.iter().filter(|b| b.players.iter().any(|x| x.me)).count() } else { b.players.len() };
@@ -534,4 +568,64 @@ fn table(painter: &egui::Painter, p: &Palette, data: &lg_gamedata::GameData, b: 
         y += ROW_H;
     }
     y - at.y
+}
+
+/// Java's line end in `String.format("%n")`.
+const NL: &str = if cfg!(windows) { "\r\n" } else { "\n" };
+
+/// Java `%-<w>s`: padded on the right, never cut.
+fn left(t: &str, w: usize) -> String {
+    format!("{t:<w$}")
+}
+
+/// Java `bossText`: one boss as text for the clipboard (Moonlight Village's phases are not ported yet).
+pub fn boss_text(data: &lg_gamedata::GameData, zone: &lg_app::localtime::Zone, run: &Run, b: &Boss) -> String {
+    let class = |t: i32| data.classes.iter().find(|k| k.id == t).map_or("?".to_string(), |k| k.name.clone());
+    let mut out =
+        format!("{} - {} ({})  {}\n", b.name.as_deref().unwrap_or("null"), run.dungeon, when(zone, run.start), duration(b.fight_ms));
+    if run.guild_hall {
+        const SLOTS: [&str; 4] = ["Weapon", "Ability", "Armor", "Ring"];
+        let loadout = match b.loadout {
+            None => "unknown".to_string(),
+            Some(l) => (0..4)
+                .map(|i| {
+                    let id = l[i];
+                    let name =
+                        if id <= 0 { "empty".to_string() } else { data.items.item(id).map_or(format!("Item {id}"), |it| it.name.clone()) };
+                    format!("{}: {name}", SLOTS[i])
+                })
+                .collect::<Vec<_>>()
+                .join(", "),
+        };
+        out += &format!("{loadout}\n");
+        out += &format!("{} {} {} {:>8} {:>10} {:>7}{NL}", left("#", 3), left("Name", 14), left("Class", 12), "DPS", "DMG", "%");
+        for (i, pl) in b.players.iter().enumerate() {
+            out += &format!(
+                "{} {} {} {:>8} {:>10} {:>6.1}%{NL}",
+                left(&(i + 1).to_string(), 3),
+                left(&pl.name, 14),
+                left(&class(pl.class_type), 12),
+                num(dps(b, pl).round() as i64),
+                num(i64::from(pl.damage)),
+                share(b, pl)
+            );
+        }
+        return out;
+    }
+    out +=
+        &format!("{} {} {} {:>8} {:>10} {:>8} {:>7}{NL}", left("#", 3), left("Player", 14), left("Class", 12), "DPS", "DMG", "Taken", "%");
+    for (i, pl) in b.players.iter().enumerate() {
+        out += &format!(
+            "{} {} {} {:>8} {:>10} {:>8} {:>6.1}%{}{NL}",
+            left(&(i + 1).to_string(), 3),
+            left(&pl.name, 14),
+            left(&class(pl.class_type), 12),
+            num(dps(b, pl).round() as i64),
+            num(i64::from(pl.damage)),
+            num(i64::from(pl.taken)),
+            share(b, pl),
+            if pl.died { "  died" } else { "" }
+        );
+    }
+    out
 }

@@ -115,12 +115,21 @@ impl eframe::App for Gui {
             }
         }
         self.window.shell.sniffing = self.capture.is_some();
+        // what the views asked for last frame is done before this one is drawn
+        if let Err(e) = self.app.save_changed(&self.own) {
+            eprintln!("cannot save into {}: {e}", self.own.display());
+        }
         let mut all = ui.new_child(egui::UiBuilder::new().max_rect(ui.ctx().content_rect()));
         self.window.show(&mut all, &self.app, now_ms());
         for ask in self.window.take_asks() {
             match ask {
                 lg_ui::window::Ask::Set(k, v) => self.set(&k, &v),
                 lg_ui::window::Ask::ClearChat => self.app.chat.clear(),
+                lg_ui::window::Ask::HideVisit(start) => self.app.dungeon_visits.remove(start),
+                lg_ui::window::Ask::ClearVisits => self.app.dungeon_visits.clear(),
+                lg_ui::window::Ask::HideRun(start) => self.app.dps_history.remove(start),
+                lg_ui::window::Ask::ClearRuns => self.app.dps_history.clear(),
+                lg_ui::window::Ask::Confirm { .. } => {}
             }
         }
         if self.window.shell.clicked_sniffer {

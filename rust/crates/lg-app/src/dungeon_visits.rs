@@ -283,6 +283,20 @@ fn read_visit(v: &lg_world::json::Json) -> Result<Visit, crate::java::Thrown> {
 }
 
 impl DungeonVisits {
+    /// Java `remove`: the finished visit (by its start) only marked removed, no longer shown.
+    pub fn remove(&mut self, start: i64) {
+        if let Some(v) = self.visits.iter_mut().find(|v| v.start == start && !v.hidden) {
+            v.hidden = true;
+            self.dirty = true;
+        }
+    }
+
+    /// Java `clear`: every finished visit gone (the run history stays).
+    pub fn clear(&mut self) {
+        self.visits.clear();
+        self.dirty = true;
+    }
+
     /// What the Java app kept (`dungeon_visits.json`), read only, then Java's checks at loading: late visits linked to
     /// their runs, late exaltations recovered. Without the file (Java's first start): a visit for every run kept.
     pub fn import(dir: &std::path::Path, dps: &DpsHistory, exalts: &crate::exalt_store::ExaltStore) -> DungeonVisits {
@@ -674,4 +688,23 @@ pub fn fame_gained(v: &Visit, chars: &crate::characters::Characters) -> i64 {
         }
     }
     best
+}
+
+#[cfg(test)]
+mod remove_tests {
+    use super::*;
+
+    #[test]
+    fn remove_marks_hidden_and_clear_empties() {
+        let mut d = DungeonVisits::default();
+        d.visits.push(Visit::new("Pirate Cave", 5));
+        d.visits.push(Visit::new("Pirate Cave", 9));
+        d.remove(5);
+        assert!(d.dirty && d.visits[0].hidden && !d.visits[1].hidden);
+        d.dirty = false;
+        d.remove(5);
+        assert!(!d.dirty, "removing twice changes nothing");
+        d.clear();
+        assert!(d.dirty && d.visits.is_empty());
+    }
 }

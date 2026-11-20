@@ -33,3 +33,32 @@ fn settings_clicks_ask_to_save() {
     assert!(asks.contains(&Ask::Set("chatPing".into(), "true".into())), "{asks:?}");
     assert_eq!(h.state().props.get("chatPing"), Some("true"));
 }
+
+#[test]
+fn clear_all_dungeons_asks_first() {
+    let app = Box::leak(Box::new(lg_app::App::new(lg_world::World::new(lg_gamedata::GameData::default()), 0)));
+    let mut win = Window::new(std::path::Path::new("/nonexistent"), lg_app::properties::Properties::in_memory(""));
+    win.open("Battles");
+    let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1799.0, 1005.0)).with_pixels_per_point(1.0).wgpu().build_ui_state(
+        |ui, win: &mut Window| {
+            let mut all = ui.new_child(egui::UiBuilder::new().max_rect(ui.ctx().content_rect()));
+            win.show(&mut all, app, 0);
+        },
+        win,
+    );
+    h.run_steps(2);
+    click(&mut h, Pos2::new(1197.0, 151.0));
+    let asks = h.state_mut().take_asks();
+    assert!(asks.is_empty(), "{asks:?}");
+    h.run_steps(2);
+    match h.state().asking() {
+        Some(Ask::Confirm { title, then, .. }) => {
+            assert_eq!(title, "Clear dungeons");
+            assert_eq!(**then, Ask::ClearVisits);
+        }
+        other => panic!("no question: {other:?}"),
+    }
+    if let Ok(dir) = std::env::var("LG_SHOT") {
+        h.render().expect("render").save(format!("{dir}/question.png")).expect("save");
+    }
+}

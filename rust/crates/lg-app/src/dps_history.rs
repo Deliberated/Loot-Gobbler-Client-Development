@@ -208,6 +208,20 @@ fn read_run(v: &lg_world::json::Json) -> Result<Run, crate::java::Thrown> {
 }
 
 impl DpsHistory {
+    /// Java `remove`: the run (by its start) only marked removed, no longer shown.
+    pub fn remove(&mut self, start: i64) {
+        if let Some(r) = self.runs.iter_mut().find(|r| r.start == start && !r.hidden) {
+            r.hidden = true;
+            self.dirty = true;
+        }
+    }
+
+    /// Java `clear`: every saved run gone.
+    pub fn clear(&mut self) {
+        self.runs.clear();
+        self.dirty = true;
+    }
+
     /// What the Java app kept (`dps_history.json`), read only, with Java's repair of broken starts (then newest
     /// first again). Unreadable: nothing.
     pub fn import(dir: &std::path::Path) -> DpsHistory {

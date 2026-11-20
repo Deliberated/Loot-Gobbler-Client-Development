@@ -7,6 +7,7 @@ use crate::jtext;
 use crate::profile::{Ctx, num};
 use crate::theme::{Palette, fixed, mix};
 use crate::widgets::{self, small, text};
+use crate::window::Ask;
 use egui::{Align2, Color32, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use lg_app::dungeon_visits::{self, Exalt, Visit};
 use std::collections::HashMap;
@@ -190,6 +191,7 @@ impl BattlesView {
         let main = Rect::from_min_size(body.min, vec2(overhead + cols * (TILE_MIN_WIDTH + GAP) - GAP + 20.0, body.height()));
         let mut picked = None;
         let mut toggled = None;
+        let pending = std::cell::RefCell::new(Vec::new());
         let collapsed = self.collapsed.clone();
         let icons = &mut *c.icons;
         widgets::section(
@@ -201,14 +203,22 @@ impl BattlesView {
             |ui, head| {
                 let painter = ui.painter();
                 let bw = jtext::width(painter, "CLEAR ALL", &small()) + 32.0;
-                crate::inventory::button(
+                if crate::inventory::button(
                     ui,
                     &p,
                     Rect::from_min_size(pos2(head.right() - bw, head.top()), vec2(bw, head.height())),
                     "Clear all",
                     true,
                     "clear-visits",
-                );
+                ) {
+                    pending.borrow_mut().push(Ask::Confirm {
+                        title: "Clear dungeons".into(),
+                        text: "Remove all dungeon visits from the list?\nThe DPS run history stays.".into(),
+                        yes: "OK".into(),
+                        no: "Cancel".into(),
+                        then: Box::new(Ask::ClearVisits),
+                    });
+                }
             },
             |ui, r| {
                 egui::ScrollArea::vertical().id_salt("dungeons").show(ui, |ui| {
@@ -302,9 +312,14 @@ impl BattlesView {
             .filter(|n| Some(n.start) == shown)
             .map(|n| (n, true))
             .or_else(|| visits.iter().copied().find(|v| Some(v.start) == shown).map(|v| (v, false)));
-        if let Some((v, current)) = shown_visit {
-            detail(ui, c, v, current, side);
+        if let Some((v, current)) = shown_visit
+            && let Some(run) = detail(ui, c, v, current, side)
+        {
+            // Java `showRun`: the run under DPS, its latest boss open (the one in progress followed live)
+            self.page = 1;
+            self.dps.show_run(&c.app.dps_history, run);
         }
+        c.asks.extend(pending.take());
         if let Some(s) = picked {
             self.selected = s;
         }
@@ -574,9 +589,13 @@ fn hit_source(data: &lg_gamedata::GameData, enemy: i32) -> String {
 
 /// The column on the right (Java `showDetail`): the dungeon, its boss fights, the damage graph, your death, the
 /// exaltation progress.
-fn detail(ui: &mut Ui, c: &mut Ctx, v: &Visit, current: bool, side: Rect) {
+/// Gives the run whose boss damage was asked for (None inside: the one in progress).
+fn detail(ui: &mut Ui, c: &mut Ctx, v: &Visit, current: bool, side: Rect) -> Option<Option<i64>> {
+    let asked = std::cell::RefCell::new(None);
+    let c_asks = std::cell::RefCell::new(Vec::new());
     let p = *c.p;
     let app = c.app;
+    let zone = &app.zone;
     let data = app.world.data();
     let now = c.now;
     let icons = &mut *c.icons;
@@ -631,14 +650,22 @@ fn detail(ui: &mut Ui, c: &mut Ctx, v: &Visit, current: bool, side: Rect) {
                 if !current {
                     let bw = jtext::width(&painter, "DELETE", &small()) + 32.0;
                     btn_h = 36.0;
-                    crate::inventory::button(
+                    if crate::inventory::button(
                         ui,
                         &p,
                         Rect::from_min_size(pos2(r.right() - bw, r.top()), vec2(bw, btn_h)),
                         "Delete",
                         true,
                         "delete-visit",
-                    );
+                    ) {
+                        c_asks.borrow_mut().push(Ask::Confirm {
+                            title: "Delete dungeon".into(),
+                            text: format!("Delete {} ({}) from the list?", v.dungeon, when_text(zone, v, false, now)),
+                            yes: "OK".into(),
+                            no: "Cancel".into(),
+                            then: Box::new(Ask::HideVisit(v.start)),
+                        });
+                    }
                 }
                 let h = th.max(64.0).max(btn_h);
                 if let Some(t) = icons.fitted(ui.ctx(), data, portal, 64, 64) {
@@ -697,14 +724,16 @@ fn detail(ui: &mut Ui, c: &mut Ctx, v: &Visit, current: bool, side: Rect) {
                 }
                 ty += 8.0;
                 let bw = jtext::width(&painter, "SHOW BOSS DAMAGE", &small()) + 32.0;
-                crate::inventory::button(
+                if crate::inventory::button(
                     ui,
                     &p,
                     Rect::from_min_size(pos2(r.left(), ty), vec2(bw, 36.0)),
                     "Show boss damage",
                     false,
                     "boss-damage",
-                );
+                ) {
+                    *asked.borrow_mut() = Some(if current { None } else { Some(run.start) });
+                }
                 ty + 36.0 - r.top()
             },
         );
@@ -830,6 +859,8 @@ fn detail(ui: &mut Ui, c: &mut Ctx, v: &Visit, current: bool, side: Rect) {
         );
         ui.allocate_exact_size(vec2(w, y - top.y), Sense::hover());
     });
+    c.asks.extend(c_asks.take());
+    asked.take()
 }
 
 /// Java's derived bold.
