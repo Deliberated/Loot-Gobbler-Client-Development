@@ -1238,6 +1238,9 @@ dependencies = [
  "egui",
  "egui_kittest",
  "image",
+ "lg-app",
+ "lg-gamedata",
+ "lg-world",
 ]
 
 [[package]]

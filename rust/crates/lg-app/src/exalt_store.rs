@@ -84,6 +84,27 @@ impl ExaltStore {
         self.dirty = true;
     }
 
+    /// Java `progressAt`: a stat's progress at a time, from the changes and the dungeon visits since.
+    pub fn progress_at(&self, visits: &crate::dungeon_visits::DungeonVisits, class_type: i32, stat: i32, since: i64) -> i32 {
+        let mut at = self.progress(class_type).and_then(|p| p.get(stat as usize).copied()).unwrap_or(0);
+        for c in &self.changes {
+            if c.t >= since && c.class_type == class_type && c.stat == stat {
+                at = at.min(c.before);
+            }
+        }
+        for v in visits.visits.iter().chain(visits.current.iter()) {
+            if v.start + v.duration_ms < since {
+                continue;
+            }
+            for e in &v.exalts {
+                if e.class_type == class_type && e.stat == stat {
+                    at = at.min(e.before);
+                }
+            }
+        }
+        at
+    }
+
     pub fn progress(&self, class_type: i32) -> Option<&Vec<i32>> {
         self.progress.get(&class_type)
     }

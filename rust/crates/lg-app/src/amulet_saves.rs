@@ -18,6 +18,8 @@ const HEAL: i32 = 120;
 const MIN_HIT: i32 = 2;
 pub const RECHARGE_MS: i64 = 1_800_000;
 const LOOK_BACK_MS: i64 = 1500;
+/// "Played lately": the last two weeks.
+const RECENT_MS: i64 = 14 * 24 * 3_600_000;
 /// The "+120" comes with the Invulnerable, before or after it.
 const HEAL_WINDOW_MS: i64 = 1500;
 /// What the first version counted: any Invulnerable while wearing it, buffs included.
@@ -201,6 +203,30 @@ impl AmuletSaves {
         self.saves.push(s);
         self.dirty = true;
         visits.amulet_saved(now);
+    }
+
+    /// Java `count`: every save kept.
+    pub fn count(&self) -> usize {
+        self.saves.iter().filter(|s| !s.removed).count()
+    }
+
+    /// Java `countSince`.
+    pub fn count_since(&self, since: i64) -> usize {
+        self.saves.iter().filter(|s| !s.removed && s.t >= since).count()
+    }
+
+    /// Java `wornRecently`: a living character played in the last two weeks wears an amulet that saves you.
+    pub fn worn_recently(chars: &crate::characters::Characters, data: &lg_gamedata::GameData, now: i64) -> bool {
+        chars.all().any(|c| {
+            c.alive
+                && c.last_played >= now - RECENT_MS
+                && c.equipment.as_ref().is_some_and(|e| e.len() > 3 && data.amulets.of(e[3]).is_some())
+        })
+    }
+
+    /// Java `relevant`: worn lately, or a save in the last two weeks.
+    pub fn relevant(&self, chars: &crate::characters::Characters, data: &lg_gamedata::GameData, now: i64) -> bool {
+        AmuletSaves::worn_recently(chars, data, now) || self.count_since(now - RECENT_MS) > 0
     }
 
     pub fn dump(&self) -> String {

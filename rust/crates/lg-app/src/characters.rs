@@ -19,6 +19,23 @@ pub struct UpeLook {
     pub first: bool,
 }
 
+/// A stretch of play (Java `CharacterStore.Session`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Session {
+    pub start: i64,
+    pub end: i64,
+    pub gained: i64,
+}
+
+impl Session {
+    pub fn duration_ms(&self) -> i64 {
+        (self.end - self.start).max(0)
+    }
+}
+
+pub const DAY_MS: i64 = 24 * 3_600_000;
+const SESSION_GAP_MS: i64 = 20 * 60_000;
+
 /// A fame reading.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sample {
@@ -221,6 +238,61 @@ impl Characters {
             }
         }
         best
+    }
+
+    /// Java `sessions`: a character's stretches of play since a time (fame samples at most 20 minutes apart),
+    /// newest first.
+    pub fn sessions(c: &Char, since: i64) -> Vec<Session> {
+        let mut out = Vec::new();
+        let (mut start, mut prev): (Option<&Sample>, Option<&Sample>) = (None, None);
+        for s in &c.samples {
+            if s.t < since {
+                continue;
+            }
+            let (Some(st), Some(p)) = (start, prev) else {
+                start = Some(s);
+                prev = Some(s);
+                continue;
+            };
+            if s.t - p.t > SESSION_GAP_MS {
+                out.push(Session { start: st.t, end: p.t, gained: p.fame - st.fame });
+                start = Some(s);
+            }
+            prev = Some(s);
+        }
+        if let (Some(st), Some(p)) = (start, prev) {
+            out.push(Session { start: st.t, end: p.t, gained: p.fame - st.fame });
+        }
+        out.reverse();
+        out
+    }
+
+    /// Java `gainedToday`: fame a character gained in the 24 hours before `now`.
+    pub fn gained_today(c: &Char, now: i64) -> i64 {
+        Characters::sessions(c, now - DAY_MS).iter().map(|s| s.gained).sum()
+    }
+
+    /// Java `mostPlayed`: the living character with the most fame gained in the last 24 hours; else the one you
+    /// play (or played last), else the living one played last.
+    pub fn most_played(&self, now: i64) -> Option<&Char> {
+        let mut best: Option<&Char> = None;
+        let mut best_gain = 0;
+        for c in self.all().filter(|c| c.alive) {
+            let g = Characters::gained_today(c, now);
+            if g > best_gain {
+                best = Some(c);
+                best_gain = g;
+            }
+        }
+        best.or_else(|| self.playing()).or_else(|| {
+            let mut last: Option<&Char> = None;
+            for c in self.all().filter(|c| c.alive && c.last_played > 0) {
+                if last.is_none_or(|l| c.last_played >= l.last_played) {
+                    last = Some(c);
+                }
+            }
+            last
+        })
     }
 
     /// The character you play now (Java `playing`).

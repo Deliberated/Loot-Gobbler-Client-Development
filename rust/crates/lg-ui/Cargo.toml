@@ -8,6 +8,9 @@ publish.workspace = true
 
 [dependencies]
 egui = "0.37"
+lg-app = { path = "../lg-app" }
+lg-gamedata = { path = "../lg-gamedata" }
+lg-world = { path = "../lg-world" }
 # pictures of the window without showing it (bin/ui-shot), to compare with the Java app's
 egui_kittest = { version = "0.37", features = ["wgpu", "snapshot"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
