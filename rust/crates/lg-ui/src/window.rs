@@ -89,6 +89,9 @@ pub enum ServerAsk {
     /// Item score weights and guild settings (admins).
     SaveScoring(f64, f64, f64),
     SaveGuild(f64),
+    /// A finished visit's guildmates from the server (dungeon, start, duration); asked again for those awaited.
+    RunLooks(String, i64, i64),
+    RetryLooks(String),
     /// The bell was opened: nothing new any more.
     MarkRead,
     /// The Guild tab: load the leaderboard and drops again; open a member's profile.

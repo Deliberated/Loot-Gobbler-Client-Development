@@ -186,8 +186,34 @@ fn main() {
                     .collect(),
             }));
         }
+        // "Battles:mates:<start>": that visit with a guildmate the server has (as the local test server answers)
+        let mates_visit = tab.strip_prefix("Battles:mates:").and_then(|t| t.parse::<i64>().ok());
+        if let Some(start) = mates_visit {
+            use lg_app::guild::{Looks, RunLook};
+            app.server.url = "https://loot.example.com".into();
+            app.server.state = lg_app::server::State::Online;
+            app.server.user = Some(lg_app::server::User { id: 1, ign: "Gunshit".into(), ..Default::default() });
+            app.server.mates.names = ["valhirs".to_string()].into_iter().collect();
+            if let Some(v) = app.dungeon_visits.visits.iter().find(|v| v.start == start) {
+                let look = RunLook {
+                    player: "Valhirs".into(),
+                    class_type: 782,
+                    source: "visit".into(),
+                    max_hp: 980,
+                    hit_at: vec![62000, 63000, 63500, 202000, 202400, 302000],
+                    hit_damage: vec![120, 150, 200, 90, 310, 60],
+                    quick_used: Some(vec![2594, 2594, 2793]),
+                    quick_at: Some(vec![63000, 202500, 302100]),
+                    ..Default::default()
+                };
+                let key = format!("{}/{}", v.dungeon, v.start);
+                app.server.mates.looks.insert(key, Looks::Got([("valhirs".to_string(), vec![look])].into_iter().collect()));
+            }
+        }
         let admin = tab == "Server:admin";
-        let shown = if tab == "Server:online" || dialog.is_some() || admin {
+        let shown = if mates_visit.is_some() {
+            "Battles".to_string()
+        } else if tab == "Server:online" || dialog.is_some() || admin {
             app.server.url = "https://loot.example.com".into();
             app.server.state = lg_app::server::State::Online;
             app.server.status = Some(lg_app::server::Status {
@@ -251,6 +277,9 @@ fn main() {
                 }
                 None => {
                     win.open(&shown);
+                    if let Some(start) = mates_visit {
+                        win.battles.selected = start;
+                    }
                     if let Some(d) = dialog.clone() {
                         win.ask(lg_ui::window::Ask::Server(d));
                         win.take_asks();

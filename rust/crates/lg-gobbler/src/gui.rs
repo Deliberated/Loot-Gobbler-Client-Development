@@ -213,6 +213,7 @@ impl Gui {
         }
         self.app.server.tick();
         self.app.server.watch(now);
+        self.app.server.mates_tick(now);
         let answers: Vec<_> = self.net.rx.try_iter().collect();
         for d in answers {
             if let Some(d) = self.app.server.done(d) {
@@ -316,6 +317,8 @@ impl Gui {
             S::RefreshModeration => server.refresh_moderation(),
             S::GuildRefresh => server.guild_refresh(),
             S::MarkRead => server.unread = false,
+            S::RunLooks(d, start, dur) => server.run_looks(&d, start, dur),
+            S::RetryLooks(key) => server.retry_looks(&key),
             S::CaravanLoad => server.caravan_load(),
             S::MapsLoad => server.maps_load(),
             S::OpenMember(id) => server.open_member(id),
@@ -540,6 +543,10 @@ impl eframe::App for Gui {
                     ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("lg-copy-card"), id));
                 }
                 None if t.starts_with("open:") => self.window.open(&t[5..]),
+                None if t.starts_with("visit:") => {
+                    self.window.open("Battles");
+                    self.window.battles.selected = t[6..].parse().unwrap_or(-1);
+                }
                 None if t.starts_with("member:") => {
                     self.window.open("Guild:Member");
                     self.app.server.open_member(t[7..].parse().unwrap_or(0));

@@ -237,7 +237,9 @@ impl DpsView {
                                 }
                                 let key = boss_key(run, is_live, b, i);
                                 let open = is_live != self.expanded.contains(&key);
-                                let (h, clicked) = boss_block(ui, &p, icons, data, run, b, open, pos2(x, y), w, &key, zone, visit, c_now);
+                                let who = (&app.server.mates.names, &app.friends);
+                                let (h, clicked) =
+                                    boss_block(ui, &p, icons, data, run, b, open, pos2(x, y), w, &key, zone, visit, c_now, who);
                                 if clicked {
                                     toggle = Some(key);
                                 }
@@ -433,6 +435,7 @@ fn boss_block(
     zone: &lg_app::localtime::Zone,
     visit: Option<&lg_app::dungeon_visits::Visit>,
     now: i64,
+    who: Who,
 ) -> (f32, bool) {
     let painter = ui.painter();
     let f = text(18.0);
@@ -504,7 +507,7 @@ fn boss_block(
     if !open {
         return (head_h, clicked);
     }
-    let mut h = table(painter, p, data, b, run.guild_hall, pos2(at.x, hr.bottom()), w);
+    let mut h = table(painter, p, data, b, run.guild_hall, pos2(at.x, hr.bottom()), w, who);
     // Moonlight Village: the boss's phases below its damage table
     if let Some(v) = visit {
         let phases: Vec<&lg_app::dungeon_visits::MvPhase> = v.mv_phases.iter().filter(|ph| ph.boss == b.object_type).collect();
@@ -516,7 +519,20 @@ fn boss_block(
 }
 
 /// The damage table (Java `bossTable` / `rangeTable`): #, player with a share bar, class, DPS, damage, taken, %.
-fn table(painter: &egui::Painter, p: &Palette, data: &lg_gamedata::GameData, b: &Boss, range: bool, at: egui::Pos2, w: f32) -> f32 {
+/// Your guildmates' names (lower case) and your friends, for the marks after a player's name.
+type Who<'a> = (&'a std::collections::HashSet<String>, &'a lg_app::friends::Friends);
+
+#[allow(clippy::too_many_arguments)]
+fn table(
+    painter: &egui::Painter,
+    p: &Palette,
+    data: &lg_gamedata::GameData,
+    b: &Boss,
+    range: bool,
+    at: egui::Pos2,
+    w: f32,
+    who: Who,
+) -> f32 {
     let cols: &[&str] =
         if range { &["#", "Name", "Class", "DPS", "DMG", "%"] } else { &["#", "Player", "Class", "DPS", "DMG", "DMG Taken", "%"] };
     let n = cols.len();
@@ -572,16 +588,35 @@ fn table(painter: &egui::Painter, p: &Palette, data: &lg_gamedata::GameData, b: 
                         );
                     }
                     let nr = jtext::draw(painter, pos2(cx, cy), Align2::LEFT_CENTER, t, &f, if pl.me { fixed::GOLD } else { p.ink });
+                    // Java `marks`: GUILD and FRIEND boxed, then DIED (red, no box)
+                    let mine = b.players.iter().find(|x| x.me).and_then(|m| m.guild.as_deref()).filter(|g| !g.is_empty());
+                    let guildmate = mine.is_some_and(|g| pl.guild.as_deref() == Some(g)) || who.0.contains(&pl.name.to_lowercase());
+                    let mut marks: Vec<(&str, Color32, bool)> = Vec::new();
+                    if !pl.me && guildmate {
+                        marks.push(("GUILD", Color32::from_rgb(0x4C, 0xAF, 0x50), true));
+                    }
+                    if !pl.me && who.1.is_friend(&pl.name) {
+                        marks.push(("FRIEND", Color32::from_rgb(0x4A, 0x90, 0xE2), true));
+                    }
                     if pl.died {
-                        let mf = text(16.0);
-                        jtext::draw_bold(
-                            painter,
-                            pos2(nr.right() + 8.0, cy),
-                            Align2::LEFT_CENTER,
-                            "DIED",
-                            &mf,
-                            Color32::from_rgb(0xD8, 0x46, 0x3F),
-                        );
+                        marks.push(("DIED", Color32::from_rgb(0xD8, 0x46, 0x3F), false));
+                    }
+                    let mf = text(16.0);
+                    let mh = jtext::height(painter, &mf) + 2.0;
+                    let mut mx = nr.right() + 8.0;
+                    for (t, c, boxed) in marks {
+                        let tw = jtext::bold_width(painter, t, &mf);
+                        let bw = tw + if boxed { 8.0 } else { 0.0 };
+                        if boxed {
+                            painter.rect_stroke(
+                                Rect::from_min_size(pos2(mx, cy - mh / 2.0), vec2(bw - 1.0, mh - 1.0)),
+                                3.0,
+                                Stroke::new(1.2, c),
+                                StrokeKind::Inside,
+                            );
+                        }
+                        jtext::draw_bold(painter, pos2(mx + if boxed { 4.0 } else { 0.0 }, cy), Align2::LEFT_CENTER, t, &mf, c);
+                        mx += bw + 6.0;
                     }
                 }
                 2 => {

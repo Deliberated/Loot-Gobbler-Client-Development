@@ -358,6 +358,162 @@ pub fn quest_maps_of(j: &Json) -> QuestMaps {
     }
 }
 
+/// A guildmate's look and hits in a run (Java `RunLook`): what their client saved with their visit ("visit"), else
+/// how their character of that class looks now ("character").
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RunLook {
+    pub player: String,
+    pub class_type: i32,
+    pub skin: i32,
+    pub tex1: i32,
+    pub tex2: i32,
+    pub source: String,
+    pub alive: bool,
+    pub last_played: i64,
+    pub max_hp: i32,
+    /// The hits they took, ms after the asked "from".
+    pub hit_at: Vec<i64>,
+    pub hit_damage: Vec<i32>,
+    pub dealt: i64,
+    /// Items used from a quick slot and when; None from older clients / servers.
+    pub quick_used: Option<Vec<i32>>,
+    pub quick_at: Option<Vec<i64>>,
+}
+
+fn run_look_of(j: &Json) -> RunLook {
+    let longs = |v: Option<&Json>| list(v, |x| long(Some(x)));
+    RunLook {
+        player: text(j.get("player")),
+        class_type: int(j.get("classType"), 0),
+        skin: int(j.get("skin"), 0),
+        tex1: int(j.get("tex1"), 0),
+        tex2: int(j.get("tex2"), 0),
+        source: text(j.get("source")),
+        alive: matches!(j.get("alive"), Some(Json::Bool(true))),
+        last_played: long(j.get("lastPlayed")),
+        max_hp: int(j.get("maxHp"), 0),
+        hit_at: longs(j.get("hitAt")),
+        hit_damage: list(j.get("hitDamage"), |x| int(Some(x), 0)),
+        dealt: long(j.get("dealt")),
+        quick_used: matches!(j.get("quickUsed"), Some(Json::Array(_))).then(|| list(j.get("quickUsed"), |x| int(Some(x), 0))),
+        quick_at: matches!(j.get("quickAt"), Some(Json::Array(_))).then(|| longs(j.get("quickAt"))),
+    }
+}
+
+/// What the server said about a run's guildmates.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Looks {
+    Asking,
+    /// The server could not answer (stays so until the server changes).
+    Failed,
+    /// By lower-case name.
+    Got(std::collections::HashMap<String, Vec<RunLook>>),
+}
+
+/// Java `Guildmates`: the other members' names (lower case), and per finished visit what the server has of them.
+#[derive(Debug, Default)]
+pub struct Mates {
+    pub names: std::collections::HashSet<String>,
+    /// By "dungeon/start": the answer, and (while a guildmate who fought with you is not there yet) when to ask again
+    /// with the visit's dungeon, from and to.
+    pub looks: std::collections::HashMap<String, Looks>,
+    pub(crate) retries: Vec<(i64, String, String, i64, i64)>,
+    /// Answers that may want a retry: key, dungeon, from, to.
+    pub(crate) pending_retry: Vec<(String, String, i64, i64)>,
+    pub(crate) account: String,
+    /// Goes up with every answer, so views know to redraw.
+    pub version: u64,
+}
+
+/// A guildmate's client syncs their visit a little after they left: until all who fought with you are there, the
+/// server is asked again every RETRY_MS, until RETRY_FOR_MS after you left the dungeon.
+pub const RETRY_MS: i64 = 20_000;
+pub const RETRY_FOR_MS: i64 = 180_000;
+
+impl Mates {
+    /// The guildmates in the run's damage table (not you), by lower-case name, first row seen.
+    pub fn fought<'a>(&self, run: Option<&'a crate::dps_history::Run>, dungeon: &str) -> Vec<(String, &'a crate::dps_history::PlayerRow)> {
+        let mut out: Vec<(String, &crate::dps_history::PlayerRow)> = Vec::new();
+        let Some(run) = run.filter(|r| !self.names.is_empty() && !r.guild_hall && r.dungeon == dungeon) else { return out };
+        for b in &run.bosses {
+            for p in &b.players {
+                let key = p.name.to_lowercase();
+                if !p.me && self.names.contains(&key) && !out.iter().any(|(k, _)| *k == key) {
+                    out.push((key, p));
+                }
+            }
+        }
+        out
+    }
+
+    /// Java `with` / `withLooks`: the guildmates who fought with you, each as (name, class, skin, tex1, tex2) in the
+    /// look the server has for them: their own visit's, else (only if no look of theirs was seen here) their
+    /// character of that class as it looks now (living and last played first).
+    pub fn with(
+        &self,
+        key: &str,
+        fought: &[(String, &crate::dps_history::PlayerRow)],
+        transform_skins: &std::collections::HashSet<i32>,
+    ) -> Vec<(String, i32, i32, i32, i32)> {
+        let looks = match self.looks.get(key) {
+            Some(Looks::Got(l)) => Some(l),
+            _ => None,
+        };
+        fought
+            .iter()
+            .map(|(k, p)| {
+                let plain = (p.name.clone(), p.class_type, p.skin, p.tex1, p.tex2);
+                let Some(list) = looks.and_then(|l| l.get(k)) else { return plain };
+                if let Some(l) = list.iter().find(|l| l.source == "visit" && l.class_type == p.class_type) {
+                    return (p.name.clone(), p.class_type, l.skin, l.tex1, l.tex2);
+                }
+                let seen = (p.skin > 0 && !transform_skins.contains(&p.skin)) || p.tex1 != 0 || p.tex2 != 0;
+                if seen {
+                    return plain;
+                }
+                list.iter()
+                    .filter(|l| l.source == "character" && l.class_type == p.class_type)
+                    .max_by(|a, b| a.alive.cmp(&b.alive).then(a.last_played.cmp(&b.last_played)))
+                    .map_or(plain.clone(), |l| (p.name.clone(), p.class_type, l.skin, l.tex1, l.tex2))
+            })
+            .collect()
+    }
+
+    /// Java `awaited`: who fought with you but whose own visit is not on the server yet.
+    pub fn awaited(&self, key: &str, fought: &[(String, &crate::dps_history::PlayerRow)]) -> Vec<String> {
+        let Some(Looks::Got(looks)) = self.looks.get(key) else { return Vec::new() };
+        fought
+            .iter()
+            .filter(|(k, _)| !looks.get(k).is_some_and(|l| l.iter().any(|x| x.source == "visit")))
+            .map(|(_, p)| p.name.clone())
+            .collect()
+    }
+}
+
+/// A dungeon's name in a URL.
+fn url_encode(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'*' => (b as char).to_string(),
+            b' ' => "+".into(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+/// The call asking for a run's guildmates.
+pub fn run_looks_path(dungeon: &str, from: i64, to: i64) -> String {
+    format!("/guild/looks?dungeon={}&from={from}&to={to}", url_encode(dungeon))
+}
+
+pub fn run_looks_of(j: &Json) -> std::collections::HashMap<String, Vec<RunLook>> {
+    let mut by: std::collections::HashMap<String, Vec<RunLook>> = std::collections::HashMap::new();
+    for l in list(j.get("looks"), run_look_of) {
+        by.entry(l.player.to_lowercase()).or_default().push(l);
+    }
+    by
+}
+
 /// Your clear, kept on the map until the server has it (the upload takes a moment).
 #[derive(Debug, Clone, Default)]
 pub struct PendingClear {

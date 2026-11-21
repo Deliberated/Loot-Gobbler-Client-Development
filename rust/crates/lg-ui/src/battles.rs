@@ -570,6 +570,35 @@ fn tile(
         jtext::draw_bold(painter, br.center(), Align2::CENTER_CENTER, "NOT COMPLETED", &ff, red);
         widgets::tip(ui, br, ("open", v.start), "You left before its boss was killed");
     }
+    // Java `mates`: the guildmates who fought with you, in their look then, rows of two at the top right
+    let shown = if current { app.dps_history.live.as_ref() } else { run };
+    let fought = app.server.mates.fought(shown, &v.dungeon);
+    if !fought.is_empty() {
+        let key = format!("{}/{}", v.dungeon, v.start);
+        if !current && !app.server.mates.looks.contains_key(&key) {
+            crate::window::ask_later(ui.ctx(), Ask::Server(crate::window::ServerAsk::RunLooks(v.dungeon.clone(), v.start, v.duration_ms)));
+        }
+        let mates = app.server.mates.with(&key, &fought, &data.items.transform_skins);
+        let mut tip = "With you:".to_string();
+        let (right, top) = (r.right() - 10.0, r.top() + 8.0);
+        let mut zone = Rect::NOTHING;
+        for (i, (name, class, skin, t1, t2)) in mates.iter().enumerate() {
+            let cls = data.classes.iter().find(|k| k.id == *class).map_or(String::new(), |k| format!(" ({})", k.name));
+            tip.push_str(&format!("\n{name}{cls}"));
+            if i >= 4 {
+                continue;
+            }
+            let row = (i / 2) as f32;
+            let in_row = (mates.len().min(4) - (i / 2) * 2).min(2);
+            let col_from_right = (in_row - 1 - i % 2) as f32;
+            let mr = Rect::from_min_size(pos2(right - 30.0 - col_from_right * 32.0, top + row * 32.0), vec2(30.0, 30.0));
+            if let Some(t) = icons.skin(ui.ctx(), data, if *skin > 0 { *skin } else { *class }, *t1, *t2, 30) {
+                painter.image(t.id(), mr, uv(), Color32::WHITE);
+            }
+            zone = zone.union(mr);
+        }
+        widgets::tip(ui, zone, ("mates", v.start), &tip);
+    }
     clicked
 }
 
@@ -943,8 +972,139 @@ fn dodge_color(pct: f64) -> Color32 {
     Color32::from_rgb(m(a.0, b.0), m(a.1, b.1), m(a.2, b.2))
 }
 
-/// Java `guildSection`: you and the guildmates who use Loot Gobbler in this dungeon, four facts and a podium. No
-/// server yet: you alone, under the note asking to log in.
+/// The players' colours (shown when their look is unknown): you first, then the guildmates in turn.
+const GUILD_COLORS: [Color32; 8] = [
+    Color32::from_rgb(0xE5, 0xB2, 0x3A),
+    Color32::from_rgb(0x5F, 0xA3, 0x43),
+    Color32::from_rgb(0x4C, 0x8F, 0xE0),
+    Color32::from_rgb(0xB3, 0x6B, 0xE0),
+    Color32::from_rgb(0xE0, 0x67, 0x9C),
+    Color32::from_rgb(0x3F, 0xC4, 0xD6),
+    Color32::from_rgb(0xE8, 0x8A, 0x3A),
+    Color32::from_rgb(0xC0, 0x50, 0x3C),
+];
+
+/// One player compared (Java's series, row, max HP and quick slot items).
+struct Mate {
+    name: String,
+    color: Color32,
+    at: Vec<i64>,
+    damage: Vec<i32>,
+    look: Option<(i32, i32, i32, i32)>,
+    max_hp: i32,
+    /// Items used from a quick slot and when (None: not known).
+    quick: Option<Vec<i32>>,
+    quick_at: Option<Vec<i64>>,
+}
+
+/// Java `guildmates`: the guildmates who were in the visit and finished its final boss with you join the list; what
+/// to say above them (why they are not (yet) there), or None when all are in.
+fn guildmates(
+    app: &lg_app::App,
+    v: &Visit,
+    run: Option<&lg_app::dps_history::Run>,
+    current: bool,
+    mates: &mut Vec<Mate>,
+    ask: &mut Vec<Ask>,
+) -> Option<String> {
+    use crate::window::ServerAsk;
+    let s = &app.server;
+    if s.state != lg_app::server::State::Online || s.user.is_none() {
+        return Some("Log in to a Loot Gobbler server to compare with your guildmates.".into());
+    }
+    if current {
+        return Some("Your guildmates are added once you have left the dungeon.".into());
+    }
+    let key = format!("{}/{}", v.dungeon, v.start);
+    let looks = match s.mates.looks.get(&key) {
+        None => {
+            ask.push(Ask::Server(ServerAsk::RunLooks(v.dungeon.clone(), v.start, v.duration_ms)));
+            return Some("Asking the server for your guildmates...".into());
+        }
+        Some(lg_app::guild::Looks::Asking) => return Some("Asking the server for your guildmates...".into()),
+        Some(lg_app::guild::Looks::Failed) => return Some("The server could not answer right now.".into()),
+        Some(lg_app::guild::Looks::Got(l)) => l,
+    };
+    let data = app.world.data();
+    let fought = s.mates.fought(run, &v.dungeon);
+    let in_table: HashMap<String, (String, i32, i32, i32, i32)> =
+        s.mates.with(&key, &fought, &data.items.transform_skins).into_iter().map(|w| (w.0.to_lowercase(), w)).collect();
+    // who finished the final boss: in its damage table, and only if it died (not when that cannot be told)
+    let last = run.and_then(|r| r.main_boss());
+    let mut finished: std::collections::HashSet<String> = std::collections::HashSet::new();
+    if let Some(b) = last
+        && dungeon_visits::completed(v, &app.dps_history) != Some(false)
+    {
+        finished.extend(b.players.iter().map(|p| p.name.to_lowercase()));
+    }
+    let mut left_out = Vec::new();
+    let mut names: Vec<&String> = looks.keys().collect();
+    names.sort();
+    for name in names {
+        let all = &looks[name];
+        let Some(visit) = all.iter().find(|l| l.source == "visit") else { continue };
+        if !finished.contains(name) {
+            left_out.push(visit.player.clone());
+            continue;
+        }
+        let look = match in_table.get(name) {
+            Some(w) => Some((w.1, w.2, w.3, w.4)),
+            None => {
+                // a guildmate who fought no boss with you: their saved look, else their character played last
+                let l = if visit.class_type > 0 {
+                    Some(visit)
+                } else {
+                    all.iter().filter(|x| x.source == "character").max_by_key(|x| x.last_played)
+                };
+                l.filter(|l| l.class_type > 0).map(|l| (l.class_type, l.skin, l.tex1, l.tex2))
+            }
+        };
+        mates.push(Mate {
+            name: visit.player.clone(),
+            color: GUILD_COLORS[mates.len() % GUILD_COLORS.len()],
+            at: visit.hit_at.clone(),
+            damage: visit.hit_damage.clone(),
+            look,
+            max_hp: visit.max_hp,
+            quick: visit.quick_used.clone(),
+            quick_at: visit.quick_at.clone(),
+        });
+    }
+    let awaited = s.mates.awaited(&key, &fought);
+    if !awaited.is_empty() {
+        let left = v.start + v.duration_ms;
+        let retrying = c_now() - left + lg_app::guild::RETRY_MS <= lg_app::guild::RETRY_FOR_MS;
+        if retrying {
+            ask.push(Ask::Server(ServerAsk::RetryLooks(key)));
+            return Some(format!("Waiting for {} to sync this run...", awaited.join(", ")));
+        }
+        return Some(format!("Not on the server: {}", awaited.join(", ")));
+    }
+    if !left_out.is_empty() {
+        return Some(match last {
+            None => format!("No final boss fought, so no guildmates are compared: {}", left_out.join(", ")),
+            Some(b) => format!(
+                "Only guildmates who finished {} are compared. Left out: {}",
+                b.name.as_deref().unwrap_or("null"),
+                left_out.join(", ")
+            ),
+        });
+    }
+    (mates.len() == 1).then(|| "No guildmates with Loot Gobbler were in this dungeon.".into())
+}
+
+fn c_now() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
+}
+
+/// Java `place`: the player's place in one fact, 1 for the best; equal values share a place.
+fn place(values: &[f64], i: usize, higher_better: bool) -> usize {
+    1 + values.iter().filter(|v| if higher_better { **v > values[i] } else { **v < values[i] }).count()
+}
+
+/// Java `guildSection` and `facts`: you and the guildmates ranked four ways, worst first (Most Critical Hits,
+/// Biggest Slap, Shots Dodged, Quickslots Used), then a podium of who did best over all four.
+#[allow(clippy::too_many_arguments)]
 fn guild(
     ui: &mut Ui,
     p: &Palette,
@@ -963,20 +1123,30 @@ fn guild(
     let fh = jtext::height(&painter, &f);
     let big = text(21.0);
     let mut y = r.top();
-    jtext::draw(
-        &painter,
-        pos2(r.left(), y),
-        Align2::LEFT_TOP,
-        "Log in to a Loot Gobbler server to compare with your guildmates.",
-        &f,
-        fixed::MUTED,
-    );
-    y += fh + 6.0;
-    // you: as the run shows you, else your look saved with the visit
+    // you first; the guildmates join once the server has answered
     let me =
         run.and_then(|run| run.bosses.iter().find_map(|b| b.players.iter().find(|x| x.me))).map(|m| (m.class_type, m.skin, m.tex1, m.tex2));
-    let look = me.or_else(|| v.look.as_ref().filter(|l| l.class_type > 0).map(|l| (l.class_type, l.skin, l.tex1, l.tex2)));
-    let name = app.characters.player_name.clone().unwrap_or_else(|| "You".into());
+    let look_now = if v.look.is_none() && current { dungeon_visits::look_now(&app.characters) } else { None };
+    let look =
+        me.or_else(|| v.look.as_ref().or(look_now.as_ref()).filter(|l| l.class_type > 0).map(|l| (l.class_type, l.skin, l.tex1, l.tex2)));
+    let mut players = vec![Mate {
+        name: app.characters.player_name.clone().unwrap_or_else(|| "You".into()),
+        color: GUILD_COLORS[0],
+        at: v.hit_time.iter().map(|t| i64::from(*t)).collect(),
+        damage: v.hit_damage.clone(),
+        look,
+        max_hp: v.max_hp,
+        quick: Some(v.quick_item.clone()),
+        quick_at: Some(v.quick_time.iter().map(|t| i64::from(*t)).collect()),
+    }];
+    let mut asks = Vec::new();
+    if let Some(note) = guildmates(app, v, run, current, &mut players, &mut asks) {
+        jtext::draw(&painter, pos2(r.left(), y), Align2::LEFT_TOP, &note, &f, fixed::MUTED);
+        y += fh + 6.0;
+    }
+    for a in asks {
+        crate::window::ask_later(ui.ctx(), a);
+    }
     // the time fighting bosses, overlapping fights joined
     let mut spans: Vec<(i64, i64)> = Vec::new();
     for fi in fights {
@@ -997,136 +1167,189 @@ fn guild(
     y += fh + 8.0;
     let dur = if current { now - v.start } else { v.duration_ms };
     let minutes = (if all { dur } else { counted }).max(1000) as f64 / 60_000.0;
-    let mut hits: Vec<(i64, i64)> = (0..v.hit_time.len().min(v.hit_damage.len()))
-        .map(|k| (i64::from(v.hit_time[k]), i64::from(v.hit_damage[k])))
-        .filter(|h| all || during(h.0))
-        .collect();
-    hits.sort_by_key(|h| h.0);
-    let thr = if v.max_hp > 0 { 300.min((f64::from(v.max_hp) * 0.30).round() as i64) } else { 300 };
-    let mut slices: HashMap<i64, i64> = HashMap::new();
-    for h in &hits {
-        *slices.entry(h.0.div_euclid(2000)).or_default() += h.1;
-    }
-    let critical = slices.values().filter(|d| **d >= thr).count() as f64;
-    let (mut hurt, mut sum, mut a) = (0i64, 0i64, 0usize);
-    for b in 0..hits.len() {
-        sum += hits[b].1;
-        while hits[b].0 - hits[a].0 >= 1000 {
-            sum -= hits[a].1;
-            a += 1;
+    let baseline = app.server.guild_settings.baseline_hpm;
+    let n = players.len();
+    let (mut critical, mut hurt, mut dodged, mut used) = (vec![0.0f64; n], vec![0.0f64; n], vec![0.0f64; n], vec![0.0f64; n]);
+    let mut shown: Vec<Option<Vec<i32>>> = Vec::new();
+    for (i, pl) in players.iter().enumerate() {
+        let mut hits: Vec<(i64, i64)> =
+            (0..pl.at.len().min(pl.damage.len())).map(|k| (pl.at[k], i64::from(pl.damage[k]))).filter(|h| all || during(h.0)).collect();
+        hits.sort_by_key(|h| h.0);
+        let thr = if pl.max_hp > 0 { 300.min((f64::from(pl.max_hp) * 0.30).round() as i64) } else { 300 };
+        let mut slices: HashMap<i64, i64> = HashMap::new();
+        for h in &hits {
+            *slices.entry(h.0.div_euclid(2000)).or_default() += h.1;
         }
-        hurt = hurt.max(sum);
+        critical[i] = slices.values().filter(|d| **d >= thr).count() as f64;
+        let (mut sum, mut a) = (0i64, 0usize);
+        for b in 0..hits.len() {
+            sum += hits[b].1;
+            while hits[b].0 - hits[a].0 >= 1000 {
+                sum -= hits[a].1;
+                a += 1;
+            }
+            hurt[i] = hurt[i].max(sum as f64);
+        }
+        let hpm = hits.len() as f64 / minutes;
+        dodged[i] = (100.0 - if hpm <= 0.0 { 0.0 } else { 100.0 * hpm / (hpm + baseline) }).round();
+        let items = pl.quick.as_ref().map(|items| match &pl.quick_at {
+            Some(at) if !all && at.len() == items.len() => (0..items.len()).filter(|k| during(at[*k])).map(|k| items[k]).collect(),
+            _ => items.clone(),
+        });
+        used[i] = items.as_ref().map_or(0.0, |x| x.len() as f64);
+        shown.push(items);
     }
-    let hpm = hits.len() as f64 / minutes;
-    let baseline = 50.0;
-    let dodged = (100.0 - if hpm <= 0.0 { 0.0 } else { 100.0 * hpm / (hpm + baseline) }).round();
-    let items: Vec<i32> = (0..v.quick_item.len())
-        .filter(|k| all || v.quick_time.len() != v.quick_item.len() || during(i64::from(v.quick_time[*k])))
-        .map(|k| v.quick_item[k])
-        .collect();
-    // the four facts side by side, wrapping when the column is narrow
-    let look_icon = |icons: &mut crate::icons::Icons, size: u32| {
-        look.and_then(|(class, skin, t1, t2)| icons.skin(ui.ctx(), data, if skin > 0 { skin } else { class }, t1, t2, size))
-    };
     let row_h = 36.0f32.max(jtext::height(&painter, &big)) + 2.0;
-    let mut facts: Vec<(&str, String, Color32)> = vec![
-        ("Most Critical Hits", format!("{}", critical as i64), p.ink),
-        ("Biggest Slap", format!("{} HP", num(hurt)), p.ink),
-        ("Shots Dodged", format!("{dodged:.0}%"), dodge_color(dodged)),
-    ];
-    facts.push(("Quickslots Used", String::new(), p.ink));
-    let (mut x, mut line_h) = (r.left(), 0.0f32);
     let title_h = jtext::height(&painter, &big);
-    for (title, value, color) in &facts {
-        // the quick slot items: each as "3x" and its icon, the most used first; "none" if none
-        let mut counts: Vec<(i32, usize)> = Vec::new();
-        for it in &items {
-            match counts.iter_mut().find(|c| c.0 == *it) {
-                Some(c) => c.1 += 1,
-                None => counts.push((*it, 1)),
+    let look_of = |icons: &mut crate::icons::Icons, i: usize, size: u32| {
+        players[i].look.and_then(|(class, skin, t1, t2)| icons.skin(ui.ctx(), data, if skin > 0 { skin } else { class }, t1, t2, size))
+    };
+    // the quick slot items: "3x" and the icon, the most used first; "none", or "-" when not known
+    let quick_counts = |i: usize| -> Option<Vec<(i32, usize)>> {
+        shown[i].as_ref().map(|items| {
+            let mut counts: Vec<(i32, usize)> = Vec::new();
+            for it in items {
+                match counts.iter_mut().find(|c| c.0 == *it) {
+                    Some(c) => c.1 += 1,
+                    None => counts.push((*it, 1)),
+                }
             }
+            counts.sort_by_key(|c| std::cmp::Reverse(c.1));
+            counts
+        })
+    };
+    let value_w = |k: usize, i: usize| -> f32 {
+        match k {
+            0 => jtext::bold_width(&painter, &format!("{}", critical[i] as i64), &big),
+            1 => jtext::bold_width(&painter, &format!("{} HP", num(hurt[i] as i64)), &big),
+            2 => jtext::bold_width(&painter, &format!("{:.0}%", dodged[i]), &big),
+            _ => match quick_counts(i) {
+                None => jtext::bold_width(&painter, "-", &big),
+                Some(c) if c.is_empty() => jtext::bold_width(&painter, "none", &big),
+                Some(c) => {
+                    c.iter().map(|c| jtext::bold_width(&painter, &format!("{}x", c.1), &f) + 2.0 + 24.0).sum::<f32>()
+                        + 6.0 * (c.len() as f32 - 1.0)
+                }
+            },
         }
-        counts.sort_by_key(|c| std::cmp::Reverse(c.1));
-        let quick = title.starts_with("Quick");
-        let vw = if quick {
-            if counts.is_empty() {
-                jtext::bold_width(&painter, "none", &big)
-            } else {
-                counts.iter().map(|c| jtext::bold_width(&painter, &format!("{}x", c.1), &f) + 2.0 + 24.0).sum::<f32>()
-                    + 6.0 * (counts.len() as f32 - 1.0)
-            }
-        } else {
-            jtext::bold_width(&painter, value, &big)
-        };
+    };
+    let titles = ["Most Critical Hits", "Biggest Slap", "Shots Dodged", "Quickslots Used"];
+    let values = [&critical, &hurt, &dodged, &used];
+    let (mut x, mut line_h) = (r.left(), 0.0f32);
+    for (k, title) in titles.iter().enumerate() {
+        // worst first: the highest value; equal ones in the order they came
+        let mut order: Vec<usize> = (0..n).collect();
+        order.sort_by(|a, b| values[k][*b].total_cmp(&values[k][*a]));
+        let vw = (0..n).map(|i| value_w(k, i)).fold(0.0, f32::max);
         let fw = jtext::bold_width(&painter, title, &big).max(8.0 + 36.0 + 8.0 + vw + 8.0);
-        let fh_all = title_h + 4.0 + row_h;
+        let fh_all = title_h + 4.0 + n as f32 * row_h;
         if x > r.left() && x + fw > r.right() {
             x = r.left();
             y += line_h + 14.0;
             line_h = 0.0;
         }
         bold(&painter, pos2(x, y), Align2::LEFT_TOP, title, &big, fixed::GOLD);
-        let ry = y + title_h + 4.0;
-        let cy = ry + row_h / 2.0;
-        match look_icon(icons, 36) {
-            Some(t) => {
-                painter.image(t.id(), Rect::from_min_size(pos2(x + 8.0, cy - 18.0), vec2(36.0, 36.0)), uv(), Color32::WHITE);
-            }
-            None => {
-                painter.rect_filled(
-                    Rect::from_min_size(pos2(x + 8.0, cy - 18.0), vec2(36.0, 36.0)),
-                    0.0,
-                    Color32::from_rgb(0xE5, 0xB2, 0x3A),
-                );
-            }
-        }
-        let vx = x + 8.0 + 36.0 + 8.0;
-        if quick && !counts.is_empty() {
-            let mut qx = vx;
-            for (it, n) in &counts {
-                let t = bold(&painter, pos2(qx, cy), Align2::LEFT_CENTER, &format!("{n}x"), &f, p.ink);
-                qx = t.right() + 2.0;
-                if let Some(tx) = icons.object(ui.ctx(), data, *it, 24) {
-                    painter.image(tx.id(), Rect::from_min_size(pos2(qx, cy - 12.0), vec2(24.0, 24.0)), uv(), Color32::WHITE);
+        let mut ry = y + title_h + 4.0;
+        for i in order {
+            let cy = ry + row_h / 2.0;
+            let lr = Rect::from_min_size(pos2(x + 8.0, cy - 18.0), vec2(36.0, 36.0));
+            match look_of(icons, i, 36) {
+                Some(t) => {
+                    painter.image(t.id(), lr, uv(), Color32::WHITE);
                 }
-                qx += 24.0 + 6.0;
+                None => {
+                    painter.rect_filled(lr, 0.0, players[i].color);
+                }
             }
-        } else {
-            bold(&painter, pos2(vx, cy), Align2::LEFT_CENTER, if quick { "none" } else { value }, &big, *color);
+            widgets::tip(ui, Rect::from_min_size(pos2(x, ry), vec2(fw, row_h)), ("fact", k, i), &players[i].name);
+            let vx = x + 8.0 + 36.0 + 8.0;
+            match k {
+                3 => match quick_counts(i) {
+                    Some(c) if !c.is_empty() => {
+                        let mut qx = vx;
+                        for (it, cnt) in &c {
+                            let t = bold(&painter, pos2(qx, cy), Align2::LEFT_CENTER, &format!("{cnt}x"), &f, p.ink);
+                            qx = t.right() + 2.0;
+                            if let Some(tx) = icons.object(ui.ctx(), data, *it, 24) {
+                                painter.image(tx.id(), Rect::from_min_size(pos2(qx, cy - 12.0), vec2(24.0, 24.0)), uv(), Color32::WHITE);
+                            }
+                            let name = data.items.item(*it).map_or(format!("Item {it}"), |x| x.name.clone());
+                            widgets::tip(ui, Rect::from_min_size(pos2(qx, cy - 12.0), vec2(24.0, 24.0)), ("quick", i, *it), &name);
+                            qx += 24.0 + 6.0;
+                        }
+                    }
+                    other => {
+                        bold(&painter, pos2(vx, cy), Align2::LEFT_CENTER, if other.is_none() { "-" } else { "none" }, &big, p.ink);
+                    }
+                },
+                2 => {
+                    bold(&painter, pos2(vx, cy), Align2::LEFT_CENTER, &format!("{:.0}%", dodged[i]), &big, dodge_color(dodged[i]));
+                }
+                1 => {
+                    bold(&painter, pos2(vx, cy), Align2::LEFT_CENTER, &format!("{} HP", num(hurt[i] as i64)), &big, p.ink);
+                }
+                _ => {
+                    bold(&painter, pos2(vx, cy), Align2::LEFT_CENTER, &format!("{}", critical[i] as i64), &big, p.ink);
+                }
+            }
+            ry += row_h;
         }
         line_h = line_h.max(fh_all);
         x += fw + 36.0;
     }
     y += line_h + 20.0;
-    // the podium: you alone, on the gold block in the middle
-    let (col, gap, name_h) = (96.0f32, 6.0f32, 18.0f32);
-    let block = 64.0;
-    let look_h = 56.0;
-    let base = y + block + look_h + name_h + 4.0;
-    let x0 = r.left() + col + gap;
-    let top = base - block;
-    let medal = Color32::from_rgb(0xE5, 0xB2, 0x3A);
-    let darker = Color32::from_rgb((0xE5 as f32 * 0.7) as u8, (0xB2 as f32 * 0.7) as u8, (0x3A as f32 * 0.7) as u8);
-    painter.rect_filled(Rect::from_min_size(pos2(x0, top), vec2(col, block)), 0.0, darker);
-    painter.rect_filled(Rect::from_min_size(pos2(x0, top), vec2(col, 6.0)), 0.0, medal);
-    bold(
-        &painter,
-        pos2(x0 + col / 2.0, top + 6.0 + ((block - 6.0) / 2.0).floor()),
-        Align2::CENTER_CENTER,
-        "1",
-        &text(26.0),
-        Color32::from_white_alpha(200),
-    );
-    match look_icon(icons, 56) {
-        Some(t) => {
-            painter.image(t.id(), Rect::from_min_size(pos2(x0 + (col - 56.0) / 2.0, top - 56.0), vec2(56.0, 56.0)), uv(), Color32::WHITE);
-        }
-        None => {
-            painter.rect_filled(Rect::from_min_size(pos2(x0 + (col - 56.0) / 2.0, top - 56.0), vec2(56.0, 56.0)), 0.0, medal);
+    // the podium: the average place over the four (1 = best: the lowest value, the highest Shots Dodged)
+    let mut average = vec![0.0f64; n];
+    for vals in [&critical, &hurt, &used] {
+        for (i, a) in average.iter_mut().enumerate() {
+            *a += place(vals, i, false) as f64 / 4.0;
         }
     }
-    let shown = widgets::fit(&painter, &name, &f, col - 4.0);
-    bold(&painter, pos2(x0 + col / 2.0, top - 56.0 - name_h / 2.0), Align2::CENTER_CENTER, &shown, &f, Color32::WHITE);
+    for (i, a) in average.iter_mut().enumerate() {
+        *a += place(&dodged, i, true) as f64 / 4.0;
+    }
+    let mut best: Vec<usize> = (0..n).collect();
+    best.sort_by(|a, b| average[*a].total_cmp(&average[*b]));
+    let (col, gap, name_h) = (96.0f32, 6.0f32, 18.0f32);
+    let blocks = [64.0f32, 44.0, 30.0];
+    let medals = [Color32::from_rgb(0xE5, 0xB2, 0x3A), Color32::from_rgb(0xB9, 0xC0, 0xC8), Color32::from_rgb(0xC0, 0x7A, 0x3C)];
+    let places = n.min(3);
+    let look_h: f32 = (0..places).map(|k| if k == 0 { 56.0 } else { 48.0 }).fold(0.0, f32::max);
+    let base = y + blocks[0] + look_h + name_h + 4.0;
+    for (column, place_k) in [1usize, 0, 2].iter().enumerate() {
+        if *place_k >= places {
+            continue;
+        }
+        let i = best[*place_k];
+        let x0 = r.left() + column as f32 * (col + gap);
+        let top = base - blocks[*place_k];
+        let medal = medals[*place_k];
+        let dark = Color32::from_rgb((medal.r() as f32 * 0.7) as u8, (medal.g() as f32 * 0.7) as u8, (medal.b() as f32 * 0.7) as u8);
+        painter.rect_filled(Rect::from_min_size(pos2(x0, top), vec2(col, blocks[*place_k])), 0.0, dark);
+        painter.rect_filled(Rect::from_min_size(pos2(x0, top), vec2(col, 6.0)), 0.0, medal);
+        bold(
+            &painter,
+            pos2(x0 + col / 2.0, top + 6.0 + ((blocks[*place_k] - 6.0) / 2.0).floor()),
+            Align2::CENTER_CENTER,
+            &(place_k + 1).to_string(),
+            &text(if *place_k == 0 { 26.0 } else { 20.0 }),
+            Color32::from_white_alpha(200),
+        );
+        let size = if *place_k == 0 { 56.0 } else { 48.0 };
+        let lr = Rect::from_min_size(pos2(x0 + (col - size) / 2.0, top - size), vec2(size, size));
+        match look_of(icons, i, size as u32) {
+            Some(t) => {
+                painter.image(t.id(), lr, uv(), Color32::WHITE);
+            }
+            None => {
+                painter.rect_filled(lr, 0.0, players[i].color);
+            }
+        }
+        let shown_name = widgets::fit(&painter, &players[i].name, &f, col - 4.0);
+        bold(&painter, pos2(x0 + col / 2.0, top - size - name_h / 2.0), Align2::CENTER_CENTER, &shown_name, &f, Color32::WHITE);
+        let tip = format!("{}: average place {:.2} of {n} (1 = best)", players[i].name, average[i]);
+        widgets::tip(ui, Rect::from_min_max(pos2(x0, top - size - name_h), pos2(x0 + col, base)), ("podium", *place_k), &tip);
+    }
     base - r.top()
 }
 

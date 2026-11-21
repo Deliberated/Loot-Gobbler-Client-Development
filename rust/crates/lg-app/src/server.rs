@@ -357,6 +357,8 @@ pub struct Connection {
     pub loaded: u64,
     /// The Guild tab's leaderboard, drops and member profile.
     pub guild: crate::guild::GuildState,
+    /// Your guildmates (Java `Guildmates`).
+    pub mates: crate::guild::Mates,
     /// What the bell lists (Java `Notifications`): newest first, and whether something new came since it was
     /// last opened.
     pub notifications: Vec<Notification>,
@@ -700,6 +702,76 @@ impl Connection {
         }
     }
 
+    /// Java `Guildmates.load`, once a frame: logged in or the server changed: the guildmates' names (from the
+    /// leaderboard) and the guild settings again; the runs asked again when their retry is due.
+    pub fn mates_tick(&mut self, now: i64) {
+        let online = self.state == State::Online && self.user.is_some();
+        let account = if online { self.account() } else { String::new() };
+        if account != self.mates.account {
+            self.mates.account = account;
+            self.mates.looks.clear(); // another server or account: ask again
+            self.mates.retries.clear();
+            self.mates.version += 1;
+            if online {
+                self.call("GET", "/guild/settings", None, "guild-settings");
+                self.call("GET", "/guild/leaderboard", None, "mates");
+            } else {
+                self.mates.names.clear();
+            }
+        }
+        let due: Vec<_> = self.mates.retries.iter().filter(|r| r.0 <= now).cloned().collect();
+        self.mates.retries.retain(|r| r.0 > now);
+        for (_, key, dungeon, from, to) in due {
+            self.call("GET", &crate::guild::run_looks_path(&dungeon, from, to), None, &format!("looks:{from}:{to}:{key}"));
+        }
+    }
+
+    /// Java `Guildmates.runLooks`: what the server has of a finished visit's guildmates; asked the first time.
+    pub fn run_looks(&mut self, dungeon: &str, start: i64, duration: i64) {
+        if duration <= 0 || self.state != State::Online {
+            return;
+        }
+        let key = format!("{dungeon}/{start}");
+        if self.mates.looks.contains_key(&key) {
+            return;
+        }
+        self.mates.looks.insert(key.clone(), crate::guild::Looks::Asking);
+        let (from, to) = (start, start + duration);
+        self.call("GET", &crate::guild::run_looks_path(dungeon, from, to), None, &format!("looks:{from}:{to}:{key}"));
+    }
+
+    /// A run's guildmates came: kept; asked again in a while if someone who fought with you is missing (the caller
+    /// says who fought, as it knows the run).
+    fn looks_done(&mut self, tag: &str, result: Option<std::collections::HashMap<String, Vec<crate::guild::RunLook>>>) {
+        let mut parts = tag.splitn(4, ':');
+        let (_, from, to, key) = (parts.next(), parts.next(), parts.next(), parts.next().unwrap_or(""));
+        let (from, to): (i64, i64) = (from.and_then(|f| f.parse().ok()).unwrap_or(0), to.and_then(|t| t.parse().ok()).unwrap_or(0));
+        let again = !matches!(self.mates.looks.get(key), Some(crate::guild::Looks::Asking) | None);
+        let got = match result {
+            Some(r) => crate::guild::Looks::Got(r),
+            None if again => self.mates.looks.get(key).cloned().unwrap_or(crate::guild::Looks::Failed), // a failed retry
+            None => crate::guild::Looks::Failed,
+        };
+        let failed = got == crate::guild::Looks::Failed;
+        self.mates.looks.insert(key.to_string(), got);
+        self.mates.version += 1;
+        // retry within RETRY_FOR_MS of leaving, while the views find someone awaited (they ask via `retry_looks`)
+        let now = now_ms();
+        if !failed && now - to + crate::guild::RETRY_MS <= crate::guild::RETRY_FOR_MS {
+            let dungeon = key.rsplit_once('/').map_or("", |(d, _)| d).to_string();
+            self.mates.pending_retry.push((key.to_string(), dungeon, from, to));
+        }
+    }
+
+    /// The views found guildmates still awaited for this visit: ask again in RETRY_MS (Java's retry timer).
+    pub fn retry_looks(&mut self, key: &str) {
+        let now = now_ms();
+        if let Some(i) = self.mates.pending_retry.iter().position(|r| r.0 == key) {
+            let (key, dungeon, from, to) = self.mates.pending_retry.remove(i);
+            self.mates.retries.push((now + crate::guild::RETRY_MS, key, dungeon, from, to));
+        }
+    }
+
     /// Java `ApprovalWatcher.update`: the queue as it is now.
     fn approvals(&mut self, pending: &[User], now: i64) {
         if self.watched.is_empty() {
@@ -850,6 +922,7 @@ impl Connection {
                         self.guild_loaded();
                     }
                     "caravan" => self.caravan_done(Err(e)),
+                    t if t.starts_with("looks:") => self.looks_done(t, None),
                     "questmaps" => self.maps_done(Err(e), now_ms()),
                     t if t.starts_with("member:") => {
                         if let Some((id, shown)) = &mut self.guild.member
@@ -948,6 +1021,16 @@ impl Connection {
                 self.guild_loaded();
             }
             "caravan" => self.caravan_done(Ok(crate::guild::caravan_of(&j))),
+            "mates" => {
+                let me = self.user.as_ref().map_or(-1, |u| u.id);
+                let board = crate::guild::leaderboard_of(&j);
+                self.mates.names = board.members.iter().filter(|m| m.id != me).map(|m| m.ign.to_lowercase()).collect();
+                self.mates.version += 1;
+            }
+            t if t.starts_with("looks:") => {
+                let looks = crate::guild::run_looks_of(&j);
+                self.looks_done(t, Some(looks));
+            }
             "questmaps" => self.maps_done(Ok(crate::guild::quest_maps_of(&j)), now_ms()),
             "drops" => {
                 if !self.guild.failed {
