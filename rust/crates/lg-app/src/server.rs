@@ -773,6 +773,7 @@ impl Connection {
                         self.guild.board = self.guild.board_wait.take().map(Ok);
                         self.guild_loaded();
                     }
+                    "caravan" => self.caravan_done(Err(e)),
                     t if t.starts_with("member:") => {
                         if let Some((id, shown)) = &mut self.guild.member
                             && t == format!("member:{id}")
@@ -861,6 +862,7 @@ impl Connection {
                 }
                 self.guild_loaded();
             }
+            "caravan" => self.caravan_done(Ok(crate::guild::caravan_of(&j))),
             "drops" => {
                 if !self.guild.failed {
                     self.guild.drops = Some(Ok(crate::guild::drops_of(&j)));
@@ -911,6 +913,7 @@ impl Connection {
             return;
         }
         self.call("GET", "/scoring", None, "scoring");
+        self.caravan_load();
         if self.guild.loading > 0 {
             return;
         }
@@ -918,6 +921,31 @@ impl Connection {
         self.guild.failed = false;
         self.call("GET", "/guild/leaderboard", None, "board");
         self.call("GET", "/guild/drops?limit=100", None, "drops");
+    }
+
+    /// Java `CaravanView.load`: the guild's loot caravan (all time); asked while loading: once more afterwards.
+    pub fn caravan_load(&mut self) {
+        if self.guild.caravan_loading {
+            self.guild.caravan_again = true;
+            return;
+        }
+        self.guild.caravan_stale = false;
+        if self.user.is_none() || self.state != State::Online {
+            self.guild.caravan = None;
+            self.guild.version += 1;
+            return;
+        }
+        self.guild.caravan_loading = true;
+        self.call("GET", "/guild/caravan?range=all", None, "caravan");
+    }
+
+    fn caravan_done(&mut self, c: Result<crate::guild::Caravan, Error>) {
+        self.guild.caravan_loading = false;
+        self.guild.caravan = Some(c);
+        self.guild.version += 1;
+        if std::mem::take(&mut self.guild.caravan_again) {
+            self.caravan_load();
+        }
     }
 
     /// Java `openMember`: a player's profile.

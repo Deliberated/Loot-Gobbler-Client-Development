@@ -316,6 +316,60 @@ pub struct GuildState {
     pub(crate) board_wait: Option<Leaderboard>,
     /// Bumped on each load, so views redraw.
     pub version: u64,
+    /// The loot caravan (Java `CaravanView`): None until loaded; loading, asked again meanwhile, to load when shown.
+    pub caravan: Option<Result<Caravan, crate::server::Error>>,
+    pub(crate) caravan_loading: bool,
+    pub(crate) caravan_again: bool,
+    pub caravan_stale: bool,
+}
+
+/// Java `bagName`: the bag colour the server files a drop under ("Boosted Orange" is Orange, unknown is Other).
+pub fn bag_name(bag: &str) -> String {
+    let b = bag.trim();
+    let b = b.strip_prefix("Boosted ").map_or(b, str::trim);
+    let mut c = b.chars();
+    match c.next() {
+        None => "Other".into(),
+        Some(f) => f.to_uppercase().chain(c).collect(),
+    }
+}
+
+impl GuildState {
+    /// Java `CaravanView.dropped`: one of your drops onto your wagon right away (the server counts it once the
+    /// upload is in).
+    pub fn dropped(&mut self, item_id: i32, find: &crate::collection::Find, me_id: i64, me_ign: &str) {
+        let Some(Ok(c)) = &mut self.caravan else { return };
+        let m = match c.members.iter().position(|x| x.id == me_id) {
+            Some(i) => &mut c.members[i],
+            None => {
+                c.members.push(CaravanMember { id: me_id, ign: me_ign.into(), ..Default::default() });
+                c.members.last_mut().expect("just added")
+            }
+        };
+        let item = CaravanItem {
+            item_id,
+            bag: bag_name(&find.bag),
+            time: find.time.clone(),
+            r#where: find.r#where.clone(),
+            enchants: find.enchant_ids.as_ref().map_or(find.enchants, |e| e.len() as i32),
+        };
+        if !m.tally.is_empty() || m.total == 0 {
+            // older servers send no tally: the score comes from the items then
+            match m.tally.iter_mut().find(|t| t.item_id == item_id && t.enchants == item.enchants && t.r#where == item.r#where) {
+                Some(t) => t.count += 1,
+                None => m.tally.push(Tally { item_id, r#where: item.r#where.clone(), enchants: item.enchants, count: 1 }),
+            }
+        }
+        match m.by_bag.iter_mut().find(|(b, _)| *b == item.bag) {
+            Some((_, n)) => *n += 1,
+            None => m.by_bag.push((item.bag.clone(), 1)),
+        }
+        m.items.insert(0, item);
+        m.items.truncate(120);
+        m.total += 1;
+        m.last_drop = Some(find.time.clone());
+        self.version += 1;
+    }
 }
 
 #[cfg(test)]

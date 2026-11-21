@@ -150,6 +150,8 @@ pub struct Collection {
     pub dirty: bool,
     /// A change the guild should see right away (Java `ServerSync.uploadSoon`), for the sync to take.
     pub soon: bool,
+    /// Drops since last taken (Java `onDrop`: the caravan puts them on your wagon at once).
+    pub drops: Vec<(i32, Find)>,
 }
 
 impl Collection {
@@ -196,6 +198,9 @@ impl Collection {
             self.entries.insert(item, Entry { first: Some(f.time.clone()), ..Default::default() });
         }
         self.soon = true; // shows up in the guild's caravan
+        if self.drops.len() < 1000 {
+            self.drops.push((item, f.clone()));
+        }
         let e = self.entries.get_mut(&item).expect("entry");
         e.last = Some(f.time.clone());
         e.count += 1;

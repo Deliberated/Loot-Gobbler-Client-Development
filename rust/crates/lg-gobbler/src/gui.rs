@@ -220,6 +220,17 @@ impl Gui {
             }
         }
         sync.account(&self.app.server.account());
+        // your drops onto your wagon; your collection on the server: the caravan again (when shown)
+        let me = self.app.server.user.as_ref().map(|u| (u.id, u.ign.clone()));
+        for (item, find) in std::mem::take(&mut self.app.collection.drops) {
+            if let Some((id, ign)) = &me {
+                self.app.server.guild.dropped(item, &find, *id, ign);
+            }
+        }
+        if sync.uploaded.contains(&"collection") {
+            self.app.server.guild.caravan_stale = true;
+        }
+        sync.uploaded.clear();
         for (k, v) in std::mem::take(&mut sync.props) {
             self.set(&k, &v);
         }
@@ -284,6 +295,7 @@ impl Gui {
             S::OpenForgot(_) | S::OpenChange => {} // the window opens these
             S::RefreshModeration => server.refresh_moderation(),
             S::GuildRefresh => server.guild_refresh(),
+            S::CaravanLoad => server.caravan_load(),
             S::OpenMember(id) => server.open_member(id),
             S::Accept(id, ign) => server.accept(id, &ign),
             S::Deny(id, ign) => server.deny(id, &ign),

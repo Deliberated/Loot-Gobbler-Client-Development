@@ -1,6 +1,6 @@
 //! The Guild tab (Java `GuildPanel`): Loot Caravan, Quest Map, Leaderboard, Recent Drops, Member, Quests. All of it
 //! comes from the Loot Gobbler server, loaded when the tab is opened (and after logging in or out).
-//! Not yet online: the caravan and the quest map (they show their logged-out state).
+//! Not yet online: the quest map (it shows its logged-out state).
 
 use crate::jtext;
 use crate::profile::Ctx;
@@ -19,6 +19,7 @@ pub struct GuildView {
     last_account: String,
     /// The leaderboard's sort: column and ascending (None: by score, as the server's order is shown first).
     sort: Option<(usize, bool)>,
+    caravan: crate::caravan::CaravanView,
 }
 
 fn rgb(c: u32) -> Color32 {
@@ -56,7 +57,7 @@ impl GuildView {
             jtext::draw(ui.painter(), pos2(r.left() + 14.0, r.top() + 12.0), Align2::LEFT_TOP, t, &f, fixed::MUTED);
         };
         match self.page {
-            0 => caravan(ui, &p, body, c.now),
+            0 => self.caravan.show(ui, c, body),
             1 => widgets::section(
                 ui,
                 &p,
@@ -99,8 +100,11 @@ fn refresh_button(ui: &Ui, p: &Palette, head: Rect, id: &str) -> bool {
 
 /// Java `loadError`: what to show when the guild could not be loaded.
 fn load_error(c: &Ctx, e: &lg_app::server::Error) -> String {
+    load_error_text(&c.app.profile.guild, e)
+}
+
+pub fn load_error_text(guild: &str, e: &lg_app::server::Error) -> String {
     if e.code() == "no_guild" {
-        let guild = &c.app.profile.guild;
         if guild.is_empty() {
             "Your guild is not known yet. Enter the game once with Loot Gobbler running; it is uploaded on the next sync.".into()
         } else {
@@ -568,40 +572,8 @@ fn member(ui: &mut Ui, c: &mut Ctx, body: Rect) {
     );
 }
 
-/// Java `CaravanView`: the night road in a frame, the status line under it.
-fn caravan(ui: &mut Ui, p: &Palette, body: Rect, now: i64) {
-    let f = text(18.0);
-    widgets::section(
-        ui,
-        p,
-        body,
-        "Loot Caravan",
-        fixed::GOLD,
-        |ui, head| {
-            let painter = ui.painter();
-            // the note right after the title
-            let tx = head.left() + 10.0 - 1.0 + 8.0 + 8.0 + jtext::width(painter, "LOOT CARAVAN", &crate::theme::head(17.0)) + 12.0;
-            jtext::draw(painter, pos2(tx, head.center().y + 1.0), Align2::LEFT_CENTER, "Ctrl + mouse wheel zooms", &f, fixed::MUTED);
-            plain_button(ui, p, head, "Refresh");
-        },
-        |ui, r| {
-            let painter = ui.painter().clone();
-            let x = r.left() + 12.0;
-            let y = r.top() + 12.0;
-            let w = r.right() - 12.0 - x;
-            // the road's frame: 2 px, the scene and an empty scroll bar row under it
-            let frame = Rect::from_min_size(pos2(x, y), vec2(w, 440.0 + 18.0 + 4.0));
-            painter.rect_stroke(frame, 0.0, Stroke::new(2.0, p.line), StrokeKind::Inside);
-            let scene = Rect::from_min_size(frame.min + vec2(2.0, 2.0), vec2(w - 4.0, 440.0));
-            painter.rect_filled(Rect::from_min_max(pos2(scene.left(), scene.bottom()), frame.max - vec2(2.0, 2.0)), 0.0, p.paper);
-            backdrop(&painter.with_clip_rect(scene.intersect(painter.clip_rect())), scene, now / 70);
-            jtext::draw(&painter, pos2(x, frame.bottom() + 8.0), Align2::LEFT_TOP, LOGGED_OUT, &f, fixed::MUTED);
-        },
-    );
-}
-
 /// The sky with its stars and moon, the hills, the road with its moving lines (Java `Scene.paintBackdrop`).
-fn backdrop(painter: &egui::Painter, r: Rect, phase: i64) {
+pub fn backdrop(painter: &egui::Painter, r: Rect, phase: i64) {
     const HEIGHT: f32 = 440.0;
     let w = r.width().floor();
     let at = |x: f32, y: f32| pos2(r.left() + x, r.top() + y);

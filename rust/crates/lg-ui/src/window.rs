@@ -91,6 +91,8 @@ pub enum ServerAsk {
     SaveGuild(f64),
     /// The Guild tab: load the leaderboard and drops again; open a member's profile.
     GuildRefresh,
+    /// The loot caravan again (the minute's check while it is shown, a click on Refresh).
+    CaravanLoad,
     OpenMember(i64),
     /// A line under a section (0 item scores, 1 guild): what was typed cannot be used.
     Feedback(u8, String),

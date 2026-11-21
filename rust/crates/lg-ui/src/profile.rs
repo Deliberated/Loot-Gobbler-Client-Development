@@ -126,7 +126,7 @@ fn base_bag(bag: &str) -> &str {
 }
 
 /// The bag's object id from its stored name ("White", "Boosted Orange").
-fn bag_id(bag: &str) -> Option<i32> {
+pub(crate) fn bag_id(bag: &str) -> Option<i32> {
     if bag.is_empty() {
         return None;
     }
