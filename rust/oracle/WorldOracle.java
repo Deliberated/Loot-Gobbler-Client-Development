@@ -152,6 +152,7 @@ final class WorldOracle {
         CRC32 crc = new CRC32();
         crc.update(state.getBytes(StandardCharsets.UTF_8));
         out.printf("%s %d %s %08x%s%n", direction, type, name, crc.getValue(), problem);
+        dumpAt(state);
         if (packet instanceof MapInfoPacket) full("after " + name, state);
     }
 
@@ -166,6 +167,16 @@ final class WorldOracle {
         CRC32 crc = new CRC32();
         crc.update(state().getBytes(StandardCharsets.UTF_8));
         out.printf("%s %d %s %08x%s%n", direction, type, "UNKNOWN", crc.getValue(), problem);
+        dumpAt(state());
+    }
+
+    /** LG_DUMP_AT=<n>: the full state after the n-th packet line too (1-based), to find what differs. */
+    private int lines;
+
+    private void dumpAt(String state) {
+        lines++;
+        String at = System.getenv("LG_DUMP_AT");
+        if (at != null && Integer.parseInt(at.trim()) == lines) full("at " + lines, state);
     }
 
     void end() {

@@ -544,7 +544,7 @@ impl DungeonVisits {
         let Some(v) = self.current.as_mut() else { return };
         for p in positions {
             if !self.last_x.is_nan() {
-                let d = f64::from(p.x - self.last_x).hypot(f64::from(p.y - self.last_y));
+                let d = crate::java::hypot(f64::from(p.x - self.last_x), f64::from(p.y - self.last_y));
                 if d <= MAX_STEP {
                     self.unsaved += d;
                 }

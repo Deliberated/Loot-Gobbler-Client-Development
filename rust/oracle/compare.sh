@@ -69,7 +69,7 @@ check() { # name, rust flag, then java args
         echo "same $what: $(grep -vc '^ \|^state' "$work/rust.txt") packets ($(basename "$pcap"))"
     else
         echo "DIFFERENT $what ($(basename "$pcap")): Java $(wc -l < "$work/java.txt") packets, Rust $(wc -l < "$work/rust.txt")"
-        diff "$work/java.txt" "$work/rust.txt" | cut -c1-400 | head -40
+        diff "$work/java.txt" "$work/rust.txt" | cut -c1-400 | head -40 || true
         status=1
     fi
 }
@@ -85,7 +85,7 @@ for f in "$work"/rustfiles/*; do
         files_same=$((files_same + 1))
     else
         echo "DIFFERENT file $n ($(basename "$pcap"))"
-        diff <(tr ',' '\n' < "$work/run/$n" 2>/dev/null) <(tr ',' '\n' < "$f") | head -10
+        diff <(tr ',' '\n' < "$work/run/$n" 2>/dev/null) <(tr ',' '\n' < "$f") | head -10 || true
         status=1
     fi
 done

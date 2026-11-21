@@ -459,6 +459,18 @@ fn world(
             line(out, format_args!("  {l}"));
         }
     };
+    // LG_DUMP_AT=<n>: the full state after the n-th packet line too (1-based), to find what differs
+    let dump_at: Option<usize> = std::env::var("LG_DUMP_AT").ok().and_then(|v| v.trim().parse().ok());
+    let mut lines = 0usize;
+    let mut at = |out: &mut BufWriter<_>, state: &str| {
+        lines += 1;
+        if dump_at == Some(lines) {
+            line(out, format_args!("state at {lines}"));
+            for l in state.lines() {
+                line(out, format_args!("  {l}"));
+            }
+        }
+    };
     for item in &r.items {
         let Item::Packet { packet, micros } = item else { continue };
         if lg_app::RAW.contains(&packet.id) {
@@ -479,6 +491,7 @@ fn world(
                     lg_protocol::dump::crc32(state.as_bytes())
                 ),
             );
+            at(&mut out, &state);
             continue;
         }
         if !fed(packet.id) {
@@ -512,6 +525,7 @@ fn world(
                 lg_protocol::dump::crc32(state.as_bytes())
             ),
         );
+        at(&mut out, &state);
         if is_map {
             full(&mut out, &format!("after {}", packet.name()), &state);
         }

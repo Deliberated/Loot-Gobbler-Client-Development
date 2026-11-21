@@ -219,3 +219,130 @@ mod random_tests {
         assert_eq!(v, [1, 8, 9, 4, 3, 2, 6, 0, 5, 7]);
     }
 }
+
+fn hi(x: f64) -> i32 {
+    (x.to_bits() >> 32) as i32
+}
+
+fn with_hi(x: f64, hi: i32) -> f64 {
+    f64::from_bits((u64::from(hi as u32) << 32) | (x.to_bits() & 0xffff_ffff))
+}
+
+fn lo(x: f64) -> u32 {
+    x.to_bits() as u32
+}
+
+/// Java `Math.hypot` (`StrictMath.hypot`, fdlibm's `e_hypot.c`): bit for bit what the Java app gets; the C
+/// library's `hypot` behind `f64::hypot` can differ in the last bit.
+pub fn hypot(x: f64, y: f64) -> f64 {
+    let (mut ha, mut hb) = (hi(x) & 0x7fff_ffff, hi(y) & 0x7fff_ffff);
+    let (mut a, mut b) = if hb > ha {
+        std::mem::swap(&mut ha, &mut hb);
+        (y, x)
+    } else {
+        (x, y)
+    };
+    a = with_hi(a, ha); // |a|
+    b = with_hi(b, hb); // |b|
+    if ha - hb > 0x3c0_0000 {
+        return a + b; // a/b > 2**60
+    }
+    let mut k = 0;
+    if ha > 0x5f30_0000 {
+        // a > 2**500
+        if ha >= 0x7ff0_0000 {
+            // Inf or NaN
+            let mut w = a + b;
+            if ((ha & 0xf_ffff) as u32 | lo(a)) == 0 {
+                w = a;
+            }
+            if (((hb ^ 0x7ff0_0000) as u32) | lo(b)) == 0 {
+                w = b;
+            }
+            return w;
+        }
+        // scale a and b by 2**-600
+        ha -= 0x2580_0000;
+        hb -= 0x2580_0000;
+        k += 600;
+        a = with_hi(a, ha);
+        b = with_hi(b, hb);
+    }
+    if hb < 0x20b0_0000 {
+        // b < 2**-500
+        if hb <= 0x000f_ffff {
+            // subnormal b or 0
+            if (hb as u32 | lo(b)) == 0 {
+                return a;
+            }
+            let t1 = with_hi(0.0, 0x7fd0_0000); // 2^1022
+            b *= t1;
+            a *= t1;
+            k -= 1022;
+        } else {
+            // scale a and b by 2^600
+            ha += 0x2580_0000;
+            hb += 0x2580_0000;
+            k -= 600;
+            a = with_hi(a, ha);
+            b = with_hi(b, hb);
+        }
+    }
+    // medium size a and b
+    let mut w = a - b;
+    if w > b {
+        let t1 = with_hi(0.0, ha);
+        let t2 = a - t1;
+        w = (t1 * t1 - (b * (-b) - t2 * (a + t1))).sqrt();
+    } else {
+        a += a;
+        let y1 = with_hi(0.0, hb);
+        let y2 = b - y1;
+        let t1 = with_hi(0.0, ha + 0x0010_0000);
+        let t2 = a - t1;
+        w = (t1 * y1 - (w * (-w) - (t1 * y2 + t2 * b))).sqrt();
+    }
+    if k != 0 { with_hi(1.0, hi(1.0) + (k << 20)) * w } else { w }
+}
+
+#[cfg(test)]
+mod hypot_check {
+    /// Pairs (as Java's float bits) where the C library's hypot rounds differently from Java's.
+    #[test]
+    fn as_java() {
+        for (x, y, want) in [
+            (-1019370814, 1016150166, 0x4067b45841bcd5b8),
+            (1026470339, -1080020421, 0x3ff409412c2e2c36),
+            (-1001439919, 1059732255, 0x4089e7aaabd4cf60),
+            (-1004247834, -1067265918, 0x40848cb04eefba9a),
+        ] {
+            let (x, y) = (f64::from(f32::from_bits(x as u32)), f64::from(f32::from_bits(y as u32)));
+            assert_eq!(super::hypot(x, y).to_bits(), want);
+        }
+        assert_eq!(super::hypot(3.0, 4.0), 5.0);
+        assert!(super::hypot(f64::NAN, f64::INFINITY).is_infinite());
+    }
+
+    /// LG_HYPOT=<file of "xbits ybits javahex" lines from Java>: every one the same.
+    #[test]
+    fn against_java_file() {
+        let Ok(f) = std::env::var("LG_HYPOT") else { return };
+        let (mut same, mut libm_diff, mut bad) = (0, 0, 0);
+        for l in std::fs::read_to_string(f).unwrap().lines() {
+            let v: Vec<&str> = l.split(' ').collect();
+            let x = f64::from(f32::from_bits(v[0].parse::<i32>().unwrap() as u32));
+            let y = f64::from(f32::from_bits(v[1].parse::<i32>().unwrap() as u32));
+            let want = u64::from_str_radix(v[2], 16).unwrap();
+            if super::hypot(x, y).to_bits() == want {
+                same += 1
+            } else {
+                bad += 1
+            }
+            if x.hypot(y).to_bits() != want {
+                libm_diff += 1
+            }
+        }
+        eprintln!("same {same}, different {bad}; f64::hypot differs on {libm_diff}");
+        assert_eq!(bad, 0);
+    }
+}
