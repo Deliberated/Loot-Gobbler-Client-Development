@@ -734,7 +734,7 @@ impl Characters {
 }
 
 /// Gson reading `LinkedHashMap<Integer, Char>`: missing fields keep Char's defaults.
-fn parse_chars(text: &str) -> Result<Vec<(i32, Char)>, crate::java::Thrown> {
+pub(crate) fn parse_chars(text: &str) -> Result<Vec<(i32, Char)>, crate::java::Thrown> {
     use crate::gson;
     use crate::java::Thrown;
     use lg_world::json::Json;

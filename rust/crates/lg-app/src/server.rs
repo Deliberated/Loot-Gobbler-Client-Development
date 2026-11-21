@@ -351,6 +351,8 @@ pub struct Connection {
     pub weights: ScoreWeights,
     pub guild_settings: GuildSettings,
     pub loaded: u64,
+    /// The Guild tab's leaderboard, drops and member profile.
+    pub guild: crate::guild::GuildState,
 }
 
 /// An unused moderator token.
@@ -759,6 +761,28 @@ impl Connection {
                 if tag.starts_with("act:") {
                     self.refresh_moderation();
                 }
+                match tag {
+                    // Java shows the error in both
+                    "board" | "drops" => {
+                        self.guild.failed = true;
+                        self.guild.board = Some(Err(e.clone()));
+                        self.guild.drops = Some(Err(e));
+                        self.guild_loaded();
+                    }
+                    "board-caravan" => {
+                        self.guild.board = self.guild.board_wait.take().map(Ok);
+                        self.guild_loaded();
+                    }
+                    t if t.starts_with("member:") => {
+                        if let Some((id, shown)) = &mut self.guild.member
+                            && t == format!("member:{id}")
+                        {
+                            *shown = Some(Err(e));
+                            self.guild.version += 1;
+                        }
+                    }
+                    _ => {}
+                }
                 return;
             }
             Ok(j) => j.unwrap_or(Json::Null),
@@ -798,6 +822,59 @@ impl Connection {
                 m.tokens_feedback.clear();
                 self.refresh_moderation();
             }
+            "board" => {
+                let board = crate::guild::leaderboard_of(&j);
+                if board.members.iter().all(|m| m.tally.is_empty()) && !board.members.is_empty() {
+                    // servers from before item scores: the all-time caravan's tallies stand in
+                    self.guild.board_wait = Some(board);
+                    self.call("GET", "/guild/caravan?range=all", None, "board-caravan");
+                } else {
+                    if !self.guild.failed {
+                        self.guild.board = Some(Ok(board));
+                    }
+                    self.guild_loaded();
+                }
+            }
+            "board-caravan" => {
+                let c = crate::guild::caravan_of(&j);
+                if let Some(mut board) = self.guild.board_wait.take() {
+                    for m in &mut board.members {
+                        if let Some(cm) = c.members.iter().find(|cm| cm.id == m.id) {
+                            m.tally = if cm.tally.is_empty() {
+                                cm.items
+                                    .iter()
+                                    .map(|it| crate::guild::Tally {
+                                        item_id: it.item_id,
+                                        r#where: it.r#where.clone(),
+                                        enchants: it.enchants,
+                                        count: 1,
+                                    })
+                                    .collect()
+                            } else {
+                                cm.tally.clone()
+                            };
+                        }
+                    }
+                    if !self.guild.failed {
+                        self.guild.board = Some(Ok(board));
+                    }
+                }
+                self.guild_loaded();
+            }
+            "drops" => {
+                if !self.guild.failed {
+                    self.guild.drops = Some(Ok(crate::guild::drops_of(&j)));
+                }
+                self.guild_loaded();
+            }
+            t if t.starts_with("member:") => {
+                if let Some((id, shown)) = &mut self.guild.member
+                    && t == format!("member:{id}")
+                {
+                    *shown = Some(Ok(crate::guild::profile_of(&j)));
+                    self.guild.version += 1;
+                }
+            }
             "scoring" | "put-scoring" => {
                 self.weights = weights_of(&j);
                 self.loaded += 1;
@@ -823,6 +900,41 @@ impl Connection {
                     self.refresh_moderation();
                 }
             }
+        }
+    }
+
+    /// Java `GuildPanel.refresh`: the item score weights, the leaderboard and the recent drops (logged out: nothing).
+    pub fn guild_refresh(&mut self) {
+        if self.user.is_none() || self.state != State::Online {
+            self.guild.board = None;
+            self.guild.drops = None;
+            return;
+        }
+        self.call("GET", "/scoring", None, "scoring");
+        if self.guild.loading > 0 {
+            return;
+        }
+        self.guild.loading = 2;
+        self.guild.failed = false;
+        self.call("GET", "/guild/leaderboard", None, "board");
+        self.call("GET", "/guild/drops?limit=100", None, "drops");
+    }
+
+    /// Java `openMember`: a player's profile.
+    pub fn open_member(&mut self, id: i64) {
+        self.guild.member = Some((id, None));
+        self.guild.version += 1;
+        self.call("GET", &format!("/guild/members/{id}"), None, &format!("member:{id}"));
+    }
+
+    /// One of the guild's two loads is in (Java `allOf`): then the member shown is loaded again.
+    fn guild_loaded(&mut self) {
+        self.guild.loading = self.guild.loading.saturating_sub(1);
+        self.guild.version += 1;
+        if self.guild.loading == 0
+            && let Some((id, _)) = self.guild.member
+        {
+            self.call("GET", &format!("/guild/members/{id}"), None, &format!("member:{id}"));
         }
     }
 

@@ -17,6 +17,7 @@ pub mod files;
 pub mod friends;
 pub mod gson;
 pub mod gson_out;
+pub mod guild;
 pub mod holdings;
 pub mod item_cooldowns;
 pub mod item_use;

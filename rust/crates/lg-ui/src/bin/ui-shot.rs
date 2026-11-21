@@ -114,6 +114,33 @@ fn main() {
             "Server:change" => Some(lg_ui::window::ServerAsk::OpenChange),
             _ => None,
         };
+        // "Guild:Member": logged in, a member's profile made from these records
+        if tab == "Guild:Member" {
+            app.server.url = "https://loot.example.com".into();
+            app.server.state = lg_app::server::State::Online;
+            app.server.user = Some(lg_app::server::User { id: 1, ign: "Gunshit".into(), ..Default::default() });
+            let member = lg_app::guild::Member {
+                id: 1,
+                ign: "Gunshit".into(),
+                guild_rank: 40,
+                last_active: now - 3_600_000,
+                items: app.collection.all().count() as i64,
+                finds: 771,
+                fame: 108_360,
+                exalts: 144,
+                characters: 20,
+                maxed: 15,
+                ..Default::default()
+            };
+            let profile = lg_app::guild::MemberProfile {
+                guild: "Pluribus".into(),
+                member,
+                characters: app.characters.all().cloned().collect(),
+                exalts: app.exalts.progress.iter().map(|(k, v)| (k.to_string(), v.clone())).collect(),
+                collection: app.collection.all().map(|(id, e)| (id.to_string(), i64::from(e.count))).collect(),
+            };
+            app.server.guild.member = Some((1, Some(Ok(profile))));
+        }
         let admin = tab == "Server:admin";
         let shown = if tab == "Server:online" || dialog.is_some() || admin {
             app.server.url = "https://loot.example.com".into();

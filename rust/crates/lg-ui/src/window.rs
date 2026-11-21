@@ -89,6 +89,9 @@ pub enum ServerAsk {
     /// Item score weights and guild settings (admins).
     SaveScoring(f64, f64, f64),
     SaveGuild(f64),
+    /// The Guild tab: load the leaderboard and drops again; open a member's profile.
+    GuildRefresh,
+    OpenMember(i64),
     /// A line under a section (0 item scores, 1 guild): what was typed cannot be used.
     Feedback(u8, String),
 }
@@ -367,7 +370,10 @@ impl Window {
                     battles.show(ui, &mut c, &rarity)
                 }
                 "Social" => social.show(ui, &mut c),
-                "Guild" => guild.show(ui, &mut c),
+                "Guild" => {
+                    let rarity = characters.rarity(ui.ctx());
+                    guild.show(ui, &mut c, &rarity);
+                }
                 "Server" => crate::server::show(ui, &mut c),
                 "Settings" => crate::settings::show(ui, &mut c),
                 _ => {}

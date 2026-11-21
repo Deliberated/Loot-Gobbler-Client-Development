@@ -283,6 +283,8 @@ impl Gui {
             S::Change { with_code, proof, password, again } => server.change_password(with_code, &proof, &password, &again),
             S::OpenForgot(_) | S::OpenChange => {} // the window opens these
             S::RefreshModeration => server.refresh_moderation(),
+            S::GuildRefresh => server.guild_refresh(),
+            S::OpenMember(id) => server.open_member(id),
             S::Accept(id, ign) => server.accept(id, &ign),
             S::Deny(id, ign) => server.deny(id, &ign),
             S::Demote(id, ign, role) => server.set_role(id, &ign, &role),
@@ -501,6 +503,10 @@ impl eframe::App for Gui {
                     ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("lg-copy-card"), id));
                 }
                 None if t.starts_with("open:") => self.window.open(&t[5..]),
+                None if t.starts_with("member:") => {
+                    self.window.open("Guild:Member");
+                    self.app.server.open_member(t[7..].parse().unwrap_or(0));
+                }
                 // the upload on closing: a run hidden, then the window closed before the upload that would follow
                 None if t == "hide-run-close" => {
                     if let Some(start) = self.app.dps_history.runs.iter().find(|r| !r.hidden).map(|r| r.start) {
