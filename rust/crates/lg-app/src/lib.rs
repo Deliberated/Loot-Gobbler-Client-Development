@@ -219,6 +219,12 @@ impl App {
         self.upe.mark(&c, char_id, on, mode, no_pet);
     }
 
+    /// Java `Upe.tradeChecked`, at `now`.
+    pub fn upe_trade_checked(&mut self, char_id: i32, at: i64, ok: bool, why: Option<String>, now: i64) {
+        let c = upe::Ctx { data: self.world.data(), zone: &self.zone, now };
+        self.upe.trade_checked(&c, char_id, at, ok, why, now);
+    }
+
     /// Game Modes: a run's mode changed (Java `Upe.setMode`).
     pub fn upe_mode(&mut self, char_id: i32, mode: &str) {
         let c = upe_ctx!(self);

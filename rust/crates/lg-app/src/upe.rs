@@ -666,6 +666,45 @@ fn merge_run(mine: &mut Run, o: Run) {
     }
 }
 
+impl Upe {
+    /// Java `checking`: the gUPE trades still waiting for the partner's report (character, time, partner, me, got).
+    pub fn checking(&self) -> Vec<Trade> {
+        self.runs.values().flat_map(|r| r.trades.iter().filter(|t| t.status == CHECKING).cloned()).collect()
+    }
+
+    /// Java `tradeChecked`: the partner's report decided a gUPE trade: its items count as the guild's (ok) or as
+    /// traded (the run breaks).
+    pub fn trade_checked(&mut self, c: &Ctx, char_id: i32, at: i64, ok: bool, why: Option<String>, now: i64) {
+        let Some(mut run) = self.runs.remove(&char_id) else { return };
+        repair(&mut run);
+        let Some(t) = run.trades.iter_mut().find(|x| x.at == at && x.status == CHECKING) else {
+            self.runs.insert(char_id, run);
+            return;
+        };
+        t.status = if ok { "ok" } else { "illegal" }.into();
+        t.why = why.clone();
+        let partner = t.partner.clone();
+        for i in 0..run.origin.len() {
+            if run.origin[i] != CHECKING {
+                continue;
+            }
+            run.origin[i] = if ok { GUILD } else { TRADE }.into();
+            if ok {
+                let (item, ench) = (run.items[i], run.enchants[i].clone());
+                self.gathered(&mut run, item, ench, GUILD, now);
+            }
+        }
+        if !ok {
+            let who = if partner.trim().is_empty() { "another player".to_string() } else { partner };
+            break_run(&mut run, format!("Traded with {who}: {}", why.unwrap_or_default()), now);
+        }
+        self.check(c, &mut run, now);
+        self.runs.insert(char_id, run);
+        self.dirty = true;
+        self.soon = true;
+    }
+}
+
 /// Java `repair`: lists that must line up.
 fn repair(run: &mut Run) {
     let n = run.items.len();

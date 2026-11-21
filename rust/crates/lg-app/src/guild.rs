@@ -612,6 +612,76 @@ pub struct ProfileGuild {
     pub version: u64,
 }
 
+// --- Java `GuildUpe`: a gUPE trade checked against the partner's own report ---
+
+pub const MATCH_MS: i64 = 120_000;
+pub const REPORT_WAIT_MS: i64 = 5 * 60_000;
+pub const ASK_EVERY_MS: i64 = 15_000;
+
+/// A trade as a guildmate's client reported it (the parts the check reads).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ReportedTrade {
+    pub at: i64,
+    pub partner: Option<String>,
+    pub mode: String,
+    pub standing: bool,
+    /// (item, gathered in their run)
+    pub gave: Vec<(i32, bool)>,
+}
+
+/// The guildmates' reports: (ign, their trades).
+pub fn guild_upe_of(j: &Json) -> Vec<(String, Vec<ReportedTrade>)> {
+    list(j.get("members"), |m| {
+        let trades = list(m.get("trades"), |t| ReportedTrade {
+            at: long(t.get("at")),
+            partner: match t.get("partner") {
+                Some(Json::String(s)) => Some(s.clone()),
+                _ => None,
+            },
+            mode: text(t.get("mode")),
+            standing: matches!(t.get("standing"), Some(Json::Bool(true))),
+            gave: list(t.get("gave"), |g| (int(g.get("item"), 0), matches!(g.get("clean"), Some(Json::Bool(true))))),
+        });
+        (text(m.get("ign")), trades)
+    })
+}
+
+/// Java `verdict`: the verdict on a trade from the guild's reports (ok, why), or None if the partner's report is not
+/// there (yet).
+pub fn verdict(trade: &crate::upe::Trade, members: &[(String, Vec<ReportedTrade>)]) -> Option<(bool, Option<String>)> {
+    let partner = trade.partner.to_lowercase();
+    let Some((_, trades)) = members.iter().find(|(ign, _)| ign.to_lowercase() == partner) else {
+        return Some((false, Some(format!("{} is not in your Loot Gobbler guild", trade.partner))));
+    };
+    let theirs = trades.iter().find(|t| {
+        (t.at - trade.at).abs() <= MATCH_MS
+            && (trade.me.trim().is_empty() || t.partner.as_ref().is_none_or(|p| p.eq_ignore_ascii_case(&trade.me)))
+    })?;
+    if !crate::upe::guild(&theirs.mode) || !theirs.standing {
+        return Some((false, Some(format!("{} was not playing a standing guild run (gPPE, gUPE...)", trade.partner))));
+    }
+    // everything that came in must be among what they gave, and gathered in their run
+    let mut gave = theirs.gave.clone();
+    for got in &trade.got {
+        let Some(i) = gave.iter().position(|g| g.0 == got.item) else {
+            return Some((false, Some(format!("{}'s report does not list an item you got ({})", trade.partner, got.item))));
+        };
+        let (_, clean) = gave.remove(i);
+        if !clean {
+            return Some((false, Some(format!("{} gave an item their run had not gathered itself", trade.partner))));
+        }
+    }
+    Some((true, None))
+}
+
+/// The trades being checked: the trade, when to ask next, how long the server was asked without an answer.
+#[derive(Debug, Default)]
+pub struct GuildUpe {
+    pub(crate) waiting: Vec<(crate::upe::Trade, i64, i64)>,
+    /// Decided: (character, trade time, ok, why), for the app's UPE record.
+    pub verdicts: Vec<(i32, i64, bool, Option<String>)>,
+}
+
 /// Your clear, kept on the map until the server has it (the upload takes a moment).
 #[derive(Debug, Clone, Default)]
 pub struct PendingClear {
@@ -750,6 +820,42 @@ impl GuildState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gupe_verdicts_as_java() {
+        use crate::upe::{Trade, TradeItem};
+        let trade = Trade {
+            at: 1_000_000,
+            char_id: 5,
+            me: "Me".into(),
+            partner: "Pal".into(),
+            mode: "gUPE".into(),
+            standing: true,
+            gave: Vec::new(),
+            got: vec![TradeItem { item: 7, enchants: None, clean: false }],
+            status: crate::upe::CHECKING.into(),
+            why: None,
+        };
+        let report = |at: i64, mode: &str, standing: bool, gave: Vec<(i32, bool)>| ReportedTrade {
+            at,
+            partner: Some("me".into()),
+            mode: mode.into(),
+            standing,
+            gave,
+        };
+        let none: Vec<(String, Vec<ReportedTrade>)> = vec![("Other".into(), vec![])];
+        assert_eq!(verdict(&trade, &none), Some((false, Some("Pal is not in your Loot Gobbler guild".into()))));
+        let waiting = vec![("pal".into(), vec![report(1_000_000 + MATCH_MS + 1, "gUPE", true, vec![(7, true)])])];
+        assert_eq!(verdict(&trade, &waiting), None, "too far apart: not their report");
+        let ok = vec![("PAL".into(), vec![report(1_050_000, "gUPE", true, vec![(7, true)])])];
+        assert_eq!(verdict(&trade, &ok), Some((true, None)));
+        let dirty = vec![("Pal".into(), vec![report(1_050_000, "gUPE", true, vec![(7, false)])])];
+        assert_eq!(verdict(&trade, &dirty).map(|v| v.0), Some(false));
+        let plain = vec![("Pal".into(), vec![report(1_050_000, "UPE", true, vec![(7, true)])])];
+        assert!(verdict(&trade, &plain).is_some_and(|v| !v.0 && v.1.unwrap().contains("standing guild run")));
+        let missing = vec![("Pal".into(), vec![report(1_050_000, "gUPE", true, vec![(8, true)])])];
+        assert!(verdict(&trade, &missing).is_some_and(|v| v.1.unwrap().contains("does not list an item you got (7)")));
+    }
 
     #[test]
     fn formats_as_java() {

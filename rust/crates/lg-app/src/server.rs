@@ -374,6 +374,8 @@ pub struct Connection {
     pub mates: crate::guild::Mates,
     /// The Profile's guild card.
     pub profile_guild: crate::guild::ProfileGuild,
+    /// The gUPE trades waiting for the partner's report (Java `GuildUpe`).
+    pub gupe: crate::guild::GuildUpe,
     /// What the bell lists (Java `Notifications`): newest first, and whether something new came since it was
     /// last opened.
     pub notifications: Vec<Notification>,
@@ -937,6 +939,7 @@ impl Connection {
                         self.guild_loaded();
                     }
                     "caravan" => self.caravan_done(Err(e)),
+                    t if t.starts_with("gupe:") => self.gupe_done(t[5..].parse().unwrap_or(0), None),
                     "pg-caravan" | "pg-maps" | "pg-facts" => self.profile_guild_done(tag, Err(e)),
                     t if t.starts_with("looks:") => self.looks_done(t, None),
                     "questmaps" => self.maps_done(Err(e), now_ms()),
@@ -1037,6 +1040,7 @@ impl Connection {
                 self.guild_loaded();
             }
             "caravan" => self.caravan_done(Ok(crate::guild::caravan_of(&j))),
+            t if t.starts_with("gupe:") => self.gupe_done(t[5..].parse().unwrap_or(0), Some(crate::guild::guild_upe_of(&j))),
             "pg-caravan" | "pg-maps" | "pg-facts" => self.profile_guild_done(tag, Ok(j)),
             "mates" => {
                 let me = self.user.as_ref().map_or(-1, |u| u.id);
@@ -1161,6 +1165,57 @@ impl Connection {
         self.guild.version += 1;
         if std::mem::take(&mut self.guild.maps_again) {
             self.maps_load();
+        }
+    }
+
+    /// Java `GuildUpe`, once a frame with the trades still waiting (`checking`): each is asked about every 15 s
+    /// (not while logged out, which does not count as waiting).
+    pub fn gupe_tick(&mut self, checking: &[crate::upe::Trade], now: i64) {
+        let g = &mut self.gupe;
+        g.waiting.retain(|(t, _, _)| checking.iter().any(|c| c.at == t.at && c.char_id == t.char_id));
+        for t in checking {
+            if !g.waiting.iter().any(|(w, _, _)| w.at == t.at && w.char_id == t.char_id) {
+                g.waiting.push((t.clone(), now + crate::guild::ASK_EVERY_MS, 0));
+            }
+        }
+        let online = self.user.is_some() && self.state == State::Online;
+        let mut asks = Vec::new();
+        for (t, next, _) in &mut self.gupe.waiting {
+            if *next > now {
+                continue;
+            }
+            *next = now + crate::guild::ASK_EVERY_MS;
+            if online {
+                asks.push(t.at);
+            }
+        }
+        for at in asks {
+            self.call("GET", &format!("/guild/upe?since={}", at - crate::guild::REPORT_WAIT_MS), None, &format!("gupe:{at}"));
+        }
+    }
+
+    fn gupe_done(&mut self, at: i64, members: Option<Vec<(String, Vec<crate::guild::ReportedTrade>)>>) {
+        let Some(members) = members else { return }; // asked again in 15 s
+        let g = &mut self.gupe;
+        let Some(i) = g.waiting.iter().position(|(t, _, _)| t.at == at) else { return };
+        let decided = match crate::guild::verdict(&g.waiting[i].0, &members) {
+            Some(v) => Some(v),
+            None => {
+                g.waiting[i].2 += crate::guild::ASK_EVERY_MS;
+                (g.waiting[i].2 >= crate::guild::REPORT_WAIT_MS).then(|| {
+                    let p = &g.waiting[i].0.partner;
+                    (
+                        false,
+                        Some(format!(
+                            "no trade report from {p} (not playing a gUPE in your Loot Gobbler guild, or Loot Gobbler was not running)"
+                        )),
+                    )
+                })
+            }
+        };
+        if let Some((ok, why)) = decided {
+            let (t, _, _) = g.waiting.remove(i);
+            g.verdicts.push((t.char_id, t.at, ok, why));
         }
     }
 

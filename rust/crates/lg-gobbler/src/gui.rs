@@ -214,6 +214,12 @@ impl Gui {
         self.app.server.tick();
         self.app.server.watch(now);
         self.app.server.mates_tick(now);
+        // gUPE trades: checked against the partner's report; the verdicts go into the runs
+        let checking = self.app.upe.checking();
+        self.app.server.gupe_tick(&checking, now);
+        for (char_id, at, ok, why) in std::mem::take(&mut self.app.server.gupe.verdicts) {
+            self.app.upe_trade_checked(char_id, at, ok, why, now);
+        }
         let answers: Vec<_> = self.net.rx.try_iter().collect();
         for d in answers {
             if let Some(d) = self.app.server.done(d) {
