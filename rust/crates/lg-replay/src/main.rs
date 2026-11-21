@@ -36,6 +36,7 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.as_slice() {
+        [cmd, dir, remote, out] if cmd == "sync" => sync(dir.as_ref(), remote.as_ref(), out.as_ref()),
         [cmd, out, rest @ ..] if cmd == "synth" => {
             let seed = rest.first().and_then(|s| s.parse().ok()).unwrap_or(1);
             let s = synth::session(&synth::Options { seed, ..Default::default() });
@@ -518,6 +519,41 @@ fn world(
     full(&mut out, "end", &w.dump());
     let _ = out.flush();
     ExitCode::SUCCESS
+}
+
+/// Merging another PC's documents (`<remote>/<kind>.json`) into the records of `dir`, then what each kind would
+/// upload (see `oracle/SyncOracle.java`): "<kind> <merged> <count>" and the document.
+fn sync(dir: &std::path::Path, remote: &std::path::Path, out: &std::path::Path) -> ExitCode {
+    let now = std::env::var("LG_NOW")
+        .ok()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or_else(|| std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64));
+    let world = lg_world::World::new(lg_gamedata::GameData::load(&dir.join("assets")));
+    let mut app = lg_app::App::importing(world, now, Some(dir));
+    // the profile as its file has it (the app's start updates it; Java's oracle doesn't start the app)
+    app.profile = lg_app::profile::Profile::import(dir);
+    let mut merged = Vec::new();
+    for (kind, _) in lg_app::sync::KINDS {
+        let m = match std::fs::read_to_string(remote.join(format!("{kind}.json"))) {
+            Err(_) => "-".to_string(),
+            Ok(text) => match lg_world::json::parse(&text) {
+                Err(e) => format!("unreadable: {e}"),
+                Ok(j) => app.sync_merge(kind, &j, now).map_or("thrown".into(), |c| c.to_string()),
+            },
+        };
+        merged.push(m);
+    }
+    let mut text = String::new();
+    for ((kind, _), m) in lg_app::sync::KINDS.iter().zip(merged) {
+        text.push_str(&format!("{kind} {m} {}\n{}\n", app.sync_count(kind), app.sync_export(kind)));
+    }
+    match std::fs::write(out, text) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("cannot write {}: {e}", out.display());
+            ExitCode::FAILURE
+        }
+    }
 }
 
 /// The suggested loadouts (see `oracle/SuggestOracle.java`).

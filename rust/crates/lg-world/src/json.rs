@@ -231,6 +231,76 @@ impl P<'_> {
     }
 }
 
+impl Json {
+    /// Compact text (`JsonElement.toString()`), numbers as written.
+    pub fn write(&self) -> String {
+        let mut out = String::new();
+        self.write_to(&mut out);
+        out
+    }
+
+    fn write_to(&self, out: &mut String) {
+        match self {
+            Json::Null => out.push_str("null"),
+            Json::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+            Json::Number(n) => out.push_str(n),
+            Json::String(s) => quote(s, out),
+            Json::Array(a) => {
+                out.push('[');
+                for (i, v) in a.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    v.write_to(out);
+                }
+                out.push(']');
+            }
+            Json::Object(o) => {
+                out.push('{');
+                for (i, (k, v)) in o.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    quote(k, out);
+                    out.push(':');
+                    v.write_to(out);
+                }
+                out.push('}');
+            }
+        }
+    }
+
+    /// Gson `JsonElement.equals`: objects by their entries (in any order), numbers by value (integers as longs,
+    /// others as doubles).
+    pub fn same(&self, other: &Json) -> bool {
+        match (self, other) {
+            (Json::Number(a), Json::Number(b)) => match (a.parse::<i64>(), b.parse::<i64>()) {
+                (Ok(x), Ok(y)) => x == y,
+                _ => a.parse::<f64>().ok() == b.parse::<f64>().ok() && a.parse::<f64>().is_ok(),
+            },
+            (Json::Array(a), Json::Array(b)) => a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.same(y)),
+            (Json::Object(a), Json::Object(b)) => a.len() == b.len() && a.iter().all(|(k, v)| other.get(k).is_some_and(|w| v.same(w))),
+            _ => self == other,
+        }
+    }
+}
+
+fn quote(s: &str, out: &mut String) {
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -252,5 +322,13 @@ mod tests {
         assert_eq!(Json::Number("5.9".into()).as_int(), Ok(5));
         assert_eq!(Json::Bool(true).as_int(), Err(Thrown));
         assert!(parse("[1,]").is_err() && parse("{'a':1}").is_err());
+    }
+
+    #[test]
+    fn writes_back_and_compares_as_gson() {
+        let text = r#"{"a":[1,2.5,"x\\\"y\\n"],"b":null,"c":{"d":true}}"#;
+        assert_eq!(parse(text).unwrap().write(), text);
+        assert!(parse(r#"{"a":1,"b":2.0}"#).unwrap().same(&parse(r#"{"b":2,"a":1}"#).unwrap()));
+        assert!(!parse("[1]").unwrap().same(&parse("[2]").unwrap()));
     }
 }

@@ -77,6 +77,8 @@ pub struct Visit {
     /// The sniffer started inside it: what happened before is missing.
     pub late: bool,
     pub hidden: bool,
+    /// Only in what is synced: whether you completed it (`completed`), None if unknown.
+    pub completed: Option<bool>,
     /// Exaltation progress the game reported in this dungeon.
     pub exalts: Vec<Exalt>,
     /// Every hit you took, oldest first: ms after entering, damage (after your defense), the enemy's object type
@@ -119,6 +121,7 @@ impl Visit {
             run_start: 0,
             late: false,
             hidden: false,
+            completed: None,
             exalts: Vec::new(),
             hit_time: Vec::new(),
             hit_damage: Vec::new(),
@@ -211,6 +214,7 @@ fn read_visit(v: &lg_world::json::Json) -> Result<Visit, crate::java::Thrown> {
             *f = n;
         }
     }
+    x.completed = gson::boolean(v.get("completed"))?;
     for (f, k) in [(&mut x.late, "late"), (&mut x.hidden, "hidden"), (&mut x.judged, "judged"), (&mut x.victory, "victory")] {
         if let Some(n) = gson::boolean(v.get(k))? {
             *f = n;
@@ -637,6 +641,109 @@ pub fn run_of<'a>(v: &Visit, history: &'a crate::dps_history::DpsHistory) -> Opt
         return None;
     }
     history.runs.iter().find(|r| r.start == v.run_start)
+}
+
+/// Java `detail`: how much a copy of a visit knows.
+fn detail(v: &Visit) -> usize {
+    v.hit_time.len()
+        + v.dealt.len()
+        + v.exalts.len()
+        + v.amulet_saves.len()
+        + usize::from(v.run_start != 0)
+        + v.quick_item.len()
+        + v.moved.len()
+        + usize::from(v.died_at >= 0)
+}
+
+/// Java `end`: when it ended (one in progress: now).
+fn end(v: &Visit, now: i64) -> i64 {
+    v.start + if v.duration_ms > 0 { v.duration_ms } else { now - v.start }
+}
+
+/// The synced copy stays under this (the server takes 16 MB per upload).
+const SYNC_LIMIT: usize = 12 << 20;
+
+impl DungeonVisits {
+    /// Java `mergeSync`: another PC's visits taken in. The copy that knows more wins; removed on either side stays
+    /// removed; amulet saves that turned out not to be ones are left out. True if anything changed.
+    pub fn merge_sync(
+        &mut self,
+        remote: &lg_world::json::Json,
+        amulet: &crate::amulet_saves::AmuletSaves,
+    ) -> Result<bool, crate::java::Thrown> {
+        let theirs = crate::gson::root_list(&remote.write(), read_visit)?;
+        let index: std::collections::HashMap<String, usize> =
+            self.visits.iter().enumerate().map(|(i, v)| (format!("{}|{}", v.start, v.dungeon), i)).collect();
+        let mut changed = false;
+        for mut t in theirs {
+            t.amulet_saves.retain(|&ms| !amulet.removed_at(t.start + i64::from(ms)));
+            match index.get(&format!("{}|{}", t.start, t.dungeon)) {
+                None => {
+                    self.visits.push(t);
+                    changed = true;
+                }
+                Some(&i) => {
+                    let mine = &mut self.visits[i];
+                    let hidden = mine.hidden || t.hidden;
+                    if detail(&t) > detail(mine) {
+                        t.hidden = hidden;
+                        *mine = t;
+                        changed = true;
+                    } else if hidden && !mine.hidden {
+                        mine.hidden = true;
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if changed {
+            self.visits.sort_by_key(|v| std::cmp::Reverse(v.start));
+            self.visits.truncate(MAX_VISITS);
+            self.dirty = true;
+        }
+        Ok(changed)
+    }
+
+    /// Java `exportSync`: the visits as the file has them, each judged completed or not (the guild counts completed
+    /// runs); over the limit, the oldest lose their hits and damage first.
+    pub fn export_sync(&self, history: &DpsHistory) -> String {
+        let mut trimmed = self.visits.clone();
+        for v in &mut trimmed {
+            v.completed = completed(v, history);
+        }
+        let mut texts: Vec<String> = trimmed.iter().map(crate::files::visit).collect();
+        let size = |t: &[String]| 2 + t.iter().map(String::len).sum::<usize>() + t.len().saturating_sub(1);
+        let mut total = size(&texts);
+        for i in (0..trimmed.len()).rev() {
+            if total <= SYNC_LIMIT {
+                break;
+            }
+            let v = &mut trimmed[i];
+            v.hit_time.clear();
+            v.hit_damage.clear();
+            v.hit_enemy.clear();
+            v.dealt.clear();
+            let text = crate::files::visit(v);
+            total = total - texts[i].len() + text.len();
+            texts[i] = text;
+        }
+        crate::gson_out::array(texts)
+    }
+
+    /// Java `amuletSaveRemoved`: a save that turned out not to be one (another PC said so) is unmarked in its visit.
+    pub fn amulet_save_removed(&mut self, t: i64, now: i64) {
+        let mut changed = false;
+        for v in self.visits.iter_mut().chain(self.current.as_mut()) {
+            if t < v.start || t > end(v, now) + 5000 {
+                continue;
+            }
+            let before = v.amulet_saves.len();
+            let start = v.start;
+            v.amulet_saves.retain(|&ms| (start + i64::from(ms) - t).abs() > 3000);
+            changed |= v.amulet_saves.len() != before;
+        }
+        self.dirty |= changed;
+    }
 }
 
 /// Java `DungeonVisits.completed`: whether its boss died (None: not known).

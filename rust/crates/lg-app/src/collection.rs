@@ -1,7 +1,6 @@
 //! Your collection (Java: `lootgobbler.CollectionStore`): every collectible item you found or hold, with a history of
 //! each copy: dropped for you, seen in your vault or inventory, and when it left (forged, fed, dropped, used up).
 //!
-//! Not yet: syncing with the Loot Gobbler server, the file.
 
 use std::collections::HashMap;
 
@@ -89,6 +88,18 @@ impl Find {
     }
 }
 
+/// Java `trim`: the oldest finds go first, removals stay.
+fn trim(h: &mut Vec<Find>) {
+    let mut i = 0;
+    while h.len() > MAX_HISTORY && i < h.len() {
+        if h[i].is_removal() {
+            i += 1;
+        } else {
+            h.remove(i);
+        }
+    }
+}
+
 /// One item (Java: `Entry`).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Entry {
@@ -102,15 +113,7 @@ impl Entry {
     fn add(&mut self, f: Find) {
         let h = self.history.get_or_insert_with(Vec::new);
         h.push(f);
-        // Java `trim`: the oldest finds go first, removals stay
-        let mut i = 0;
-        while h.len() > MAX_HISTORY && i < h.len() {
-            if h[i].is_removal() {
-                i += 1;
-            } else {
-                h.remove(i);
-            }
-        }
+        trim(h);
     }
 
     pub fn removed(&self) -> i32 {
@@ -278,6 +281,191 @@ pub fn find(f: &Find) -> String {
         q(&f.bag),
         f.seasonal.map_or("null".into(), |s| s.to_string())
     )
+}
+
+// --- merging another PC's collection (Java `mergeSync`, `mergeEntry`) ---
+
+/// A find's time, `None` where Java's is null.
+fn time_of(f: &Find) -> Option<&str> {
+    (!f.time.is_empty()).then_some(f.time.as_str())
+}
+
+fn removal_key(f: &Find) -> String {
+    format!("{}|{}|{}", f.source, f.time, f.r#where)
+}
+
+fn drop_key(f: &Find) -> String {
+    format!("{}|{}|{}", f.time, f.r#where, f.bag)
+}
+
+/// Java `pairHeld`: the same copy among mine (by its enchantments), as a position in `unpaired`.
+fn pair_held(h: &[Find], unpaired: &[usize], f: &Find) -> Option<usize> {
+    if f.enchant_ids.is_some()
+        && let Some(i) = unpaired.iter().position(|&m| h[m].enchant_ids == f.enchant_ids)
+    {
+        return Some(i);
+    }
+    let loose = |m: usize| h[m].enchant_ids.is_none() || f.enchant_ids.is_none();
+    unpaired.iter().position(|&m| loose(m) && h[m].source == f.source).or_else(|| unpaired.iter().position(|&m| loose(m)))
+}
+
+fn latest<'a>(mut current: Option<&'a str>, finds: impl IntoIterator<Item = &'a Find>) -> Option<&'a str> {
+    for f in finds {
+        if let Some(t) = time_of(f)
+            && current.is_none_or(|c| t > c)
+        {
+            current = Some(t);
+        }
+    }
+    current
+}
+
+/// Java `explained`: how many copies the drops and sightings account for.
+fn explained<'a>(drops: impl IntoIterator<Item = &'a Find>, sightings: usize, last_sighting: Option<&str>) -> i32 {
+    let (mut n, mut after) = (0, 0);
+    for d in drops {
+        n += 1;
+        if last_sighting.is_none_or(|l| time_of(d).is_some_and(|t| t > l)) {
+            after += 1;
+        }
+    }
+    n.max(sightings as i32 + after)
+}
+
+fn fill_enchants(m: &mut Find, f: &Find) -> bool {
+    if m.enchant_ids.is_some() || f.enchant_ids.is_none() {
+        return false;
+    }
+    m.enchant_ids = f.enchant_ids.clone();
+    m.enchants = f.enchants;
+    true
+}
+
+fn earlier(a: Option<String>, b: Option<String>) -> Option<String> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(if a <= b { a } else { b }),
+        (a, b) => a.or(b),
+    }
+}
+
+fn later(a: Option<String>, b: Option<String>) -> Option<String> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(if a >= b { a } else { b }),
+        (a, b) => a.or(b),
+    }
+}
+
+/// Java `mergeEntry`: one item's copies from both sides, none counted twice.
+fn merge_entry(mine: &mut Entry, theirs: Entry) -> bool {
+    let mut mh = mine.history.clone().unwrap_or_default();
+    let th = theirs.history.unwrap_or_default();
+    let split = |h: &[Find]| -> (Vec<usize>, Vec<usize>) {
+        let kept = (0..h.len()).filter(|&i| !h[i].is_removal());
+        kept.partition(|&i| h[i].source == DROP)
+    };
+    let (my_drops, my_held) = split(&mh);
+    let (their_drops, their_held) = split(&th);
+    // removals are events: one only the other side saw is added (counted per key)
+    let mut my_removals: HashMap<String, i32> = HashMap::new();
+    for f in mh.iter().filter(|f| f.is_removal()) {
+        *my_removals.entry(removal_key(f)).or_default() += 1;
+    }
+    let mut their_removals_only = Vec::new();
+    for (i, f) in th.iter().enumerate().filter(|(_, f)| f.is_removal()) {
+        match my_removals.get_mut(&removal_key(f)) {
+            Some(n) if *n > 0 => *n -= 1,
+            _ => their_removals_only.push(i),
+        }
+    }
+    // match drops by time and place, pair sightings by enchantments
+    let mut my_drops_by_key: HashMap<String, std::collections::VecDeque<usize>> = HashMap::new();
+    for &i in &my_drops {
+        my_drops_by_key.entry(drop_key(&mh[i])).or_default().push_back(i);
+    }
+    let (mut their_drops_only, mut same_drops) = (Vec::new(), Vec::new());
+    for &t in &their_drops {
+        match my_drops_by_key.get_mut(&drop_key(&th[t])).and_then(|q| q.pop_front()) {
+            Some(m) => same_drops.push((m, t)),
+            None => their_drops_only.push(t),
+        }
+    }
+    let mut unpaired = my_held.clone();
+    let (mut their_held_only, mut same_copies) = (Vec::new(), Vec::new());
+    for &t in &their_held {
+        match pair_held(&mh, &unpaired, &th[t]) {
+            Some(p) => same_copies.push((unpaired.remove(p), t)),
+            None => their_held_only.push(t),
+        }
+    }
+
+    let count = {
+        let mine_of = |v: &[usize]| v.iter().map(|&i| &mh[i]).collect::<Vec<_>>();
+        let theirs_of = |v: &[usize]| v.iter().map(|&i| &th[i]).collect::<Vec<_>>();
+        let (md, mhl, td, thl) = (mine_of(&my_drops), mine_of(&my_held), theirs_of(&their_drops), theirs_of(&their_held));
+        let all_drops = md.iter().copied().chain(theirs_of(&their_drops_only));
+        let last_sighting = latest(latest(None, mhl.iter().copied()), thl.iter().copied());
+        let merged = explained(all_drops, mhl.len() + their_held_only.len(), last_sighting);
+        let unexplained = (mine.count - explained(md.iter().copied(), mhl.len(), latest(None, mhl.iter().copied())))
+            .max(theirs.count - explained(td.iter().copied(), thl.len(), latest(None, thl.iter().copied())))
+            .max(0);
+        mine.count.max(theirs.count).max(merged + unexplained)
+    };
+
+    let mut changed = false;
+    for &(m, t) in &same_drops {
+        changed |= fill_enchants(&mut mh[m], &th[t]);
+    }
+    for &(m, t) in &same_copies {
+        let (m, f) = (&mut mh[m], &th[t]);
+        if let Some(ft) = time_of(f)
+            && time_of(m).is_none_or(|mt| ft < mt)
+        {
+            // keep the first sighting
+            m.time = f.time.clone();
+            m.r#where = f.r#where.clone();
+            m.bag = f.bag.clone();
+            changed = true;
+        }
+        changed |= fill_enchants(m, f);
+    }
+    let added: Vec<Find> = their_drops_only.iter().chain(&their_held_only).chain(&their_removals_only).map(|&i| th[i].clone()).collect();
+    let first = earlier(mine.first.clone(), theirs.first);
+    let last = later(mine.last.clone(), theirs.last);
+    changed |= !added.is_empty() || count != mine.count || first != mine.first || last != mine.last;
+    if changed {
+        mh.extend(added);
+        mh.sort_by(|a, b| a.time.cmp(&b.time)); // stable, as Java's
+        trim(&mut mh);
+        mine.history = if mh.is_empty() && mine.history.is_none() { None } else { Some(mh) };
+    }
+    mine.count = count;
+    mine.first = first;
+    mine.last = last;
+    changed
+}
+
+impl Collection {
+    /// Java `mergeSync`: another PC's collection (the server's document) taken in; unknown items added, known ones
+    /// merged copy by copy. True if anything changed.
+    pub fn merge_sync(&mut self, remote: &lg_world::json::Json) -> Result<bool, crate::java::Thrown> {
+        let theirs = parse_entries(&remote.write())?;
+        let mut changed = false;
+        for (id, t) in theirs {
+            match self.entries.get_mut(&id) {
+                None => {
+                    self.order.push(id);
+                    self.entries.insert(id, t);
+                    changed = true;
+                }
+                Some(mine) => changed |= merge_entry(mine, t),
+            }
+        }
+        if changed {
+            self.dirty = true;
+            self.changed = true;
+        }
+        Ok(changed)
+    }
 }
 
 /// Gson reading `LinkedHashMap<Integer, Entry>`.

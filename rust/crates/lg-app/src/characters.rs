@@ -593,6 +593,146 @@ fn read_slots(p: &Entity, c: &mut Char, pack: i32) -> bool {
     changed
 }
 
+// --- merging another PC's characters (Java `mergeSync`) ---
+
+/// Java `mergeSamples`: both sides' fame readings by time (mine first), the newest `MAX_SAMPLES`.
+fn merge_samples(a: &[Sample], b: &[Sample]) -> Vec<Sample> {
+    let mut by_time: BTreeMap<i64, Sample> = BTreeMap::new();
+    for s in a {
+        by_time.insert(s.t, s.clone());
+    }
+    for s in b {
+        by_time.entry(s.t).or_insert_with(|| s.clone());
+    }
+    let mut merged: Vec<Sample> = by_time.into_values().collect();
+    if merged.len() > MAX_SAMPLES {
+        merged.drain(..merged.len() - MAX_SAMPLES);
+    }
+    merged
+}
+
+/// Java `fillUnknown`: what the newer side doesn't know, from the older one.
+fn fill_unknown(n: &mut Char, o: &Char) -> bool {
+    let mut c = false;
+    if n.equipment.is_none() && o.equipment.is_some() {
+        n.equipment = o.equipment.clone();
+        n.enchants = o.enchants.clone();
+        n.enchant_ids = o.enchant_ids.clone();
+        c = true;
+    } else if n.equipment.is_some() && n.equipment == o.equipment {
+        // same gear: same enchantments
+        if n.enchants.is_none() && o.enchants.is_some() {
+            n.enchants = o.enchants.clone();
+            c = true;
+        }
+        if n.enchant_ids.is_none() && o.enchant_ids.is_some() {
+            n.enchant_ids = o.enchant_ids.clone();
+            c = true;
+        }
+    }
+    if n.slots.is_none() && o.slots.is_some() {
+        n.slots = o.slots.clone();
+        n.slot_enchant_ids = o.slot_enchant_ids.clone();
+        c = true;
+    }
+    if n.dungeons.is_none() && o.dungeons.is_some() {
+        n.dungeons = o.dungeons.clone();
+        c = true;
+    }
+    if n.pet_skin == 0 && o.pet_skin != 0 {
+        n.pet_skin = o.pet_skin;
+        n.pet_name = o.pet_name.clone();
+        c = true;
+    }
+    if n.account.is_none() && o.account.is_some() {
+        n.account = o.account.clone();
+        c = true;
+    }
+    if n.skin == 0 && o.skin != 0 {
+        n.skin = o.skin;
+        c = true;
+    }
+    if n.class_name.is_empty() && !o.class_name.is_empty() {
+        n.class_name = o.class_name.clone();
+        c = true;
+    }
+    for (a, b) in [(&mut n.level, o.level), (&mut n.max_hp, o.max_hp), (&mut n.stats_maxed, o.stats_maxed)] {
+        if *a == 0 && b > 0 {
+            *a = b;
+            c = true;
+        }
+    }
+    if n.fame == 0 && o.fame > 0 {
+        n.fame = o.fame;
+        c = true;
+    }
+    // a backpack or extender cannot be lost
+    if !n.backpack && o.backpack {
+        n.backpack = true;
+        c = true;
+    }
+    if !n.extender && o.extender {
+        n.extender = true;
+        c = true;
+    }
+    // the favorite flag goes by when it was set; without times on both sides a set flag is kept
+    let take_theirs = o.favorite_at > n.favorite_at || (o.favorite_at == 0 && n.favorite_at == 0 && o.favorite);
+    if take_theirs && (n.favorite != o.favorite || n.favorite_at != o.favorite_at) {
+        n.favorite = o.favorite;
+        n.favorite_at = o.favorite_at;
+        c = true;
+    }
+    c
+}
+
+/// Java `takeLife`: alive or dead as the side that saw the character last says.
+fn take_life(n: &mut Char, o: &Char) -> bool {
+    let (seen_n, seen_o) = (n.alive_at.max(n.last_played), o.alive_at.max(o.last_played));
+    let o_decides = seen_o > seen_n || (seen_o == seen_n && !o.alive && n.alive);
+    if !o_decides || (n.alive == o.alive && n.died_by == o.died_by && n.alive_at >= o.alive_at) {
+        return false;
+    }
+    n.alive = o.alive;
+    n.died_by = if o.alive { None } else { Some(o.died_by.clone().unwrap_or_else(|| "game".into())) };
+    n.alive_at = n.alive_at.max(o.alive_at);
+    true
+}
+
+impl Characters {
+    /// Java `mergeSync`: another PC's characters taken in. Unknown ones are added; of a known one the side that played
+    /// it last wins, filled in with what only the other knows. True if anything changed.
+    pub fn merge_sync(&mut self, remote: &lg_world::json::Json) -> Result<bool, crate::java::Thrown> {
+        let theirs = parse_chars(&remote.write())?;
+        let mut changed = false;
+        for (id, other) in theirs {
+            let Some(mine) = self.chars.get_mut(&id) else {
+                self.order.push(id);
+                self.chars.insert(id, other);
+                changed = true;
+                continue;
+            };
+            let samples = merge_samples(&mine.samples, &other.samples);
+            let mine_wins = other.last_played <= mine.last_played;
+            let (mut winner, loser) = if mine_wins { (mine.clone(), other) } else { (other, mine.clone()) };
+            if fill_unknown(&mut winner, &loser) && mine_wins {
+                changed = true;
+            }
+            if take_life(&mut winner, &loser) && mine_wins {
+                changed = true;
+            }
+            if !mine_wins || samples.len() != mine.samples.len() {
+                changed = true;
+            }
+            winner.samples = samples;
+            *mine = winner;
+        }
+        if changed {
+            self.dirty = true;
+        }
+        Ok(changed)
+    }
+}
+
 /// Gson reading `LinkedHashMap<Integer, Char>`: missing fields keep Char's defaults.
 fn parse_chars(text: &str) -> Result<Vec<(i32, Char)>, crate::java::Thrown> {
     use crate::gson;

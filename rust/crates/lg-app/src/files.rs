@@ -13,7 +13,7 @@ fn ints2(v: &[Vec<i32>]) -> String {
     array(v.iter().map(|x| ints(x)))
 }
 
-fn chars(c: &crate::characters::Characters) -> String {
+pub(crate) fn chars(c: &crate::characters::Characters) -> String {
     let mut o = Obj::new();
     for ch in c.all() {
         let samples = array(ch.samples.iter().map(|s| Obj::new().int("t", s.t).int("fame", s.fame).end()));
@@ -87,7 +87,7 @@ fn find(f: &crate::collection::Find) -> String {
         .end()
 }
 
-fn collection(c: &crate::collection::Collection) -> String {
+pub(crate) fn collection(c: &crate::collection::Collection) -> String {
     let mut o = Obj::new();
     for (id, e) in c.all() {
         let v = Obj::new()
@@ -238,7 +238,7 @@ fn exalt_change(c: &crate::exalt_store::Change) -> String {
     Obj::new().int("t", c.t).int("classType", c.class_type).int("stat", c.stat).int("before", c.before).int("after", c.after).end()
 }
 
-fn profile(p: &crate::profile::Profile) -> String {
+pub(crate) fn profile(p: &crate::profile::Profile) -> String {
     Obj::new()
         .str("ign", &p.ign)
         .str("guild", &p.guild)
@@ -249,7 +249,7 @@ fn profile(p: &crate::profile::Profile) -> String {
         .end()
 }
 
-fn runs(h: &crate::dps_history::DpsHistory) -> String {
+pub(crate) fn runs(h: &crate::dps_history::DpsHistory) -> String {
     array(h.runs.iter().map(|r| {
         let bosses = array(r.bosses.iter().map(|b| {
             let players = array(b.players.iter().map(|p| {
@@ -290,7 +290,12 @@ fn runs(h: &crate::dps_history::DpsHistory) -> String {
 }
 
 fn visits(d: &crate::dungeon_visits::DungeonVisits) -> String {
-    array(d.visits.iter().map(|v| {
+    array(d.visits.iter().map(visit))
+}
+
+/// One visit, as Gson writes it.
+pub(crate) fn visit(v: &crate::dungeon_visits::Visit) -> String {
+    {
         let exalts =
             array(v.exalts.iter().map(|e| {
                 Obj::new().int("classType", e.class_type).int("stat", e.stat).int("before", e.before).int("after", e.after).end()
@@ -326,6 +331,7 @@ fn visits(d: &crate::dungeon_visits::DungeonVisits) -> String {
             .int("runStart", v.run_start)
             .bool("late", v.late)
             .bool("hidden", v.hidden)
+            .raw("completed", v.completed.map(|b| b.to_string()))
             .raw("exalts", Some(exalts))
             .raw("hitTime", Some(ints(&v.hit_time)))
             .raw("hitDamage", Some(ints(&v.hit_damage)))
@@ -346,10 +352,10 @@ fn visits(d: &crate::dungeon_visits::DungeonVisits) -> String {
             .bool("victory", v.victory)
             .raw("look", look)
             .end()
-    }))
+    }
 }
 
-fn amulet(a: &crate::amulet_saves::AmuletSaves) -> String {
+pub(crate) fn amulet(a: &crate::amulet_saves::AmuletSaves) -> String {
     array(a.saves.iter().map(|s| {
         Obj::new()
             .int("t", s.t)
@@ -362,7 +368,7 @@ fn amulet(a: &crate::amulet_saves::AmuletSaves) -> String {
     }))
 }
 
-fn pets(p: &crate::pet_store::PetStore) -> String {
+pub(crate) fn pets(p: &crate::pet_store::PetStore) -> String {
     let bag = |b: &crate::pet_store::Saddlebag| {
         Obj::new().raw("items", Some(ints(&b.items))).raw("enchantIds", Some(ints2(&b.enchant_ids))).end()
     };
@@ -441,7 +447,7 @@ pub(crate) fn holdings_json(h: &crate::holdings::Holdings) -> String {
     Obj::new().int("version", 1).raw("places", Some(places)).raw("gone", Some(gone)).end()
 }
 
-fn upe(u: &mut crate::upe::Upe) -> String {
+pub(crate) fn upe(u: &mut crate::upe::Upe) -> String {
     note_keys(&mut u.run_keys, u.runs.keys().copied());
     note_keys(&mut u.mission_keys, u.missions.keys().cloned());
     let titem = |t: &crate::upe::TradeItem| {

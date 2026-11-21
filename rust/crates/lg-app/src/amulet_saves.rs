@@ -205,6 +205,45 @@ impl AmuletSaves {
         visits.amulet_saved(now);
     }
 
+    /// Java `mergeSync`: another PC's saves taken in; one counted by the first version of the rule, or removed there,
+    /// is removed here too (and unmarked in its visit). True if anything changed.
+    pub fn merge_sync(&mut self, remote: &Json, visits: &mut DungeonVisits, now: i64) -> Result<bool, crate::java::Thrown> {
+        if *remote == Json::Null {
+            return Ok(false);
+        }
+        let theirs = parse_saves(&remote.write()).ok_or(crate::java::Thrown)?;
+        let mut changed = false;
+        for mut s in theirs {
+            match self.saves.iter_mut().find(|m| m.t == s.t) {
+                None => {
+                    if s.message.contains(OLD_RULE) && !s.removed {
+                        s.removed = true; // counted by the first version from another client
+                        visits.amulet_save_removed(s.t, now);
+                    }
+                    self.saves.push(s);
+                    changed = true;
+                }
+                Some(mine) => {
+                    if s.removed && !mine.removed {
+                        mine.removed = true;
+                        visits.amulet_save_removed(s.t, now);
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if changed {
+            self.saves.sort_by_key(|s| s.t);
+            self.dirty = true;
+        }
+        Ok(changed)
+    }
+
+    /// Java `removedAt`: a save near `t` was found not to be one.
+    pub fn removed_at(&self, t: i64) -> bool {
+        self.saves.iter().any(|s| s.removed && (s.t - t).abs() <= 3000)
+    }
+
     /// Java `count`: every save kept.
     pub fn count(&self) -> usize {
         self.saves.iter().filter(|s| !s.removed).count()

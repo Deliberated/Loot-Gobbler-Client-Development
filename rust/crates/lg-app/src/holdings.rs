@@ -1,8 +1,6 @@
 //! What you hold, slot by slot (Java: `lootgobbler.Holdings`): each character's equipment, inventory, backpack and
 //! quick slots, and both vaults' chests, from what the game shows live, vault visits and moves in the vault; with a
 //! journal of every change of collectible items.
-//!
-//! Not yet: syncing, the file (and its journal file).
 
 use lg_gamedata::GameData;
 use std::collections::{HashMap, HashSet};
@@ -657,6 +655,52 @@ impl Holdings {
         self.track(key);
         self.line(c, key, &format!("{why}: {total} copies ({change}){tail}"));
         self.save();
+    }
+
+    /// Java `mergeSync`: another PC's view taken in. A place it removed after we last saw it goes; a place it saw
+    /// later than we did replaces ours (with a journal line). True if anything changed.
+    pub fn merge_sync(&mut self, c: &Ctx, remote: &lg_world::json::Json) -> Result<bool, crate::java::Thrown> {
+        let Some((places, (gone_keys, gone, _))) = parse_state(&remote.write())? else { return Ok(false) };
+        let mut changed = false;
+        for key in gone_keys {
+            let at = gone[&key];
+            if let Some(mine) = self.places.get(&key)
+                && mine.seen_at <= at
+            {
+                let d = describe(c, Some(mine));
+                self.line(c, &key, &format!("removed on another PC: removed ({d})"));
+                self.places.remove(&key);
+                self.place_keys.retain(|k| *k != key);
+                self.place_ops.push(lg_world::fight::MapOp::Removed(key.clone(), lg_world::fight::java_string_hash(&key)));
+                changed = true;
+            }
+            if at > self.gone.get(&key).copied().unwrap_or(0) {
+                if !self.gone.contains_key(&key) {
+                    self.gone_keys.push(key.clone());
+                    self.gone_ops.push(lg_world::fight::MapOp::Put(key.clone(), lg_world::fight::java_string_hash(&key)));
+                }
+                self.gone.insert(key, at);
+                changed = true;
+            }
+        }
+        for (key, other) in places {
+            let mine = self.places.get(&key);
+            let older = match mine {
+                Some(m) => other.seen_at <= m.seen_at,
+                None => other.seen_at <= self.gone.get(&key).copied().unwrap_or(-1),
+            };
+            if older {
+                continue;
+            }
+            let when = if other.seen_at > 0 { crate::localtime::instant(other.seen_at) } else { "earlier".into() };
+            let before = mine.cloned();
+            self.replace(c, &key, before, other, &format!("from another PC, seen {when}"));
+            changed = true;
+        }
+        if changed {
+            self.save();
+        }
+        Ok(changed)
     }
 
     /// Java `save()`: the file's text as it is now (written by the app after the packet; later changes in memory

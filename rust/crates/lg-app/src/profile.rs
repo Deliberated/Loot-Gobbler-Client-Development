@@ -1,6 +1,4 @@
 //! Your player profile (Java: `lootgobbler.PlayerProfile`): name, guild and rank, for the Loot Gobbler server.
-//!
-//! Not yet: syncing, the file.
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Profile {
@@ -21,10 +19,15 @@ pub struct Profile {
 impl Profile {
     /// What the Java app kept (`profile.json`), read only. Unreadable: the default.
     pub fn import(dir: &std::path::Path) -> Profile {
+        std::fs::read_to_string(dir.join("profile.json")).ok().and_then(|t| Profile::parse(&t)).flatten().unwrap_or_default()
+    }
+
+    /// Gson reading `Data`: None where it throws, Some(None) for null.
+    fn parse(text: &str) -> Option<Option<Profile>> {
         use crate::gson;
         use lg_world::json::Json;
+        let v = lg_world::json::parse(text).ok()?;
         let read = || -> Option<Profile> {
-            let v = lg_world::json::parse(&std::fs::read_to_string(dir.join("profile.json")).ok()?).ok()?;
             if v == Json::Null {
                 return None;
             }
@@ -53,7 +56,17 @@ impl Profile {
             };
             Some(p)
         };
-        read().unwrap_or_default()
+        if v == Json::Null { Some(None) } else { read().map(Some) }
+    }
+
+    /// Java `mergeSync`: the other PC's profile, if it was updated later. True if it was taken.
+    pub fn merge_sync(&mut self, remote: &lg_world::json::Json) -> Result<bool, crate::java::Thrown> {
+        let Some(theirs) = Profile::parse(&remote.write()).ok_or(crate::java::Thrown)? else { return Ok(false) };
+        if theirs.updated_at <= self.updated_at {
+            return Ok(false);
+        }
+        *self = Profile { dirty: true, ..theirs };
+        Ok(true)
     }
 
     /// Java `update`: what the game shows of you; unknown parts stay as they were.

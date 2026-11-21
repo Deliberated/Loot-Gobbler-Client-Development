@@ -609,6 +609,60 @@ fn use_allowance(run: &mut Run, item: i32) -> bool {
     false
 }
 
+/// Java `mergeRun`: what either PC saw of a run.
+fn merge_run(mine: &mut Run, o: Run) {
+    mine.fresh |= o.fresh;
+    if o.t0_start == Some(false) || mine.t0_start.is_none() {
+        mine.t0_start = o.t0_start;
+    }
+    mine.guild_locked |= o.guild_locked;
+    // the trades of both, a verdict over "checking"
+    for t in o.trades {
+        match mine.trades.iter_mut().find(|x| x.at == t.at) {
+            None => mine.trades.push(t),
+            Some(m) => {
+                if m.status == CHECKING && t.status != CHECKING {
+                    m.status = t.status;
+                    m.why = t.why;
+                }
+            }
+        }
+    }
+    if o.marked_at > mine.marked_at {
+        mine.mode = o.mode;
+        mine.no_pet = o.no_pet;
+        mine.marked = o.marked;
+        mine.marked_at = o.marked_at;
+    }
+    if o.broken.is_some() && (mine.broken.is_none() || o.broken_at < mine.broken_at) {
+        mine.broken = o.broken;
+        mine.broken_at = o.broken_at;
+    }
+    for n in o.notes {
+        if !mine.notes.contains(&n) {
+            mine.notes.push(n);
+        }
+    }
+    // what either PC saw it gather
+    for g in o.gathered {
+        if !mine.gathered.iter().any(|x| x.item == g.item && x.at == g.at) {
+            mine.gathered.push(g);
+        }
+    }
+    mine.gathered.sort_by_key(|g| g.at);
+    if o.last_seen > mine.last_seen {
+        mine.last_seen = o.last_seen;
+        mine.items = o.items;
+        mine.enchants = o.enchants;
+        mine.origin = o.origin;
+        mine.since = o.since;
+        mine.level = o.level;
+        mine.base_stats = o.base_stats;
+        mine.allowed = o.allowed;
+        mine.pet = o.pet;
+    }
+}
+
 /// Java `repair`: lists that must line up.
 fn repair(run: &mut Run) {
     let n = run.items.len();
@@ -626,13 +680,17 @@ fn repair(run: &mut Run) {
 impl Upe {
     /// What the Java app kept (`upe.json`), read only, with Java's repair of each run. Unreadable: nothing.
     pub fn import(dir: &std::path::Path) -> Upe {
+        let Ok(text) = std::fs::read_to_string(dir.join("upe.json")) else { return Upe::default() };
+        Upe::parse(&text).unwrap_or_default()
+    }
+
+    /// Gson reading `State`, each run repaired.
+    fn parse(text: &str) -> Result<Upe, crate::java::Thrown> {
         use crate::gson;
         use lg_world::json::Json;
-        let mut u = Upe::default();
-        let Ok(text) = std::fs::read_to_string(dir.join("upe.json")) else { return u };
         let read = || -> Result<Upe, crate::java::Thrown> {
             let mut u = Upe::default();
-            let root = lg_world::json::parse(&text).map_err(|_| crate::java::Thrown)?;
+            let root = lg_world::json::parse(text).map_err(|_| crate::java::Thrown)?;
             if root == Json::Null {
                 return Ok(u);
             }
@@ -683,10 +741,60 @@ impl Upe {
             }
             Ok(u)
         };
-        if let Ok(x) = read() {
-            u = x;
+        read()
+    }
+
+    /// Java `mergeSync`: another PC's runs taken in (each merged with ours), the vault items left unseen of both, and
+    /// of each mission run the later start (the same start stays clean only if clean on both). True if anything
+    /// changed; a document Gson cannot read changes nothing.
+    pub fn merge_sync(&mut self, remote: &lg_world::json::Json) -> bool {
+        let lg_world::json::Json::Object(_) = remote else { return false };
+        let Ok(other) = Upe::parse(&remote.write()) else { return false };
+        let mut changed = false;
+        for k in &other.run_keys {
+            let o = other.runs[k].clone();
+            match self.runs.get_mut(&o.char_id) {
+                None => {
+                    if !self.run_keys.contains(&o.char_id) {
+                        self.run_keys.push(o.char_id); // in the order put
+                    }
+                    self.runs.insert(o.char_id, o);
+                    changed = true;
+                }
+                Some(mine) => {
+                    let before = mine.clone();
+                    merge_run(mine, o);
+                    changed |= *mine != before;
+                }
+            }
         }
-        u
+        for l in other.left {
+            let same = |m: &Left| m.item == l.item && m.from == l.from && m.to == l.to && m.vault == l.vault && m.enchants == l.enchants;
+            if !self.left.iter().any(same) {
+                self.left.push(l);
+                changed = true;
+            }
+        }
+        for k in &other.mission_keys {
+            let o = &other.missions[k];
+            match self.missions.get_mut(k) {
+                Some(mine) if o.started_at <= mine.started_at => {
+                    if o.started_at == mine.started_at && mine.clean && !o.clean {
+                        mine.clean = false;
+                        changed = true;
+                    }
+                }
+                _ => {
+                    if !self.mission_keys.contains(k) {
+                        self.mission_keys.push(k.clone());
+                    }
+                    self.missions.insert(k.clone(), o.clone());
+                    changed = true;
+                }
+            }
+        }
+        self.dirty |= changed;
+        changed
     }
 
     pub fn in_vault(&mut self, vault: bool) {

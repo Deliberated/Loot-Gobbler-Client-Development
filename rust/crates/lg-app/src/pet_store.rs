@@ -349,6 +349,47 @@ fn saddlebag(v: Option<&Json>) -> Option<Option<Saddlebag>> {
     }
 }
 
+impl PetStore {
+    /// Java `mergeSync`: another PC's pets taken in; of a known pet the side that saw it last wins, filled in with
+    /// the saddlebags and abilities only the other knows. True if anything changed.
+    pub fn merge_sync(&mut self, remote: &Json) -> Result<bool, crate::java::Thrown> {
+        if *remote == Json::Null {
+            return Ok(false);
+        }
+        let theirs = parse_pets(&remote.write()).ok_or(crate::java::Thrown)?;
+        let mut changed = false;
+        for (id, other) in theirs {
+            let Some(i) = self.pets.iter().position(|p| p.0 == id) else {
+                self.pets.push((id, other));
+                changed = true;
+                continue;
+            };
+            let mine = &mut self.pets[i].1;
+            let mine_wins = other.last_seen <= mine.last_seen;
+            let (mut winner, loser) = if mine_wins { (mine.clone(), other) } else { (other, mine.clone()) };
+            let mut filled = false;
+            if winner.saddlebag.is_none() && loser.saddlebag.is_some() {
+                winner.saddlebag = loser.saddlebag.clone();
+                filled = true;
+            }
+            if winner.seasonal_saddlebag.is_none() && loser.seasonal_saddlebag.is_some() {
+                winner.seasonal_saddlebag = loser.seasonal_saddlebag.clone();
+                filled = true;
+            }
+            if winner.abilities.is_empty() && !loser.abilities.is_empty() {
+                winner.abilities = loser.abilities;
+                filled = true;
+            }
+            if !mine_wins || filled {
+                *mine = winner;
+                changed = true;
+            }
+        }
+        self.dirty |= changed;
+        Ok(changed)
+    }
+}
+
 /// Gson reading `LinkedHashMap<Integer, Pet>` (missing fields keep their defaults).
 fn parse_pets(text: &str) -> Option<Vec<(i32, Pet)>> {
     let Json::Object(o) = json::parse(text).ok()? else { return None };

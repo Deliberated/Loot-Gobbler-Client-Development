@@ -139,6 +139,17 @@ impl Zone {
     }
 }
 
+/// Java `Instant.ofEpochMilli(ms).toString()`: UTC, seconds always, milliseconds when not 0.
+pub fn instant(utc_ms: i64) -> String {
+    let secs = utc_ms.div_euclid(1000);
+    let ms = utc_ms.rem_euclid(1000);
+    let (days, rem) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
+    let (y, m, d) = civil(days);
+    let date = if (0..=9999).contains(&y) { format!("{y:04}-{m:02}-{d:02}") } else { format!("{y:+05}-{m:02}-{d:02}") };
+    let frac = if ms == 0 { String::new() } else { format!(".{ms:03}") };
+    format!("{date}T{:02}:{:02}:{:02}{frac}Z", rem / 3600, rem / 60 % 60, rem % 60)
+}
+
 /// Days since 1970 -> (year, month, day) (Howard Hinnant's algorithm).
 pub(crate) fn civil(z: i64) -> (i64, u32, u32) {
     let z = z + 719_468;

@@ -117,6 +117,36 @@ impl ExaltStore {
     }
 }
 
+impl ExaltStore {
+    /// Java `mergeSync`: another PC's progress taken in, the higher value of each stat kept (a class with fewer than
+    /// 8 values is skipped). True if anything changed.
+    pub fn merge_sync(&mut self, remote: &Json) -> Result<bool, crate::java::Thrown> {
+        let theirs = match remote {
+            Json::Null => BTreeMap::new(),
+            r => parse_progress(&r.write()).ok_or(crate::java::Thrown)?,
+        };
+        let mut changed = false;
+        for (class, other) in theirs {
+            if other.len() < 8 {
+                continue;
+            }
+            let Some(mine) = self.progress.get_mut(&class) else {
+                self.progress.insert(class, other);
+                changed = true;
+                continue;
+            };
+            for (m, &o) in mine.iter_mut().zip(&other) {
+                if o > *m {
+                    *m = o;
+                    changed = true;
+                }
+            }
+        }
+        self.dirty |= changed;
+        Ok(changed)
+    }
+}
+
 pub fn change_line(c: &Change) -> String {
     format!("{}/{}/{}/{}/{}", c.t, c.class_type, c.stat, c.before, c.after)
 }

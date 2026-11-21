@@ -240,6 +240,39 @@ impl DpsHistory {
         h
     }
 
+    /// Java `mergeSync`: another PC's runs taken in (repaired first, so a broken run matches its repaired copy here);
+    /// a run removed there is removed here too. Newest first, at most `MAX_RUNS`. True if anything changed.
+    pub fn merge_sync(&mut self, remote: &lg_world::json::Json) -> Result<bool, crate::java::Thrown> {
+        let theirs = crate::gson::root_list(&remote.write(), read_run)?;
+        let mut changed = false;
+        let mut known: HashMap<String, usize> =
+            self.runs.iter().enumerate().map(|(i, r)| (format!("{}|{}", r.start, r.dungeon), i)).collect();
+        for mut r in theirs {
+            repair(&mut r);
+            let key = format!("{}|{}", r.start, r.dungeon);
+            match known.get(&key) {
+                None => {
+                    known.insert(key, self.runs.len());
+                    self.runs.push(r);
+                    changed = true;
+                }
+                Some(&i) => {
+                    if r.hidden && !self.runs[i].hidden {
+                        // removed on the other side
+                        self.runs[i].hidden = true;
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if changed {
+            self.runs.sort_by_key(|r| std::cmp::Reverse(r.start));
+            self.runs.truncate(MAX_RUNS);
+            self.dirty = true;
+        }
+        Ok(changed)
+    }
+
     /// The newest saved run.
     pub fn latest(&self) -> Option<&Run> {
         self.runs.first()

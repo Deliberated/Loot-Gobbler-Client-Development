@@ -34,6 +34,7 @@ pub mod pet_store;
 pub mod profile;
 pub mod properties;
 pub mod realm_character;
+pub mod sync;
 pub mod tinkerer;
 pub mod upe;
 pub mod web;
