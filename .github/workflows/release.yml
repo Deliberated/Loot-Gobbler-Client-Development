@@ -1,11 +1,11 @@
 # Pushing a version tag (v + the version in build.gradle, e.g. v0.7.33) builds Loot Gobbler for Windows and Linux and
-# publishes them as a release of Deliberated/Loot-Gobbler-Client, where the in-app updater looks for new versions.
+# publishes them as a release of Deliberated/Loot-Gobbler-Client-Legacy, where the in-app updater looks for new versions.
 #
 # Release title: the subject of the tagged commit ("v0.7.33: Linux Sniffer"). Release notes: RELEASE_NOTES.md.
 # Run by hand (Actions > Release > Run workflow, or `gh workflow run release.yml`) it only builds both platforms as a
 # test and publishes nothing.
 # Needs the repository secret RELEASE_TOKEN: a fine-grained token with "Contents: read and write" on
-# Deliberated/Loot-Gobbler-Client (this workflow's own token can't write to another repository).
+# Deliberated/Loot-Gobbler-Client-Legacy (this workflow's own token can't write to another repository).
 name: Release
 
 on:
@@ -84,12 +84,12 @@ jobs:
           merge-multiple: true
       - name: Check the release notes
         run: grep -q '[^[:space:]]' RELEASE_NOTES.md || { echo "RELEASE_NOTES.md is empty"; exit 1; }
-      - name: Publish to Loot-Gobbler-Client
+      - name: Publish to Loot-Gobbler-Client-Legacy
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           title="$(git log -1 --format=%s "$GITHUB_REF_NAME")"
-          gh release create "$GITHUB_REF_NAME" --repo Deliberated/Loot-Gobbler-Client \
+          gh release create "$GITHUB_REF_NAME" --repo Deliberated/Loot-Gobbler-Client-Legacy \
             --title "$title" --notes-file RELEASE_NOTES.md \
             dist/LootGobbler.exe dist/LootGobbler-portable.zip \
             dist/LootGobbler-x86_64.rpm dist/LootGobbler-linux-x86_64.tar.gz

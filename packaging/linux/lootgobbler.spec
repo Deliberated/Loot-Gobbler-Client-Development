@@ -15,7 +15,7 @@ Version:        %{app_version}
 Release:        1
 Summary:        Loot Gobbler - your right hand for your RotMG adventures
 License:        MIT
-URL:            https://github.com/Deliberated/Loot-Gobbler-Client
+URL:            https://github.com/Deliberated/Loot-Gobbler-Client-Legacy
 BuildArch:      x86_64
 AutoReqProv:    no
 Requires:       libpcap

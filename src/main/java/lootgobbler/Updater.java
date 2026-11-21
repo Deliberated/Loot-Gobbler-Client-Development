@@ -27,7 +27,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 /**
- * Update check and in-app update from the GitHub releases of Loot-Gobbler-Client.
+ * Update check and in-app update from the GitHub releases of Loot-Gobbler-Client-Legacy.
  * <p>
  * Checks shortly after start and then every hour. Updating downloads LootGobbler-portable.zip from the latest
  * release (the same program files the setup installs, without any user data), checks it against GitHub's SHA-256,
@@ -42,8 +42,8 @@ public final class Updater {
     }
 
     private static final String API = System.getProperty("lootgobbler.updateApi",   // overridable for testing
-            "https://api.github.com/repos/Deliberated/Loot-Gobbler-Client/releases/latest");
-    private static final String RELEASES_PAGE = "https://github.com/Deliberated/Loot-Gobbler-Client/releases/latest";
+            "https://api.github.com/repos/Deliberated/Loot-Gobbler-Client-Legacy/releases/latest");
+    private static final String RELEASES_PAGE = "https://github.com/Deliberated/Loot-Gobbler-Client-Legacy/releases/latest";
     private static final String ZIP_NAME = "LootGobbler-portable.zip";
     private static final long FIRST_CHECK_S = 2, INTERVAL_S = 60 * 60;
     private static final HttpClient HTTP = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NORMAL)
