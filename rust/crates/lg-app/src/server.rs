@@ -357,6 +357,23 @@ pub struct Connection {
     pub loaded: u64,
     /// The Guild tab's leaderboard, drops and member profile.
     pub guild: crate::guild::GuildState,
+    /// What the bell lists (Java `Notifications`): newest first, and whether something new came since it was
+    /// last opened.
+    pub notifications: Vec<Notification>,
+    pub unread: bool,
+    /// Java `ApprovalWatcher`: the moderator account watched, the players already notified about, when it checks.
+    watched: String,
+    seen: std::collections::HashSet<i64>,
+    check_at: i64,
+}
+
+/// One entry of the bell: a key (posted again, it is replaced), a title and a line.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Notification {
+    pub key: String,
+    pub title: String,
+    pub text: String,
+    pub time: i64,
 }
 
 /// An unused moderator token.
@@ -652,6 +669,61 @@ impl Connection {
         });
     }
 
+    /// Java `Notifications.post`: adds or replaces the entry with this key; new (the red dot) if fresh.
+    pub fn post(&mut self, key: &str, title: String, text: String, fresh: bool, now: i64) {
+        self.notifications.retain(|n| n.key != key);
+        self.notifications.insert(0, Notification { key: key.into(), title, text, time: now });
+        self.unread |= fresh;
+    }
+
+    pub fn unpost(&mut self, key: &str) {
+        self.notifications.retain(|n| n.key != key);
+        if self.notifications.is_empty() {
+            self.unread = false;
+        }
+    }
+
+    /// Java `ApprovalWatcher`, once a frame: for moderators and admins, the approval queue checked once a minute
+    /// (and right after logging in); its players in the bell.
+    pub fn watch(&mut self, now: i64) {
+        let m = if self.state == State::Online { self.user.clone().filter(|u| u.at_least_moderator()) } else { None };
+        let account = m.as_ref().map_or(String::new(), |u| format!("{}|{}", self.url, u.id));
+        if account != self.watched {
+            self.watched = account;
+            self.seen.clear();
+            self.unpost("approvals");
+            self.check_at = now;
+        }
+        if m.is_some() && now >= self.check_at {
+            self.check_at = now + 60_000;
+            self.call("GET", "/admin/requests", None, "approvals");
+        }
+    }
+
+    /// Java `ApprovalWatcher.update`: the queue as it is now.
+    fn approvals(&mut self, pending: &[User], now: i64) {
+        if self.watched.is_empty() {
+            return;
+        }
+        if pending.is_empty() {
+            self.unpost("approvals");
+            return;
+        }
+        let mut fresh = false;
+        for p in pending {
+            fresh |= self.seen.insert(p.id);
+        }
+        let title = if pending.len() == 1 {
+            format!("{} is waiting for approval", pending[0].ign)
+        } else {
+            format!("{} players are waiting for approval", pending.len())
+        };
+        let names =
+            pending.iter().take(5).map(|p| p.ign.as_str()).collect::<Vec<_>>().join(", ") + if pending.len() > 5 { ", ..." } else { "" };
+        let text = if pending.len() == 1 { "Accept or deny them under Server > Moderation".to_string() } else { names };
+        self.post("approvals", title, text, fresh, now);
+    }
+
     /// Java `rebuild`'s loading, once a frame: logged in as a moderator or admin (or with another role), the
     /// moderation lists are loaded afresh; an admin's item score weights and guild settings too.
     pub fn tick(&mut self) {
@@ -795,7 +867,15 @@ impl Connection {
         };
         let m = &mut self.moderation;
         match tag {
-            "requests" => m.pending = users_of(&j, "users"),
+            "requests" => {
+                m.pending = users_of(&j, "users");
+                let pending = m.pending.clone();
+                self.approvals(&pending, now_ms()); // the bell follows accepts and denies
+            }
+            "approvals" => {
+                let pending = users_of(&j, "users");
+                self.approvals(&pending, now_ms());
+            }
             "users" => m.members = users_of(&j, "users"),
             "tokens" => {
                 m.tokens = match j.get("tokens") {

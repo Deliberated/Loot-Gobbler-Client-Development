@@ -29,6 +29,12 @@ pub struct Shell {
     pub server: Server,
     /// The server label's tooltip.
     pub server_tip: String,
+    /// The bell: its entries (title, line), whether something is new, whether its list is open; clicks this frame.
+    pub notifications: Vec<(String, String)>,
+    pub unread: bool,
+    pub bell_open: bool,
+    pub clicked_bell: bool,
+    pub clicked_notification: Option<usize>,
     /// E.g. "build v0.0.1" (Java: "stable" for a released app).
     pub version: String,
     pub overlays_on: bool,
@@ -47,6 +53,11 @@ impl Default for Shell {
             sniffing: false,
             server: Server::Offline,
             server_tip: String::new(),
+            notifications: Vec::new(),
+            unread: false,
+            bell_open: false,
+            clicked_bell: false,
+            clicked_notification: None,
             version: concat!("build v", env!("CARGO_PKG_VERSION")).into(),
             overlays_on: false,
             clicked_sniffer: false,
@@ -72,6 +83,8 @@ impl Shell {
         self.clicked_overlay = false;
         self.clicked_updates = false;
         self.clicked_server = false;
+        self.clicked_bell = false;
+        self.clicked_notification = None;
         let all = ui.max_rect();
         let painter = ui.painter().clone();
         painter.rect_filled(all, 0.0, p.sand);
@@ -118,8 +131,60 @@ impl Shell {
         painter.rect_filled(Rect::from_min_size(pos2(all.left(), row.bottom()), vec2(all.width(), 1.0)), 0.0, p.line);
         // the notifications bell at the right end of the tab row
         let bell = Rect::from_min_size(pos2(row.right() - 36.0, row.top()), vec2(36.0, TAB_H));
-        let hover = ui.interact(bell, ui.scope_id().with("bell"), Sense::click()).hovered();
+        let bell_resp = ui.interact(bell, ui.scope_id().with("bell"), Sense::click());
+        let hover = bell_resp.hovered();
+        if bell_resp.clicked() {
+            self.bell_open = !self.bell_open;
+            self.clicked_bell = self.bell_open;
+        }
+        let bell_resp = bell_resp.on_hover_text("Notifications");
+        let _ = bell_resp;
         paint_bell(&painter, bell.center(), if hover { p.ink } else { p.ink.gamma_multiply(190.0 / 255.0) });
+        if self.unread {
+            // a ring in the background colour sets the dot off the bell
+            let (x, y) = ((bell.center().x + 3.0).round(), (bell.center().y - 11.0).round());
+            painter.circle_filled(pos2(x + 4.0, y + 4.0), 6.0, p.sand);
+            painter.circle_filled(pos2(x + 4.0, y + 4.0), 4.0, Color32::from_rgb(0xE5, 0x48, 0x4D));
+        }
+        if self.bell_open {
+            // Java's popup menu under the bell, its right edge at the bell's
+            let area = egui::Area::new(egui::Id::unique("bell-menu"))
+                .order(egui::Order::Foreground)
+                .pivot(Align2::RIGHT_TOP)
+                .fixed_pos(pos2(bell.right(), bell.bottom()))
+                .show(ui.ctx(), |ui| {
+                    egui::Frame::NONE.fill(p.paper).stroke(Stroke::new(1.0, p.line)).inner_margin(4.0).show(ui, |ui| {
+                        let f = theme::body(18.0);
+                        if self.notifications.is_empty() {
+                            ui.add_space(6.0);
+                            ui.horizontal(|ui| {
+                                ui.add_space(10.0);
+                                ui.label(egui::RichText::new("No notifications").font(f.clone()).color(fixed::MUTED));
+                                ui.add_space(10.0);
+                            });
+                            ui.add_space(6.0);
+                        }
+                        for (i, (title, text)) in self.notifications.iter().enumerate() {
+                            let resp =
+                                egui::Frame::NONE.inner_margin(egui::Margin { left: 8, right: 12, top: 6, bottom: 6 }).show(ui, |ui| {
+                                    ui.label(egui::RichText::new(title).font(f.clone()).strong().color(p.ink));
+                                    ui.label(egui::RichText::new(text).font(f.clone()).color(Color32::from_rgb(0x9A, 0x9A, 0x9A)));
+                                });
+                            let r = resp.response.rect;
+                            let click = ui.interact(r, ui.scope_id().with(("bell-item", i)), Sense::click());
+                            if click.hovered() {
+                                ui.painter().rect_filled(r, 0.0, p.sand.gamma_multiply(0.35));
+                            }
+                            if click.clicked() {
+                                self.clicked_notification = Some(i);
+                            }
+                        }
+                    });
+                });
+            if self.clicked_notification.is_some() || (area.response.clicked_elsewhere() && !bell_resp_contains(ui, bell)) {
+                self.bell_open = false;
+            }
+        }
 
         // the status bar
         let bar = Rect::from_min_max(pos2(all.left(), all.bottom() - STATUS_H), all.max);
@@ -201,6 +266,11 @@ impl Shell {
         child.set_clip_rect(content);
         view(&mut child, &self.selected.clone());
     }
+}
+
+/// Whether the pointer is on the bell (its own click toggles the list).
+fn bell_resp_contains(ui: &Ui, bell: Rect) -> bool {
+    ui.input(|i| i.pointer.interact_pos()).is_some_and(|p| bell.contains(p))
 }
 
 /// Java `NotificationBell`: a dome widening to a flared rim, the clapper below, a knob on top.

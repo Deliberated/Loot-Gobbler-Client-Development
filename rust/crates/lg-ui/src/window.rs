@@ -89,6 +89,8 @@ pub enum ServerAsk {
     /// Item score weights and guild settings (admins).
     SaveScoring(f64, f64, f64),
     SaveGuild(f64),
+    /// The bell was opened: nothing new any more.
+    MarkRead,
     /// The Guild tab: load the leaderboard and drops again; open a member's profile.
     GuildRefresh,
     /// The loot caravan again (the minute's check while it is shown, a click on Refresh).
@@ -339,6 +341,8 @@ impl Window {
             self.themed = true;
         }
         let palette = self.palette;
+        self.shell.notifications = app.server.notifications.iter().map(|n| (n.title.clone(), n.text.clone())).collect();
+        self.shell.unread = app.server.unread;
         // Java `StatusBar.showServer`: grey when no server is set up, green when connected, else red
         let s = &app.server;
         (self.shell.server, self.shell.server_tip) = if s.url.trim().is_empty() {
@@ -385,6 +389,14 @@ impl Window {
         });
         if self.shell.clicked_server {
             self.open("Server");
+        }
+        // the bell: opening it takes the dot away; an entry opens where it is dealt with (the approval queue)
+        if self.shell.clicked_bell {
+            self.asks.push(Ask::Server(ServerAsk::MarkRead));
+        }
+        if self.shell.clicked_notification.is_some() {
+            self.open("Server");
+            self.asks.push(Ask::Server(ServerAsk::RefreshModeration));
         }
         if let Some(k) = self.pending_dialog.take() {
             use crate::dialogs::Dialog;

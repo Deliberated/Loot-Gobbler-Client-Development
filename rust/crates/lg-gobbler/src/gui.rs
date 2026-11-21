@@ -212,6 +212,7 @@ impl Gui {
             sync.upload_soon(now);
         }
         self.app.server.tick();
+        self.app.server.watch(now);
         let answers: Vec<_> = self.net.rx.try_iter().collect();
         for d in answers {
             if let Some(d) = self.app.server.done(d) {
@@ -314,6 +315,7 @@ impl Gui {
             S::OpenForgot(_) | S::OpenChange => {} // the window opens these
             S::RefreshModeration => server.refresh_moderation(),
             S::GuildRefresh => server.guild_refresh(),
+            S::MarkRead => server.unread = false,
             S::CaravanLoad => server.caravan_load(),
             S::MapsLoad => server.maps_load(),
             S::OpenMember(id) => server.open_member(id),
@@ -524,6 +526,9 @@ impl eframe::App for Gui {
         self.remember_bounds(ui.ctx());
         // the test hook: LG_TRY=card:<charId> or LG_TRY=grid presses that "Copy as image" after start-up
         self.frames += 1;
+        if self.frames == 60 && std::env::var("LG_TRY").is_ok_and(|t| t == "bell") {
+            self.window.shell.bell_open = true;
+        }
         if self.frames == 32 && std::env::var("LG_TRY").is_ok_and(|t| t == "hide-run-close") {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         }
