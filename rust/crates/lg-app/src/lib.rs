@@ -5,6 +5,7 @@
 //! world tells the app while it works ([`lg_world::Event`]) is taken right after, in order.
 
 pub mod amulet_saves;
+pub mod applog;
 pub mod assets;
 pub mod char_list;
 pub mod characters;

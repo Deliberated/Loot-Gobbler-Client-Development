@@ -78,12 +78,12 @@ impl Gui {
         match lg_capture::live::start("tcp port 2050") {
             Ok(c) => {
                 let names: Vec<String> = c.opened.iter().map(|i| i.name.clone()).collect();
-                eprintln!("capturing on {}", names.join(", "));
+                lg_app::applog::line("sniffer", &format!("capturing on {}", names.join(", ")));
                 self.feeder = feeder(); // a new capture starts its streams afresh
                 self.capture = Some(c);
             }
             Err(e) => {
-                eprintln!("{e}");
+                lg_app::applog::err(&format!("{e}"));
                 let line = if matches!(e, lg_capture::live::Error::Permission(_)) && cfg!(target_os = "linux") {
                     "Capturing needs the rights: sudo setcap cap_net_raw,cap_net_admin=eip <path to loot-gobbler>".to_string()
                 } else {
@@ -96,8 +96,12 @@ impl Gui {
     }
 
     fn set(&mut self, key: &str, value: &str) {
+        let logging = [lg_app::applog::ENABLED_KEY, lg_app::applog::DIR_KEY, lg_app::applog::KEEP_KEY].contains(&key);
         if let Err(e) = self.window.props.set(key, value, now_ms(), &self.app.zone) {
-            eprintln!("cannot save the settings: {e}");
+            lg_app::applog::err(&format!("cannot save the settings: {e}"));
+        }
+        if logging {
+            lg_app::applog::configure(&self.window.props, &self.own.join("logs"));
         }
     }
 }
@@ -121,6 +125,19 @@ impl Gui {
             let _ = tx.send(picked);
         });
         self.choosing = Some((key, rx));
+    }
+
+    /// Info > Logs > Export...: the system's save dialog on a thread of its own, then the file copied there.
+    fn export_log(&mut self, path: String) {
+        let from = PathBuf::from(path);
+        std::thread::spawn(move || {
+            let name = from.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            if let Some(to) = rfd::FileDialog::new().set_file_name(&name).save_file()
+                && let Err(e) = std::fs::copy(&from, &to)
+            {
+                lg_app::applog::err(&format!("Could not export: {e}"));
+            }
+        });
     }
 
     /// The picker's answer, once it came: an item sound's WAV (played; one that cannot be played is refused), or
@@ -374,7 +391,7 @@ impl Gui {
                 break;
             }
             let Some(left) = deadline.checked_duration_since(std::time::Instant::now()) else {
-                eprintln!("upload on closing did not finish");
+                lg_app::applog::err("upload on closing did not finish");
                 break;
             };
             match self.net.rx.recv_timeout(left) {
@@ -384,7 +401,7 @@ impl Gui {
                     }
                 }
                 Err(_) => {
-                    eprintln!("upload on closing did not finish");
+                    lg_app::applog::err("upload on closing did not finish");
                     break;
                 }
             }
@@ -432,8 +449,9 @@ impl eframe::App for Gui {
     /// Closing: the sync's last upload, then the files.
     fn on_exit(&mut self) {
         self.flush();
+        lg_app::applog::line("app", "Closing");
         if let Err(e) = self.app.save_changed(&self.own) {
-            eprintln!("cannot save into {}: {e}", self.own.display());
+            lg_app::applog::err(&format!("cannot save into {}: {e}", self.own.display()));
         }
     }
 
@@ -459,7 +477,7 @@ impl eframe::App for Gui {
         self.server(ui.ctx());
         // what the views asked for last frame is done before this one is drawn
         if let Err(e) = self.app.save_changed(&self.own) {
-            eprintln!("cannot save into {}: {e}", self.own.display());
+            lg_app::applog::err(&format!("cannot save into {}: {e}", self.own.display()));
         }
         let mut all = ui.new_child(egui::UiBuilder::new().max_rect(ui.ctx().content_rect()));
         self.window.show(&mut all, &self.app, now_ms());
@@ -487,6 +505,14 @@ impl eframe::App for Gui {
                 lg_ui::window::Ask::UpeNoPet(char_id, no_pet) => self.app.upe_no_pet(char_id, no_pet),
                 lg_ui::window::Ask::Choose { key, title, folder } => self.choose(key, title, folder),
                 lg_ui::window::Ask::Server(s) => self.server_ask(s),
+                lg_ui::window::Ask::ExportLog(path) => self.export_log(path),
+                lg_ui::window::Ask::CheckUpdates => self.window.ask(lg_ui::window::Ask::Confirm {
+                    title: "Check for updates".into(),
+                    text: "Updates are not in the Rust app yet.".into(),
+                    yes: "OK".into(),
+                    no: String::new(),
+                    then: Box::new(lg_ui::window::Ask::Nothing),
+                }),
                 lg_ui::window::Ask::RefreshCharacters => {
                     let status = self.app.refresh_characters(self.capture.is_some(), now_ms());
                     self.window.characters.refresh_status = status;
@@ -557,6 +583,13 @@ impl eframe::App for Gui {
                     ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("lg-copy-card"), id));
                 }
                 None if t.starts_with("open:") => self.window.open(&t[5..]),
+                None if t.starts_with("info:") => {
+                    let mut asks = Vec::new();
+                    self.window.info.open(&t[5..], &mut asks);
+                    for a in asks {
+                        self.window.ask(a);
+                    }
+                }
                 None if t.starts_with("visit:") => {
                     self.window.open("Battles");
                     self.window.battles.selected = t[6..].parse().unwrap_or(-1);
@@ -569,7 +602,7 @@ impl eframe::App for Gui {
                 None if t == "hide-run-close" => {
                     if let Some(start) = self.app.dps_history.runs.iter().find(|r| !r.hidden).map(|r| r.start) {
                         self.app.dps_history.remove(start);
-                        eprintln!("hid the run of {start}");
+                        lg_app::applog::line("app", &format!("hid the run of {start}"));
                     }
                 }
                 None if t == "grid" => {

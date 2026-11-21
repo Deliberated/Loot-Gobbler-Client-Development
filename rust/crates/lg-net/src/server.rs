@@ -46,10 +46,20 @@ impl Server {
         if !self.token.is_empty() {
             req = req.set("Authorization", &format!("Bearer {}", self.token));
         }
+        let start = std::time::Instant::now();
         let res = match body {
             Some(b) => req.send_string(b),
             None => req.call(),
         };
+        // method, path and outcome only: request bodies can hold passwords and tokens
+        let took = format!(" ({} ms)", start.elapsed().as_millis());
+        match &res {
+            Ok(r) => lg_app::applog::line("server", &format!("{method} {path} -> {}{took}", r.status())),
+            Err(ureq::Error::Status(code, _)) => lg_app::applog::line("server", &format!("{method} {path} -> {code}{took}")),
+            Err(ureq::Error::Transport(t)) => {
+                lg_app::applog::line("server", &format!("{method} {path} failed: {}{took}", transport_message(t)))
+            }
+        }
         match res {
             Ok(r) => {
                 let t = r.into_string().map_err(|e| Error::Net(e.to_string()))?;

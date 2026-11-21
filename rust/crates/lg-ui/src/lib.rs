@@ -16,6 +16,7 @@ pub mod dps;
 pub mod game_modes;
 pub mod guild;
 pub mod icons;
+pub mod info;
 pub mod inventory;
 pub mod jtext;
 pub mod overlay_page;

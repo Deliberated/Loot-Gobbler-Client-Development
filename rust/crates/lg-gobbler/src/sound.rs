@@ -146,7 +146,7 @@ pub fn play(name_or_file: &str, volume: i32) {
     let samples: Vec<i16> = pcm.samples.iter().map(|s| (f64::from(*s) * gain).round() as i16).collect();
     std::thread::spawn(move || {
         if let Err(e) = output::play(pcm.rate, &samples) {
-            eprintln!("cannot play a sound: {e}");
+            lg_app::applog::err(&format!("cannot play a sound: {e}"));
         }
     });
 }

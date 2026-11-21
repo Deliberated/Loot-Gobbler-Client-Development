@@ -449,6 +449,10 @@ impl ServerSync {
     }
 
     fn set(&mut self, p: Phase, msg: &str) {
+        if p != self.phase || msg != self.message {
+            let name = format!("{p:?}").to_uppercase().replace("UPTODATE", "UP_TO_DATE").replace("OTHERACCOUNT", "OTHER_ACCOUNT");
+            crate::applog::line("sync", &format!("{name}{}", if msg.is_empty() { String::new() } else { format!(": {msg}") }));
+        }
         self.phase = p;
         self.message = msg.to_string();
     }

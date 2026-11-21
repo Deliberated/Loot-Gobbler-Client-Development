@@ -44,6 +44,10 @@ pub enum Ask {
     Server(ServerAsk),
     /// Characters: REFRESH (the whole character list from the game servers).
     RefreshCharacters,
+    /// Info > Logs: a log file saved elsewhere (its path).
+    ExportLog(String),
+    /// CHECK UPDATES (the status bar, About).
+    CheckUpdates,
 }
 
 /// What the Server tab asks of the server (Java `ServerPanel`'s buttons).
@@ -129,6 +133,7 @@ pub struct Window {
     pub loadout: lg_app::loadout::Settings,
     pub props: Properties,
     pub profile: profile::Profile,
+    pub info: crate::info::Info,
     pub characters: characters::CharactersView,
     pub inventory: inventory::InventoryView,
     pub game_modes: game_modes::GameModesView,
@@ -168,6 +173,7 @@ impl Window {
             props,
             profile: profile::Profile::default(),
             characters: characters::CharactersView::default(),
+            info: Default::default(),
             inventory: inventory::InventoryView::default(),
             game_modes: game_modes::GameModesView::default(),
             battles: battles::BattlesView { selected: -1, ..Default::default() },
@@ -400,6 +406,13 @@ impl Window {
         if self.shell.clicked_server {
             self.open("Server");
         }
+        if let Some(item) = self.shell.clicked_info {
+            self.info.open(item, &mut self.asks);
+        }
+        if self.shell.clicked_updates {
+            self.asks.push(Ask::CheckUpdates);
+        }
+        self.info.show(ui.ctx(), &self.palette, &mut self.asks);
         // the bell: opening it takes the dot away; an entry opens where it is dealt with (the approval queue)
         if self.shell.clicked_bell {
             self.asks.push(Ask::Server(ServerAsk::MarkRead));

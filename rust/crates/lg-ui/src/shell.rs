@@ -35,6 +35,9 @@ pub struct Shell {
     pub bell_open: bool,
     pub clicked_bell: bool,
     pub clicked_notification: Option<usize>,
+    /// The Info menu: open, and the item picked this frame.
+    pub info_open: bool,
+    pub clicked_info: Option<&'static str>,
     /// E.g. "build v0.0.1" (Java: "stable" for a released app).
     pub version: String,
     pub overlays_on: bool,
@@ -58,6 +61,8 @@ impl Default for Shell {
             bell_open: false,
             clicked_bell: false,
             clicked_notification: None,
+            info_open: false,
+            clicked_info: None,
             version: concat!("build v", env!("CARGO_PKG_VERSION")).into(),
             overlays_on: false,
             clicked_sniffer: false,
@@ -85,6 +90,7 @@ impl Shell {
         self.clicked_server = false;
         self.clicked_bell = false;
         self.clicked_notification = None;
+        self.clicked_info = None;
         let all = ui.max_rect();
         let painter = ui.painter().clone();
         painter.rect_filled(all, 0.0, p.sand);
@@ -93,7 +99,56 @@ impl Shell {
         let menu = Rect::from_min_size(all.min, vec2(all.width(), MENU_H));
         painter.rect_filled(menu, 0.0, p.title);
         painter.rect_filled(Rect::from_min_max(pos2(menu.left(), menu.bottom() - 1.5), menu.max), 0.0, p.line);
-        text(ui, pos2(menu.left() + 12.0, menu.center().y - 0.75), Align2::LEFT_CENTER, "Info", theme::body(18.0), p.ink);
+        let info_r = text(ui, pos2(menu.left() + 12.0, menu.center().y - 0.75), Align2::LEFT_CENTER, "Info", theme::body(18.0), p.ink);
+        let info_zone = Rect::from_min_max(pos2(menu.left(), menu.top()), pos2(info_r.right() + 12.0, menu.bottom()));
+        if ui.interact(info_zone, ui.scope_id().with("info-menu"), Sense::click()).clicked() {
+            self.info_open = !self.info_open;
+        }
+        if self.info_open {
+            // Java's Info menu: Logs, Release Notes, What's New Tour | Newcomer's Guide | About, Java version, Net traffic
+            const ITEMS: [(&str, bool); 9] = [
+                ("Logs", true),
+                ("Release Notes", false),
+                ("What's New Tour", false),
+                ("-", false),
+                ("Newcomer's Guide", false),
+                ("-", false),
+                ("About", true),
+                ("Java version", true),
+                ("Net traffic", true),
+            ];
+            let area = egui::Area::new(egui::Id::unique("info-popup"))
+                .order(egui::Order::Foreground)
+                .fixed_pos(pos2(menu.left(), menu.bottom()))
+                .show(ui.ctx(), |ui| {
+                    egui::Frame::NONE.fill(p.paper).stroke(Stroke::new(1.0, p.line)).inner_margin(4.0).show(ui, |ui| {
+                        ui.set_min_width(200.0);
+                        let f = theme::body(18.0);
+                        for (label, on) in ITEMS {
+                            if label == "-" {
+                                ui.separator();
+                                continue;
+                            }
+                            let color = if on { p.ink } else { fixed::MUTED };
+                            let resp = ui.add_enabled(
+                                on,
+                                egui::Button::new(egui::RichText::new(label).font(f.clone()).color(color))
+                                    .frame(false)
+                                    .min_size(vec2(192.0, 26.0)),
+                            );
+                            let resp = if on { resp } else { resp.on_disabled_hover_text("Not in the Rust app yet") };
+                            if resp.clicked() {
+                                self.clicked_info = Some(label);
+                            }
+                        }
+                    });
+                });
+            if self.clicked_info.is_some()
+                || (area.response.clicked_elsewhere() && !ui.input(|i| i.pointer.interact_pos()).is_some_and(|q| info_zone.contains(q)))
+            {
+                self.info_open = false;
+            }
+        }
 
         // the tab row
         let row = Rect::from_min_size(pos2(all.left(), menu.bottom()), vec2(all.width(), TAB_H));
