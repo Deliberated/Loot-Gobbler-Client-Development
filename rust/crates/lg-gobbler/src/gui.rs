@@ -487,6 +487,10 @@ impl eframe::App for Gui {
                 lg_ui::window::Ask::UpeNoPet(char_id, no_pet) => self.app.upe_no_pet(char_id, no_pet),
                 lg_ui::window::Ask::Choose { key, title, folder } => self.choose(key, title, folder),
                 lg_ui::window::Ask::Server(s) => self.server_ask(s),
+                lg_ui::window::Ask::RefreshCharacters => {
+                    let status = self.app.refresh_characters(self.capture.is_some(), now_ms());
+                    self.window.characters.refresh_status = status;
+                }
                 lg_ui::window::Ask::Confirm { .. } | lg_ui::window::Ask::Nothing | lg_ui::window::Ask::OpenDialog(_) => {}
                 lg_ui::window::Ask::Play(what) => {
                     let s = crate::sound::Sounds(&self.window.props);

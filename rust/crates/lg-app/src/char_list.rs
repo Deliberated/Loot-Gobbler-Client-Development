@@ -11,7 +11,7 @@ use lg_gamedata::GameData;
 use std::collections::BTreeMap;
 
 /// Be gentle with the game servers: at most one list this often.
-const MIN_FETCH_MS: i64 = 10_000;
+pub(crate) const MIN_FETCH_MS: i64 = 10_000;
 const FAVORITE_TAGS: [&str; 6] = ["Favorite", "Favourite", "IsFavorite", "Favorited", "Locked", "IsLocked"];
 pub const EXTENDER_ITEM: i32 = 65280;
 

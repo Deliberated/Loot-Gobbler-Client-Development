@@ -28,6 +28,38 @@ impl App {
         self.update_exalts(token, now)
     }
 
+    /// The Characters tab's REFRESH (Java `CharacterStore.fetchAll` with its status line): the whole list now, unless
+    /// no login was seen yet, a fetch runs, or the last was less than 10 s ago. The line to show.
+    pub fn refresh_characters(&mut self, sniffing: bool, now: i64) -> String {
+        let l = &self.characters.login;
+        if !l.fetcher {
+            // the login token is only seen when the client connects to a map
+            return if sniffing {
+                "Open your character screen in-game (or change map), then press Refresh again".into()
+            } else {
+                "Start the sniffer first".into()
+            };
+        }
+        if l.fetching {
+            return "Already fetching...".into();
+        }
+        let wait = l.last_fetch + crate::char_list::MIN_FETCH_MS - now;
+        if wait > 0 {
+            return format!("Try again in {}s", wait / 1000 + 1);
+        }
+        if !self.characters.fetch_all(now) {
+            return "Already fetching...".into();
+        }
+        let token = self.characters.login.fetched_token.clone();
+        let n = self.char_list_request(now);
+        self.characters.fetched(n, token);
+        if n > 0 {
+            format!("Got {n} characters")
+        } else {
+            "Refused - open your character screen in-game, or go to the Daily Quest Room / Pet Yard, then press Refresh again".into()
+        }
+    }
+
     /// `CharacterStore.fetchAll`'s thread: the list, and the token it was asked with if it came.
     pub(crate) fn fetch_char_list(&mut self, now: i64) {
         let token = self.characters.login.fetched_token.clone();
@@ -191,3 +223,18 @@ impl App {
 
 /// Tomato's exaltations, for the type's users.
 pub type RealmExalts = Exalts;
+
+#[cfg(test)]
+mod refresh_tests {
+    #[test]
+    fn refresh_says_what_java_says() {
+        let mut a = crate::App::new(lg_world::World::new(lg_gamedata::GameData::default()), 0);
+        assert_eq!(a.refresh_characters(false, 0), "Start the sniffer first");
+        assert!(a.refresh_characters(true, 0).starts_with("Open your character screen"));
+        a.token = Some("t".into());
+        a.characters.login.fetcher = true;
+        a.characters.login.last_fetch = -100_000;
+        assert!(a.refresh_characters(true, 0).starts_with("Refused")); // the offline web refuses
+        assert_eq!(a.refresh_characters(true, 3_000), "Try again in 8s");
+    }
+}

@@ -39,6 +39,8 @@ pub struct CharactersView {
     /// The last suggestion worked out: for which character and settings, its picks and numbers.
     suggestion: Option<(String, [lg_app::loadout::Pick; 4], lg_app::loadout::Summary)>,
     pets: crate::pets::PetsView,
+    /// The line beside REFRESH (Java's status label).
+    pub refresh_status: String,
 }
 
 impl Default for CharactersView {
@@ -52,6 +54,7 @@ impl Default for CharactersView {
             rarity: Default::default(),
             suggestion: None,
             pets: Default::default(),
+            refresh_status: String::new(),
         }
     }
 }
@@ -146,9 +149,22 @@ impl CharactersView {
         }
         let refresh_w = jtext::width(&painter, "REFRESH", &small()) + 32.0;
         let rr = Rect::from_min_size(pos2(all.right() - refresh_w - 8.0, all.top()), vec2(refresh_w, 36.0));
-        let hover = ui.interact(rr, ui.scope_id().with("refresh"), Sense::click()).hovered();
+        let resp = ui.interact(rr, ui.scope_id().with("refresh"), Sense::click());
+        let hover = resp.hovered();
         painter.rect(rr, 0.0, if hover { p.sand } else { p.header }, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
         jtext::draw(&painter, rr.center(), Align2::CENTER_CENTER, "REFRESH", &small(), p.ink);
+        if resp.on_hover_text("Fetch all your characters from the game servers").clicked() {
+            self.refresh_status = "Fetching...".into();
+            c.asks.push(crate::window::Ask::RefreshCharacters);
+        }
+        jtext::draw(
+            &painter,
+            pos2(rr.left() - 8.0, rr.center().y),
+            Align2::RIGHT_CENTER,
+            &self.refresh_status,
+            &crate::widgets::text(16.0),
+            p.ink,
+        );
         let body = Rect::from_min_max(pos2(all.left(), all.top() + 36.0 + 8.0), all.max);
         if self.page == 1 {
             crate::classes::show(ui, c, body);

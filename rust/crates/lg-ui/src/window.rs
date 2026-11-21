@@ -42,6 +42,8 @@ pub enum Ask {
     Confirm { title: String, text: String, yes: String, no: String, then: Box<Ask> },
     /// The Server tab: something for the server or the sync.
     Server(ServerAsk),
+    /// Characters: REFRESH (the whole character list from the game servers).
+    RefreshCharacters,
 }
 
 /// What the Server tab asks of the server (Java `ServerPanel`'s buttons).
