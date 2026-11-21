@@ -27,7 +27,12 @@ pub enum Dialog {
     },
     /// A sound and its volume per kind of ping.
     PingSounds { chosen: [String; 4] },
+    /// The Server tab's Forgot password (`change` false) and Change password forms (Java `ServerPanel.form`).
+    Password { change: bool, with_code: bool, ign: String, code: String, current: String, password: String, again: String },
 }
+
+const FORGOT_NOTE: &str = "Ask a moderator or admin of this server for a reset code. It works once, for your IGN, for 24 hours.";
+const CHANGE_NOTE: &str = "Prove it is you with your current password, or with a reset code from a moderator or admin if you do not know it. Your other devices are logged out.";
 
 pub const PING_KINDS: [(&str, &str); 4] = [
     ("pingSound.enchant", "Enchant ping"),
@@ -169,13 +174,25 @@ pub fn show(ctx: &egui::Context, p: &Palette, props: &Properties, d: &mut Dialog
     let title = match d {
         Dialog::List { title, .. } | Dialog::Pick { title, .. } => title.to_string(),
         Dialog::PingSounds { .. } => "Ping Sounds".into(),
+        Dialog::Password { change: false, .. } => "Forgot password".into(),
+        Dialog::Password { change: true, .. } => "Change password".into(),
     };
     let size = match d {
         Dialog::List { .. } => vec2(520.0, 420.0),
         Dialog::Pick { .. } => vec2(420.0, 700.0),
         Dialog::PingSounds { .. } => vec2(900.0, 330.0),
+        Dialog::Password { .. } => vec2(0.0, 0.0),
     };
     let modal = egui::Modal::new(egui::Id::unique("lg-dialog")).frame(egui::Frame::NONE).show(ctx, |ui| {
+        let size = match d {
+            // the note's width, a row per field, OK and Cancel
+            Dialog::Password { change, .. } => {
+                let note = if *change { CHANGE_NOTE } else { FORGOT_NOTE };
+                let w = jtext::width(ui.painter(), note, &text(18.0)) + 48.0;
+                vec2(w.max(420.0), 34.0 + 20.0 + jtext::height(ui.painter(), &text(18.0)) + 6.0 + 4.0 * 40.0 + 20.0 + 36.0 + 16.0)
+            }
+            _ => size,
+        };
         let (r, _) = ui.allocate_exact_size(size, Sense::hover());
         let painter = ui.painter().clone();
         painter.rect(r, 0.0, p.paper, Stroke::new(1.0, p.line), StrokeKind::Inside);
@@ -215,12 +232,151 @@ pub fn show(ctx: &egui::Context, p: &Palette, props: &Properties, d: &mut Dialog
                 }
             }
             Dialog::PingSounds { chosen } => ping_sounds(ui, p, props, body, chosen, asks),
+            Dialog::Password { change, with_code, ign, code, current, password, again } => {
+                use crate::window::ServerAsk;
+                match password_form(ui, p, body, *change, with_code, ign, code, current, password, again) {
+                    Some(true) => {
+                        asks.push(Ask::Server(if *change {
+                            let proof = if *with_code { code.clone() } else { current.clone() };
+                            ServerAsk::Change { with_code: *with_code, proof, password: password.clone(), again: again.clone() }
+                        } else {
+                            ServerAsk::Forgot { ign: ign.clone(), code: code.clone(), password: password.clone(), again: again.clone() }
+                        }));
+                        open = false;
+                    }
+                    Some(false) => open = false,
+                    None => {}
+                }
+            }
         }
     });
     if modal.should_close() {
         open = false;
     }
     open
+}
+
+impl Dialog {
+    /// The Forgot password form (with the IGN typed so far) or the Change password one.
+    pub fn password(change: bool, ign: &str) -> Dialog {
+        Dialog::Password {
+            change,
+            with_code: false,
+            ign: ign.trim().to_string(),
+            code: String::new(),
+            current: String::new(),
+            password: String::new(),
+            again: String::new(),
+        }
+    }
+}
+
+/// A form field in a dialog: true when Enter was pressed in it.
+fn form_field(ui: &mut Ui, p: &Palette, r: Rect, value: &mut String, placeholder: &str, id: &str, password: bool) -> bool {
+    let painter = ui.painter().clone();
+    let font = text(18.0);
+    painter.rect(r, 0.0, p.paper, Stroke::new(1.0, p.line), StrokeKind::Inside);
+    let inner = r.shrink2(vec2(8.0, 2.0));
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::left_to_right(egui::Align::Center)));
+    child.visuals_mut().extreme_bg_color = egui::Color32::TRANSPARENT;
+    child.visuals_mut().selection.bg_fill = p.text_sel;
+    child.visuals_mut().text_cursor.stroke = Stroke::new(1.5, p.ink);
+    let edit = egui::TextEdit::singleline(value)
+        .id_salt(id)
+        .frame(egui::Frame::NONE)
+        .password(password)
+        .font(font.clone())
+        .text_color(p.ink)
+        .hint_text(egui::RichText::new(placeholder).font(font).color(p.ink_muted))
+        .desired_width(inner.width())
+        .margin(vec2(0.0, 0.0));
+    let resp = child.add(edit);
+    if resp.has_focus() {
+        painter.rect_stroke(r, 0.0, Stroke::new(1.0, p.gold), StrokeKind::Inside);
+    }
+    resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
+}
+
+/// A radio button (Java `JRadioButton`): true when clicked.
+fn radio(ui: &Ui, p: &Palette, at: egui::Pos2, label: &str, on: bool, id: &str) -> (Rect, bool) {
+    let painter = ui.painter();
+    let f = text(18.0);
+    let c = pos2(at.x + 9.0, at.y);
+    painter.circle(c, 8.0, p.paper, Stroke::new(1.0, p.line));
+    if on {
+        painter.circle_filled(c, 4.0, p.gold);
+    }
+    let lr = jtext::draw(painter, pos2(c.x + 14.0, c.y), Align2::LEFT_CENTER, label, &f, p.ink);
+    let r = Rect::from_min_max(pos2(at.x, at.y - 10.0), pos2(lr.right(), at.y + 10.0));
+    (r, ui.interact(r, ui.scope_id().with(("radio", id)), Sense::click()).clicked())
+}
+
+/// Java `ServerPanel.form` in `showConfirmDialog(OK_CANCEL)`: the note, label and field pairs, OK and Cancel.
+/// Some(true) for OK, Some(false) for Cancel.
+#[allow(clippy::too_many_arguments)]
+fn password_form(
+    ui: &mut Ui,
+    p: &Palette,
+    body: Rect,
+    change: bool,
+    with_code: &mut bool,
+    ign: &mut String,
+    code: &mut String,
+    current: &mut String,
+    password: &mut String,
+    again: &mut String,
+) -> Option<bool> {
+    let painter = ui.painter().clone();
+    let f = text(18.0);
+    let fh = jtext::height(&painter, &f);
+    let x = body.left() + 14.0;
+    let mut y = body.top() + 10.0;
+    jtext::draw(&painter, pos2(x, y), Align2::LEFT_TOP, if change { CHANGE_NOTE } else { FORGOT_NOTE }, &f, fixed::MUTED);
+    y += fh + 6.0;
+    let labels: &[&str] = if change {
+        &["With", if *with_code { "Reset code" } else { "Current password" }, "New password", "New password again"]
+    } else {
+        &["IGN", "Reset code", "New password", "New password again"]
+    };
+    let col = labels.iter().map(|l| jtext::width(&painter, l, &f)).fold(0.0, f32::max) + 10.0;
+    let mut enter = false;
+    for (i, label) in labels.iter().enumerate() {
+        let cy = y + 20.0;
+        jtext::draw(&painter, pos2(x, cy), Align2::LEFT_CENTER, label, &f, p.ink);
+        let fx = x + col;
+        let short = Rect::from_min_size(pos2(fx, cy - 17.0), vec2(174.0, 34.0));
+        let long = Rect::from_min_size(pos2(fx, cy - 17.0), vec2(240.0, 34.0));
+        match (change, i) {
+            (true, 0) => {
+                let (a, pick_pw) = radio(ui, p, pos2(fx, cy), "Current password", !*with_code, "by-password");
+                let (_, pick_code) = radio(ui, p, pos2(a.right() + 12.0, cy), "Reset code", *with_code, "by-code");
+                if pick_pw {
+                    *with_code = false;
+                }
+                if pick_code {
+                    *with_code = true;
+                }
+            }
+            (true, 1) if *with_code => enter |= form_field(ui, p, long, code, "LGR-XXXX-XXXX-XXXX", "pw-code", false),
+            (true, 1) => enter |= form_field(ui, p, short, current, "", "pw-current", true),
+            (false, 0) => enter |= form_field(ui, p, short, ign, "Your IGN", "pw-ign", false),
+            (false, 1) => enter |= form_field(ui, p, long, code, "LGR-XXXX-XXXX-XXXX", "pw-code", false),
+            (_, 2) => enter |= form_field(ui, p, short, password, "", "pw-new", true),
+            _ => enter |= form_field(ui, p, short, again, "", "pw-again", true),
+        }
+        y += 40.0;
+    }
+    let small = small();
+    let bw = |t: &str| (jtext::width(&painter, &t.to_uppercase(), &small) + 32.0).max(108.0);
+    let cancel = Rect::from_min_size(pos2(body.right() - 6.0 - bw("Cancel"), body.bottom() - 6.0 - 36.0), vec2(bw("Cancel"), 36.0));
+    let ok = Rect::from_min_size(pos2(cancel.left() - 8.0 - bw("OK"), cancel.top()), vec2(bw("OK"), 36.0));
+    if crate::inventory::button(ui, p, ok, "OK", false, "form-ok") || enter {
+        return Some(true);
+    }
+    if crate::inventory::button(ui, p, cancel, "Cancel", false, "form-cancel") {
+        return Some(false);
+    }
+    None
 }
 
 /// The list editor: a row per entry (its text, "-" to remove it), "+" adds one, Save; gives whether Save was hit.

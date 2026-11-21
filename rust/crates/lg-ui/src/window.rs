@@ -58,6 +58,22 @@ pub enum ServerAsk {
     SyncNow,
     /// The files on this PC become the logged-in account's.
     Adopt,
+    /// The password dialogs: Forgot password (with the IGN typed so far), Change password.
+    OpenForgot(String),
+    OpenChange,
+    /// Their OK: a new password with a reset code; or proven with the current password or a reset code.
+    Forgot {
+        ign: String,
+        code: String,
+        password: String,
+        again: String,
+    },
+    Change {
+        with_code: bool,
+        proof: String,
+        password: String,
+        again: String,
+    },
 }
 
 /// Asks the window to open a tab or page after this frame (see [`Window::open`]; also "Battles:run:<start>" for a
@@ -176,6 +192,13 @@ impl Window {
                 1 | 3 => asks.push(Ask::Play("custom.wav".into())),
                 _ => {}
             }
+        }
+        // the password dialogs open here
+        if let Some(i) = asks.iter().position(|a| matches!(a, Ask::Server(ServerAsk::OpenForgot(_) | ServerAsk::OpenChange))) {
+            self.dialog = Some(match asks.remove(i) {
+                Ask::Server(ServerAsk::OpenForgot(ign)) => crate::dialogs::Dialog::password(false, &ign),
+                _ => crate::dialogs::Dialog::password(true, ""),
+            });
         }
         // a question is shown, not done
         if let Some(i) = asks.iter().position(|a| matches!(a, Ask::Confirm { .. })) {

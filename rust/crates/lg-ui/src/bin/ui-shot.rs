@@ -109,7 +109,12 @@ fn main() {
         win.palette = lg_ui::theme::palette(None);
         // "Server:online": connected to a made-up server, not logged in (the login form)
         app.server = Default::default();
-        let shown = if tab == "Server:online" {
+        let dialog = match tab.as_str() {
+            "Server:forgot" => Some(lg_ui::window::ServerAsk::OpenForgot("Gunshit".into())),
+            "Server:change" => Some(lg_ui::window::ServerAsk::OpenChange),
+            _ => None,
+        };
+        let shown = if tab == "Server:online" || dialog.is_some() {
             app.server.url = "https://loot.example.com".into();
             app.server.state = lg_app::server::State::Online;
             app.server.status = Some(lg_app::server::Status {
@@ -135,7 +140,13 @@ fn main() {
                     win.ask(lg_ui::window::Ask::OpenDialog(k));
                     win.take_asks();
                 }
-                None => win.open(&shown),
+                None => {
+                    win.open(&shown);
+                    if let Some(d) = dialog.clone() {
+                        win.ask(lg_ui::window::Ask::Server(d));
+                        win.take_asks();
+                    }
+                }
             },
         }
         let mut harness = egui_kittest::Harness::builder()

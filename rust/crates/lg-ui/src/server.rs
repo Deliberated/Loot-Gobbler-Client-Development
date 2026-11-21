@@ -1,7 +1,6 @@
 //! The Server tab (Java `ServerPanel`): the Loot Gobbler server this client is connected to, logging in or
 //! registering, and the sync of your records with it.
-//! Not yet: moderation, moderator tokens, item scores and the guild settings (for moderators and admins), the
-//! password dialogs.
+//! Not yet: moderation, moderator tokens, item scores and the guild settings (for moderators and admins).
 
 use crate::jtext;
 use crate::profile::Ctx;
@@ -353,7 +352,10 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                     }
                     rw.y += 44.0;
                     let cy = rw.y + 22.0;
-                    let (b, _change) = button_at(ui, &p, rw.x + 6.0, cy, "Change password", false, false);
+                    let (b, change) = button_at(ui, &p, rw.x + 6.0, cy, "Change password", false, true);
+                    if change {
+                        asks.push(Ask::Server(ServerAsk::OpenChange));
+                    }
                     if button_at(ui, &p, b.right() + 6.0, cy, "Log out", false, true).1 {
                         asks.push(Ask::Server(ServerAsk::Logout));
                     }
@@ -393,7 +395,10 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                     if known.is_none() {
                         widgets::tip(ui, b, "server-register-tip", "Loot Gobbler needs to see your name in-game first");
                     }
-                    let (fb, _forgot) = button_at(ui, &p, b.right() + 6.0, cy, "Forgot password?", false, false);
+                    let (fb, forgot) = button_at(ui, &p, b.right() + 6.0, cy, "Forgot password?", false, true);
+                    if forgot {
+                        asks.push(Ask::Server(ServerAsk::OpenForgot(form.ign.clone())));
+                    }
                     widgets::tip(ui, fb, "server-forgot-tip", "Set a new password with a reset code from a moderator or admin");
                     rw.y += 44.0;
                     if known.is_none() {

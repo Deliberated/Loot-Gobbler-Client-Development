@@ -18,13 +18,15 @@ impl Default for Net {
 }
 
 impl Net {
-    /// Makes the call; the window is woken when its answer is there.
-    pub fn run(&self, job: Job, ctx: &egui::Context) {
-        let (tx, ctx) = (self.tx.clone(), ctx.clone());
+    /// Makes the call; the window (if any) is woken when its answer is there.
+    pub fn run(&self, job: Job, ctx: Option<&egui::Context>) {
+        let (tx, ctx) = (self.tx.clone(), ctx.cloned());
         std::thread::spawn(move || {
             if let Some(d) = perform(job) {
                 let _ = tx.send(d);
-                ctx.request_repaint();
+                if let Some(c) = ctx {
+                    c.request_repaint();
+                }
             }
         });
     }
@@ -70,6 +72,15 @@ fn perform(job: Job) -> Option<Done> {
         Job::Redeem { url, token, role_token } => {
             let result = Server::new(&url, &token).redeem(&role_token);
             Done::Redeem { url, result }
+        }
+        Job::Reset { url, ign, code, password, client, forgot } => {
+            let s = Server::new(&url, "");
+            let result = s.reset_password(&ign, &code, &password).and_then(|()| s.login(&ign, &password, &client)).map(Some);
+            Done::Password { url, forgot, result }
+        }
+        Job::Change { url, token, current, password } => {
+            let result = Server::new(&url, &token).change_password(&current, &password).map(|()| None);
+            Done::Password { url, forgot: false, result }
         }
         Job::Data { url, token } => {
             let result = Server::new(&url, &token).data();

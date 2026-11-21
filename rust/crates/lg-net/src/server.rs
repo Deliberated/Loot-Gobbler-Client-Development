@@ -148,6 +148,18 @@ impl Server {
         Ok(j.get("user").map(user_of).unwrap_or_default())
     }
 
+    /// Java `resetPassword`: a new password with a reset code (no login needed); every session of it ends.
+    pub fn reset_password(&self, ign: &str, code: &str, new_password: &str) -> Result<(), Error> {
+        let body = Obj::new().str("ign", ign.trim()).str("code", code.trim()).str("newPassword", new_password).end();
+        self.call("POST", "/auth/reset-password", Some(&body)).map(|_| ())
+    }
+
+    /// Java `changePassword`: proven with the current one; your other devices are logged out.
+    pub fn change_password(&self, current: &str, new_password: &str) -> Result<(), Error> {
+        let body = Obj::new().str("currentPassword", current).str("newPassword", new_password).end();
+        self.call("PATCH", "/me/password", Some(&body)).map(|_| ())
+    }
+
     pub fn logout(&self) -> Result<(), Error> {
         self.call("POST", "/auth/logout", None).map(|_| ())
     }
@@ -256,13 +268,20 @@ mod live {
         assert_eq!(s.me().expect("me").ign, "Tester");
         assert!(s.ping().expect("ping").user.is_some());
         let base = s.data().expect("data").into_iter().find(|(k, _)| k == "pets").map_or(0, |(_, i)| i.revision);
-        let rev = s.put_data("pets", base, r#"{"pets":[]}"#).expect("put");
+        let rev = s.put_data("pets", base, "{}").expect("put");
         assert_eq!(rev, base + 1);
         // an old base: the server's document comes back
-        match s.put_data("pets", base, r#"{"pets":[]}"#) {
+        match s.put_data("pets", base, "{}") {
             Err(Error::Server { code, current: Some(c), .. }) => assert!(code == "revision_conflict" && c.revision == rev),
             other => panic!("{other:?}"),
         }
+        // passwords: a wrong current one, a change and back, a reset code that is no code
+        assert_eq!(s.change_password("nope-nope", "password456").err().map(|e| e.code().to_string()).as_deref(), Some("wrong_password"));
+        s.change_password("password123", "password456").expect("change");
+        let (token, _) = Server::new(&url, "").login("Tester", "password456", "x").expect("new password");
+        Server::new(&url, &token).change_password("password456", "password123").expect("back");
+        let bad = Server::new(&url, "").reset_password("Tester", "LGR-0000-0000-0000", "password789");
+        assert_eq!(bad.err().map(|e| e.code().to_string()).as_deref(), Some("invalid_code"));
         let wrong = Server::new(&url, "").login("Tester", "wrongpassword", "x");
         assert_eq!(wrong.err().map(|e| e.code().to_string()).as_deref(), Some("invalid_credentials"));
     }

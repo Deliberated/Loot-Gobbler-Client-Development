@@ -233,7 +233,7 @@ impl Gui {
         }
         self.app.sync = sync;
         for job in std::mem::take(&mut self.app.server.jobs) {
-            self.net.run(job, ctx);
+            self.net.run(job, Some(ctx));
         }
         // a scheduled upload wakes the window
         ctx.request_repaint_after(std::time::Duration::from_secs(1));
@@ -259,6 +259,9 @@ impl Gui {
             S::Redeem(t) => server.redeem(&t),
             S::Logout => server.logout(),
             S::SyncNow => self.app.sync.sync_now(),
+            S::Forgot { ign, code, password, again } => server.forgot_password(&ign, &code, &password, &again),
+            S::Change { with_code, proof, password, again } => server.change_password(with_code, &proof, &password, &again),
+            S::OpenForgot(_) | S::OpenChange => {} // the window opens these
             S::Adopt => {
                 let ign = server.user.as_ref().map(|u| u.ign.clone());
                 if let Some(ign) = ign {
@@ -266,6 +269,45 @@ impl Gui {
                 }
             }
         }
+    }
+
+    /// Java `ServerSync.flush(5_000)` on closing: the changes not uploaded yet go up now, waiting at most 5 s.
+    fn flush(&mut self) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let now = now_ms();
+        let mut sync = std::mem::take(&mut self.app.sync);
+        let (changed, _) = self.app.sync_changes();
+        for k in changed {
+            sync.local_changed(k, now);
+        }
+        let (url, token, ign) = self.link();
+        let owner = self.window.props.get(lg_app::sync::KEY_OWNER).map(str::to_string);
+        let link = lg_app::sync::Link { url: &url, token: &token, ign: &ign, owner: owner.as_deref() };
+        // a run already waiting for the server goes on; else the upload starts
+        let mut job = if sync.busy() { None } else { sync.flush(&mut self.app, &link, now) };
+        loop {
+            if let Some(j) = job.take() {
+                self.net.run(j, None);
+            } else if !sync.busy() {
+                break;
+            }
+            let Some(left) = deadline.checked_duration_since(std::time::Instant::now()) else {
+                eprintln!("upload on closing did not finish");
+                break;
+            };
+            match self.net.rx.recv_timeout(left) {
+                Ok(d) => {
+                    if let Some(d) = self.app.server.done(d) {
+                        job = sync.done(&mut self.app, &link, d, now_ms());
+                    }
+                }
+                Err(_) => {
+                    eprintln!("upload on closing did not finish");
+                    break;
+                }
+            }
+        }
+        self.app.sync = sync;
     }
 
     fn link(&self) -> (String, String, String) {
@@ -305,6 +347,14 @@ impl Gui {
 }
 
 impl eframe::App for Gui {
+    /// Closing: the sync's last upload, then the files.
+    fn on_exit(&mut self) {
+        self.flush();
+        if let Err(e) = self.app.save_changed(&self.own) {
+            eprintln!("cannot save into {}: {e}", self.own.display());
+        }
+    }
+
     /// See-through where nothing is painted: the overlays show only their boxes.
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         [0.0; 4]
@@ -406,6 +456,9 @@ impl eframe::App for Gui {
         self.remember_bounds(ui.ctx());
         // the test hook: LG_TRY=card:<charId> or LG_TRY=grid presses that "Copy as image" after start-up
         self.frames += 1;
+        if self.frames == 32 && std::env::var("LG_TRY").is_ok_and(|t| t == "hide-run-close") {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+        }
         if self.frames == 30
             && let Ok(t) = std::env::var("LG_TRY")
         {
@@ -414,6 +467,13 @@ impl eframe::App for Gui {
                     ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("lg-copy-card"), id));
                 }
                 None if t.starts_with("open:") => self.window.open(&t[5..]),
+                // the upload on closing: a run hidden, then the window closed before the upload that would follow
+                None if t == "hide-run-close" => {
+                    if let Some(start) = self.app.dps_history.runs.iter().find(|r| !r.hidden).map(|r| r.start) {
+                        self.app.dps_history.remove(start);
+                        eprintln!("hid the run of {start}");
+                    }
+                }
                 None if t == "grid" => {
                     self.window.open("Inventory");
                     self.window.inventory.copy_image_now();

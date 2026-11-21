@@ -177,6 +177,22 @@ pub enum Job {
         token: String,
         role_token: String,
     },
+    /// A new password with a reset code, then logged in with it.
+    Reset {
+        url: String,
+        ign: String,
+        code: String,
+        password: String,
+        client: String,
+        forgot: bool,
+    },
+    /// A new password, proven with the current one.
+    Change {
+        url: String,
+        token: String,
+        current: String,
+        password: String,
+    },
     Data {
         url: String,
         token: String,
@@ -215,6 +231,12 @@ pub enum Done {
         url: String,
         result: Result<User, Error>,
     },
+    /// The new session (after a reset), or none (a change).
+    Password {
+        url: String,
+        forgot: bool,
+        result: Result<Option<(String, User)>, Error>,
+    },
     Data {
         url: String,
         result: Result<Vec<(String, DataItem)>, Error>,
@@ -224,6 +246,18 @@ pub enum Done {
         kind: String,
         result: Result<i64, Error>,
     },
+}
+
+/// Java `newPasswordProblem`: why a new password cannot be used (as the server checks it).
+pub fn new_password_problem(password: &str, again: &str) -> Option<String> {
+    let n = password.chars().count();
+    if !(8..=128).contains(&n) {
+        return Some("The new password must be 8 to 128 characters.".into());
+    }
+    if password != again {
+        return Some("The two new passwords are not the same.".into());
+    }
+    None
 }
 
 const KEY_URL: &str = "serverUrl";
@@ -388,6 +422,58 @@ impl Connection {
         self.jobs.push(Job::Redeem { url: self.url.clone(), token: self.token.clone(), role_token: role_token.to_string() });
     }
 
+    /// The Forgot password dialog's OK: the IGN, the reset code and the new password twice.
+    pub fn forgot_password(&mut self, ign: &str, code: &str, password: &str, again: &str) {
+        let problem = if ign.trim().is_empty() || code.trim().is_empty() {
+            Some("Enter your IGN and the reset code.".to_string())
+        } else {
+            new_password_problem(password, again)
+        };
+        if let Some(p) = problem {
+            self.account_feedback = p;
+            return;
+        }
+        self.account_feedback = "Setting the new password...".into();
+        self.jobs.push(Job::Reset {
+            url: self.url.clone(),
+            ign: ign.trim().to_string(),
+            code: code.to_string(),
+            password: password.to_string(),
+            client: self.client.clone(),
+            forgot: true,
+        });
+    }
+
+    /// The Change password dialog's OK: proven with the current password, or with a reset code (which ends every
+    /// session, this one too: logged in again with the new password).
+    pub fn change_password(&mut self, with_code: bool, proof: &str, password: &str, again: &str) {
+        let Some(me) = self.user.clone() else { return };
+        let problem = if with_code && proof.trim().is_empty() {
+            Some("Enter the reset code.".to_string())
+        } else if !with_code && proof.is_empty() {
+            Some("Enter your current password.".to_string())
+        } else {
+            new_password_problem(password, again)
+        };
+        if let Some(p) = problem {
+            self.account_feedback = p;
+            return;
+        }
+        self.account_feedback = "Changing the password...".into();
+        self.jobs.push(if with_code {
+            Job::Reset {
+                url: self.url.clone(),
+                ign: me.ign,
+                code: proof.to_string(),
+                password: password.to_string(),
+                client: self.client.clone(),
+                forgot: false,
+            }
+        } else {
+            Job::Change { url: self.url.clone(), token: self.token.clone(), current: proof.to_string(), password: password.to_string() }
+        });
+    }
+
     /// Java `logout`.
     pub fn logout(&mut self) {
         self.account_feedback.clear();
@@ -486,6 +572,30 @@ impl Connection {
                         } else {
                             format!("Registered. A moderator or admin needs to accept {} before you can log in.", user.ign)
                         };
+                    }
+                }
+                None
+            }
+            Done::Password { url, forgot, result } => {
+                match result {
+                    Err(e) => {
+                        if e.status() == 401 && !forgot {
+                            self.signed_out();
+                        }
+                        self.account_feedback = e.message();
+                    }
+                    Ok(session) => {
+                        if let Some((token, user)) = session.filter(|_| url == self.url) {
+                            self.token = token.clone();
+                            self.save(KEY_TOKEN, &token);
+                            self.user = Some(user);
+                        }
+                        if forgot {
+                            self.clear_password = true;
+                            self.account_feedback = "New password set. You are logged in.".into();
+                        } else {
+                            self.account_feedback = "Password changed. Your other devices need to log in again.".into();
+                        }
                     }
                 }
                 None

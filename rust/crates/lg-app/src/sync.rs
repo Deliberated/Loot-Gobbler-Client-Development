@@ -219,6 +219,16 @@ impl ServerSync {
         self.sync_now();
     }
 
+    /// Java `flush`: the app is closing; what changed since the last upload goes up now (instead of within a
+    /// minute, which would never come). The first call, if there is anything to upload.
+    pub fn flush(&mut self, app: &mut App, link: &Link, now: i64) -> Option<Job> {
+        if self.account.is_empty() || self.phase == Phase::OtherAccount || !self.kinds.iter().any(|k| k.dirty) {
+            return None;
+        }
+        self.scheduled = None;
+        self.upload(app, link, now, now)
+    }
+
     /// Java `localChanged`: the kind's local data changed.
     pub fn local_changed(&mut self, kind: &str, now: i64) {
         if let Some(k) = self.kinds.iter_mut().find(|k| k.kind == kind) {
