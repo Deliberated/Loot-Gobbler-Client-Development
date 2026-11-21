@@ -460,6 +460,8 @@ pub struct Upe {
     last_rewards: Vec<i32>,
     last_choice: bool,
     pub dirty: bool,
+    /// A change the guild should see right away (Java `ServerSync.uploadSoon`), for the sync to take.
+    pub soon: bool,
 }
 
 impl Default for Upe {
@@ -495,6 +497,7 @@ impl Default for Upe {
             last_rewards: Vec::new(),
             last_choice: false,
             dirty: false,
+            soon: false,
         }
     }
 }
@@ -1200,6 +1203,7 @@ impl Upe {
                     t.status = "ok".into();
                 }
                 run.trades.push(t);
+                self.soon = true; // the partner checks this report
                 let cut = self.traded_at - KEEP_TRADES_MS;
                 run.trades.retain(|x| x.at >= cut);
             }

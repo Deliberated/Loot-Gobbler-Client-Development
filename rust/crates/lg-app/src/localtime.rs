@@ -127,6 +127,15 @@ impl Zone {
         Some(utc * 1000 + ms)
     }
 
+    /// This moment in local time: year, month, day, hour, minute, second.
+    pub fn fields(&self, utc_ms: i64) -> (i64, u32, u32, i64, i64, i64) {
+        let secs = utc_ms.div_euclid(1000);
+        let local = secs + i64::from(self.offset(secs));
+        let (days, rem) = (local.div_euclid(86_400), local.rem_euclid(86_400));
+        let (y, m, d) = civil(days);
+        (y, m, d, rem / 3600, rem / 60 % 60, rem % 60)
+    }
+
     /// Java `LocalDateTime.now().withNano(0).toString()` for this moment (ms since 1970).
     pub fn local_date_time(&self, utc_ms: i64) -> String {
         let secs = utc_ms.div_euclid(1000);

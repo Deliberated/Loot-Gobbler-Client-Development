@@ -149,6 +149,8 @@ impl Visit {
 pub struct DungeonVisits {
     /// Java would write its file now (its `save()`): the app writes it.
     pub dirty: bool,
+    /// A change the guild should see right away (Java `ServerSync.uploadSoon`), for the sync to take.
+    pub soon: bool,
 
     /// Finished, newest first.
     pub visits: Vec<Visit>,
@@ -163,7 +165,16 @@ pub struct DungeonVisits {
 
 impl Default for DungeonVisits {
     fn default() -> Self {
-        DungeonVisits { dirty: false, visits: Vec::new(), current: None, last_hits: 0, last_x: f32::NAN, last_y: 0.0, unsaved: 0.0 }
+        DungeonVisits {
+            dirty: false,
+            soon: false,
+            visits: Vec::new(),
+            current: None,
+            last_hits: 0,
+            last_x: f32::NAN,
+            last_y: 0.0,
+            unsaved: 0.0,
+        }
     }
 }
 
@@ -292,6 +303,7 @@ impl DungeonVisits {
         if let Some(v) = self.visits.iter_mut().find(|v| v.start == start && !v.hidden) {
             v.hidden = true;
             self.dirty = true;
+            self.soon = true;
         }
     }
 

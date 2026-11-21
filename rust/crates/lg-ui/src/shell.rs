@@ -27,6 +27,8 @@ pub struct Shell {
     pub selected: String,
     pub sniffing: bool,
     pub server: Server,
+    /// The server label's tooltip.
+    pub server_tip: String,
     /// E.g. "build v0.0.1" (Java: "stable" for a released app).
     pub version: String,
     pub overlays_on: bool,
@@ -44,6 +46,7 @@ impl Default for Shell {
             selected: TABS[0].into(),
             sniffing: false,
             server: Server::Offline,
+            server_tip: String::new(),
             version: concat!("build v", env!("CARGO_PKG_VERSION")).into(),
             overlays_on: false,
             clicked_sniffer: false,
@@ -144,10 +147,9 @@ impl Shell {
         };
         square(lx, color);
         let r = text(ui, pos2(lx + 10.0 + s(8.0), bar.center().y), Align2::LEFT_CENTER, server, label.clone(), p.ink);
-        if ui
-            .interact(Rect::from_min_max(pos2(lx, bar.top()), pos2(r.right(), bar.bottom())), ui.scope_id().with("server"), Sense::click())
-            .clicked()
-        {
+        let zone = Rect::from_min_max(pos2(lx, bar.top()), pos2(r.right(), bar.bottom()));
+        crate::widgets::tip(ui, zone, "server-tip", &self.server_tip);
+        if ui.interact(zone, ui.scope_id().with("server"), Sense::click()).clicked() {
             self.clicked_server = true;
         }
 

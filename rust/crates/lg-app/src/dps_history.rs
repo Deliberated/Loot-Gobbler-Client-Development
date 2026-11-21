@@ -75,6 +75,8 @@ impl Run {
 pub struct DpsHistory {
     /// Java would write its file now (its `save()`): the app writes it.
     pub dirty: bool,
+    /// A change the guild should see right away (Java `ServerSync.uploadSoon`), for the sync to take.
+    pub soon: bool,
 
     /// Newest first.
     pub runs: Vec<Run>,
@@ -213,6 +215,7 @@ impl DpsHistory {
         if let Some(r) = self.runs.iter_mut().find(|r| r.start == start && !r.hidden) {
             r.hidden = true;
             self.dirty = true;
+            self.soon = true;
         }
     }
 
@@ -285,6 +288,7 @@ impl DpsHistory {
         self.live = None;
         self.live_hits = 0;
         if let Some(r) = run {
+            self.soon |= !r.guild_hall; // the guild's quest map may move on
             self.runs.insert(0, r);
             self.runs.truncate(MAX_RUNS);
             self.dirty = true;

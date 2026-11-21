@@ -13,6 +13,7 @@
 //! `--no-window`: no window; captures at once until Ctrl+C.
 
 mod gui;
+mod net;
 mod sound;
 
 use lg_replay::{Item, Session};

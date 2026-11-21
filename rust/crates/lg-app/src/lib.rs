@@ -34,6 +34,7 @@ pub mod pet_store;
 pub mod profile;
 pub mod properties;
 pub mod realm_character;
+pub mod server;
 pub mod sync;
 pub mod tinkerer;
 pub mod upe;
@@ -107,6 +108,9 @@ pub struct App {
     pub friends_asked: i64,
     pub missions: missions::Missions,
     pub zone: localtime::Zone,
+    /// The Loot Gobbler server and the sync with it (the app's network thread makes the calls).
+    pub server: server::Connection,
+    pub sync: sync::ServerSync,
 }
 
 /// Borrows what LootEvents writes into; seeding the holdings on their first use, as Java's `Holdings.get()` does.
@@ -186,6 +190,8 @@ impl App {
             friends_asked: 0,
             missions: java_data.map(missions::Missions::import).unwrap_or_default(),
             zone: localtime::Zone::system(),
+            server: Default::default(),
+            sync: Default::default(),
         };
         // TomatoData.bootload: Tomato's dungeon statistics
         if let Some(ds) = java_data.and_then(|d| lg_world::loot::DungeonStats::import(&d.join("dungeon.stats"))) {

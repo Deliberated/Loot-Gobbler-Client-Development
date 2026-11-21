@@ -40,6 +40,24 @@ pub enum Ask {
     /// Ask first (Java `JOptionPane.showConfirmDialog`): title, text, the yes and no buttons; yes asks `then`. With
     /// `no` empty it is a message (`showMessageDialog`): one button, nothing asked.
     Confirm { title: String, text: String, yes: String, no: String, then: Box<Ask> },
+    /// The Server tab: something for the server or the sync.
+    Server(ServerAsk),
+}
+
+/// What the Server tab asks of the server (Java `ServerPanel`'s buttons).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServerAsk {
+    Connect(String),
+    Test(String),
+    Forget,
+    Login(String, String),
+    /// The password and the role token (the IGN is the one the game showed).
+    Register(String, String),
+    Redeem(String),
+    Logout,
+    SyncNow,
+    /// The files on this PC become the logged-in account's.
+    Adopt,
 }
 
 /// Asks the window to open a tab or page after this frame (see [`Window::open`]; also "Battles:run:<start>" for a
@@ -274,6 +292,23 @@ impl Window {
             self.themed = true;
         }
         let palette = self.palette;
+        // Java `StatusBar.showServer`: grey when no server is set up, green when connected, else red
+        let s = &app.server;
+        (self.shell.server, self.shell.server_tip) = if s.url.trim().is_empty() {
+            (shell::Server::NotConfigured, "No Loot Gobbler server set up. Click to open the Server tab.".into())
+        } else if s.state == lg_app::server::State::Online {
+            let who = s.user.as_ref().map_or(" (not logged in)".to_string(), |u| format!(" as {}", u.ign));
+            (shell::Server::Connected, format!("Connected to {}{who}. Click to open the Server tab.", s.url))
+        } else {
+            let why = if s.state == lg_app::server::State::Connecting {
+                "connecting..."
+            } else if s.error.trim().is_empty() {
+                "not connected"
+            } else {
+                &s.error
+            };
+            (shell::Server::Offline, format!("{}: {why}. Click to open the Server tab.", s.url))
+        };
         let Window { shell, icons, en, loadout, props, profile, characters, inventory, game_modes, battles, social, guild, asks, .. } =
             self;
         shell.show(ui, &palette, |ui, tab| {
@@ -298,6 +333,9 @@ impl Window {
                 _ => {}
             }
         });
+        if self.shell.clicked_server {
+            self.open("Server");
+        }
         if let Some(k) = self.pending_dialog.take() {
             use crate::dialogs::Dialog;
             let data = app.world.data();

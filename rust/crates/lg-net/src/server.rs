@@ -5,104 +5,7 @@ use lg_app::gson_out::Obj;
 use lg_world::json::{self, Json};
 use std::time::Duration;
 
-/// The API version this client speaks.
-pub const API_VERSION: i64 = 1;
-
-/// A failed call (Java `ServerException`, or the connection's own failure).
-#[derive(Debug, Clone)]
-pub enum Error {
-    /// The server's answer: its HTTP status, its stable code, the message to show; on a revision conflict the
-    /// document it has.
-    Server { status: u16, code: String, message: String, current: Option<DataItem> },
-    /// No answer (Java `message` for the exception).
-    Net(String),
-}
-
-impl Error {
-    /// What to show for it (Java `GobblerServer.message`).
-    pub fn message(&self) -> String {
-        match self {
-            Error::Server { message, .. } => message.clone(),
-            Error::Net(m) => m.clone(),
-        }
-    }
-
-    pub fn code(&self) -> &str {
-        match self {
-            Error::Server { code, .. } => code,
-            Error::Net(_) => "",
-        }
-    }
-
-    pub fn status(&self) -> u16 {
-        match self {
-            Error::Server { status, .. } => *status,
-            Error::Net(_) => 0,
-        }
-    }
-}
-
-/// What the server reports of itself.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Status {
-    pub version: String,
-    pub api_version: i64,
-    pub admin_claimed: bool,
-    pub registration: String,
-}
-
-/// An account.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct User {
-    pub id: i64,
-    pub ign: String,
-    pub status: String,
-    pub role: String,
-    pub root: bool,
-    pub created_at: i64,
-    pub last_login_at: Option<i64>,
-}
-
-impl User {
-    pub fn rank(&self) -> i32 {
-        if self.root {
-            3
-        } else {
-            match self.role.as_str() {
-                "admin" => 2,
-                "moderator" => 1,
-                _ => 0,
-            }
-        }
-    }
-
-    pub fn at_least_moderator(&self) -> bool {
-        self.rank() >= 1
-    }
-
-    pub fn at_least_admin(&self) -> bool {
-        self.rank() >= 2
-    }
-
-    pub fn role_name(&self) -> &'static str {
-        if self.root {
-            return "Root admin";
-        }
-        match self.role.as_str() {
-            "admin" => "Admin",
-            "moderator" => "Moderator",
-            _ => "Member",
-        }
-    }
-}
-
-/// One of the player's documents on the server.
-#[derive(Debug, Clone, PartialEq)]
-pub struct DataItem {
-    pub revision: i64,
-    pub updated_at: i64,
-    pub data: Option<Json>,
-}
+pub use lg_app::server::{API_VERSION, DataItem, Error, Status, User, normalize};
 
 /// The connection test's answer (Java `TestResult`).
 #[derive(Debug, Clone, Default)]
@@ -148,24 +51,6 @@ fn item_of(j: &Json) -> DataItem {
         updated_at: long(j.get("updatedAt")),
         data: j.get("data").filter(|d| !matches!(d, Json::Null)).cloned(),
     }
-}
-
-/// Java `normalize`: "loot.example.com/" is https://loot.example.com; a trailing /api/v1 is dropped.
-pub fn normalize(address: &str) -> String {
-    let mut s = address.trim().to_string();
-    if s.is_empty() {
-        return s;
-    }
-    if !s.contains("://") {
-        s = format!("https://{s}");
-    }
-    while s.ends_with('/') {
-        s.pop();
-    }
-    if let Some(t) = s.strip_suffix("/api/v1") {
-        s = t.to_string();
-    }
-    s
 }
 
 /// One server and the session on it.
@@ -253,6 +138,13 @@ impl Server {
             o = o.str("token", role_token.trim());
         }
         let j = self.call("POST", "/auth/register", Some(&o.end()))?.unwrap_or(Json::Null);
+        Ok(j.get("user").map(user_of).unwrap_or_default())
+    }
+
+    /// Java `redeem`: an admin or moderator token applied to the logged-in account; the account as it is now.
+    pub fn redeem(&self, role_token: &str) -> Result<User, Error> {
+        let body = Obj::new().str("token", role_token.trim()).end();
+        let j = self.call("POST", "/me/redeem", Some(&body))?.unwrap_or(Json::Null);
         Ok(j.get("user").map(user_of).unwrap_or_default())
     }
 

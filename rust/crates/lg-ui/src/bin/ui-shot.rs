@@ -50,7 +50,7 @@ fn main() {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
     let assets = data.as_ref().map(|d| d.join("assets")).unwrap_or_default();
     let world = lg_world::World::new(lg_gamedata::GameData::load(&assets));
-    let app = lg_app::App::importing(world, now, data.as_deref());
+    let mut app = lg_app::App::importing(world, now, data.as_deref());
     let props = lg_app::properties::Properties::in_memory(
         &data.as_ref().and_then(|d| std::fs::read_to_string(d.join("realmShark.properties")).ok()).unwrap_or_default(),
     );
@@ -107,6 +107,21 @@ fn main() {
         // a fresh window per picture, the Java default theme as the oracle shows it
         let mut win = lg_ui::window::Window::new(&assets, props.clone());
         win.palette = lg_ui::theme::palette(None);
+        // "Server:online": connected to a made-up server, not logged in (the login form)
+        app.server = Default::default();
+        let shown = if tab == "Server:online" {
+            app.server.url = "https://loot.example.com".into();
+            app.server.state = lg_app::server::State::Online;
+            app.server.status = Some(lg_app::server::Status {
+                version: "1.4.0".into(),
+                api_version: lg_app::server::API_VERSION,
+                admin_claimed: true,
+                registration: "approval".into(),
+            });
+            "Server".to_string()
+        } else {
+            tab.clone()
+        };
         match tab.strip_prefix("Battles:run:").and_then(|t| t.parse::<i64>().ok()) {
             // a run under DPS, its latest boss open
             Some(start) => {
@@ -120,7 +135,7 @@ fn main() {
                     win.ask(lg_ui::window::Ask::OpenDialog(k));
                     win.take_asks();
                 }
-                None => win.open(&tab),
+                None => win.open(&shown),
             },
         }
         let mut harness = egui_kittest::Harness::builder()

@@ -87,15 +87,10 @@ impl Profile {
         self.dirty = true;
     }
 
-    /// Java `trackExalts` and `trackStSets` at startup: copies what the exalts record and the collection hold (the
-    /// collection: nothing yet), which counts as a change the first time.
+    /// Java `trackExalts` at startup: copies what the exalts record holds (a different list counts as an update).
+    /// The ST sets are counted once the collection is there (`count_st_sets`).
     pub fn start(&mut self, exalt_changes: &[crate::exalt_store::Change], now: i64) {
         self.track_exalts(exalt_changes, now);
-        if self.st_sets_done.as_deref() != Some(&[]) {
-            self.st_sets_done = Some(Vec::new());
-            self.updated_at = now;
-            self.dirty = true;
-        }
     }
 
     /// Java `trackExalts`' copy, whenever the exalts record changed: a different list counts as an update.

@@ -32,6 +32,8 @@ pub struct Gui {
     /// A file or folder picker open on its thread: the setting it is for, and where its answer comes.
     choosing: Option<(String, std::sync::mpsc::Receiver<Option<PathBuf>>)>,
     frames: u64,
+    /// The Loot Gobbler server's calls.
+    net: crate::net::Net,
 }
 
 impl Gui {
@@ -52,7 +54,11 @@ impl Gui {
             overlays: Default::default(),
             choosing: None,
             frames: 0,
+            net: Default::default(),
         };
+        // Java `GobblerServer.reconnect` on start: the saved server and session
+        g.app.server = lg_app::server::Connection::new(&g.window.props, &format!("Loot Gobbler {}", env!("CARGO_PKG_VERSION")));
+        g.app.server.reconnect();
         g.seen_saves = g.app.amulet_saves.count();
         g.seen_matrix = g.app.cooldowns.matrix_fired;
         // Java: the startup sound once the window is up
@@ -189,6 +195,84 @@ impl Gui {
         self.seen_at = now;
     }
 
+    /// The server and the sync, once a frame: the local changes noted (before the files are written, which
+    /// clears what changed), the answers that came handed on, the run that is due started, the calls made.
+    fn server(&mut self, ctx: &egui::Context) {
+        let now = now_ms();
+        let mut sync = std::mem::take(&mut self.app.sync);
+        let (changed, soon) = self.app.sync_changes();
+        for k in changed {
+            sync.local_changed(k, now);
+        }
+        if soon {
+            sync.upload_soon(now);
+        }
+        let answers: Vec<_> = self.net.rx.try_iter().collect();
+        for d in answers {
+            if let Some(d) = self.app.server.done(d) {
+                let (url, token, ign) = self.link();
+                let owner = self.window.props.get(lg_app::sync::KEY_OWNER).map(str::to_string);
+                let link = lg_app::sync::Link { url: &url, token: &token, ign: &ign, owner: owner.as_deref() };
+                if let Some(job) = sync.done(&mut self.app, &link, d, now) {
+                    self.app.server.jobs.push(job);
+                }
+            }
+        }
+        sync.account(&self.app.server.account());
+        for (k, v) in std::mem::take(&mut sync.props) {
+            self.set(&k, &v);
+        }
+        let (url, token, ign) = self.link();
+        let owner = self.window.props.get(lg_app::sync::KEY_OWNER).map(str::to_string);
+        let link = lg_app::sync::Link { url: &url, token: &token, ign: &ign, owner: owner.as_deref() };
+        if let Some(job) = sync.tick(&mut self.app, &link, now) {
+            self.app.server.jobs.push(job);
+        }
+        for (k, v) in std::mem::take(&mut sync.props).into_iter().chain(std::mem::take(&mut self.app.server.props)) {
+            self.set(&k, &v);
+        }
+        self.app.sync = sync;
+        for job in std::mem::take(&mut self.app.server.jobs) {
+            self.net.run(job, ctx);
+        }
+        // a scheduled upload wakes the window
+        ctx.request_repaint_after(std::time::Duration::from_secs(1));
+    }
+
+    /// The Server tab's buttons.
+    fn server_ask(&mut self, s: lg_ui::window::ServerAsk) {
+        use lg_ui::window::ServerAsk as S;
+        let server = &mut self.app.server;
+        match s {
+            S::Connect(a) => {
+                server.connection_feedback.clear();
+                server.test = None;
+                server.connect(&a);
+            }
+            S::Test(a) => server.test_connection(&a),
+            S::Forget => server.disconnect(),
+            S::Login(ign, pw) => server.login(&ign, &pw),
+            S::Register(pw, token) => {
+                let known = self.app.characters.player_name.clone();
+                self.app.server.register(known.as_deref(), &pw, &token);
+            }
+            S::Redeem(t) => server.redeem(&t),
+            S::Logout => server.logout(),
+            S::SyncNow => self.app.sync.sync_now(),
+            S::Adopt => {
+                let ign = server.user.as_ref().map(|u| u.ign.clone());
+                if let Some(ign) = ign {
+                    self.app.sync.adopt(&ign);
+                }
+            }
+        }
+    }
+
+    fn link(&self) -> (String, String, String) {
+        let s = &self.app.server;
+        (s.url.clone(), s.token.clone(), s.user.as_ref().map_or(String::new(), |u| u.ign.clone()))
+    }
+
     /// Java `WindowMemory.save`: maximized or not, and the normal bounds, once the window rests.
     fn remember_bounds(&mut self, ctx: &egui::Context) {
         let (rect, maximized, minimized) = ctx.input(|i| {
@@ -240,12 +324,17 @@ impl eframe::App for Gui {
         self.window.shell.overlays_on = ids.iter().any(|id| self.window.props.get(&on_key(id)) == Some("true"));
         self.sounds();
         self.chosen();
+        self.server(ui.ctx());
         // what the views asked for last frame is done before this one is drawn
         if let Err(e) = self.app.save_changed(&self.own) {
             eprintln!("cannot save into {}: {e}", self.own.display());
         }
         let mut all = ui.new_child(egui::UiBuilder::new().max_rect(ui.ctx().content_rect()));
         self.window.show(&mut all, &self.app, now_ms());
+        // the Server tab took these in
+        self.app.server.clear_password = false;
+        self.app.server.clear_register_token = false;
+        self.app.server.clear_redeem = false;
         let mut asks = Vec::new();
         self.overlays.show(ui.ctx(), &mut self.window.icons, &self.app, &self.window.props, now_ms(), &mut asks);
         for a in asks {
@@ -264,6 +353,7 @@ impl eframe::App for Gui {
                 lg_ui::window::Ask::UpeMode(char_id, mode) => self.app.upe_mode(char_id, &mode),
                 lg_ui::window::Ask::UpeNoPet(char_id, no_pet) => self.app.upe_no_pet(char_id, no_pet),
                 lg_ui::window::Ask::Choose { key, title, folder } => self.choose(key, title, folder),
+                lg_ui::window::Ask::Server(s) => self.server_ask(s),
                 lg_ui::window::Ask::Confirm { .. } | lg_ui::window::Ask::Nothing | lg_ui::window::Ask::OpenDialog(_) => {}
                 lg_ui::window::Ask::Play(what) => {
                     let s = crate::sound::Sounds(&self.window.props);
@@ -323,6 +413,7 @@ impl eframe::App for Gui {
                 Some(id) => {
                     ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("lg-copy-card"), id));
                 }
+                None if t.starts_with("open:") => self.window.open(&t[5..]),
                 None if t == "grid" => {
                     self.window.open("Inventory");
                     self.window.inventory.copy_image_now();

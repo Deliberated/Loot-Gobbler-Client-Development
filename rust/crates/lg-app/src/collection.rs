@@ -148,6 +148,8 @@ pub struct Collection {
     /// Changed since the last time someone looked (Java's listeners: the profile counts the ST sets).
     pub changed: bool,
     pub dirty: bool,
+    /// A change the guild should see right away (Java `ServerSync.uploadSoon`), for the sync to take.
+    pub soon: bool,
 }
 
 impl Collection {
@@ -193,6 +195,7 @@ impl Collection {
             self.order.push(item);
             self.entries.insert(item, Entry { first: Some(f.time.clone()), ..Default::default() });
         }
+        self.soon = true; // shows up in the guild's caravan
         let e = self.entries.get_mut(&item).expect("entry");
         e.last = Some(f.time.clone());
         e.count += 1;
@@ -228,6 +231,7 @@ impl Collection {
 
     /// Java `recordRemoved`: a copy left (forged, fed, dropped, used up). False if the item is not collected.
     pub fn record_removed(&mut self, item: i32, source: &str, r#where: &str, copy: Option<&Find>, now: i64, time: &str) -> bool {
+        self.soon = true;
         let Some(e) = self.entries.get_mut(&item) else { return false };
         let mut f = match copy.and_then(|c| c.enchant_ids.clone()) {
             Some(ids) => Find::with_ids(source, Some(ids), r#where, "", now, time),
