@@ -93,6 +93,8 @@ pub enum ServerAsk {
     GuildRefresh,
     /// The loot caravan again (the minute's check while it is shown, a click on Refresh).
     CaravanLoad,
+    /// The quest maps again.
+    MapsLoad,
     OpenMember(i64),
     /// A line under a section (0 item scores, 1 guild): what was typed cannot be used.
     Feedback(u8, String),

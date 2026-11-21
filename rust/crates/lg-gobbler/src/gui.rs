@@ -34,6 +34,8 @@ pub struct Gui {
     frames: u64,
     /// The Loot Gobbler server's calls.
     net: crate::net::Net,
+    /// The latest saved run as last seen (a new one may clear a quest map stage).
+    seen_run: Option<i64>,
 }
 
 impl Gui {
@@ -55,7 +57,9 @@ impl Gui {
             choosing: None,
             frames: 0,
             net: Default::default(),
+            seen_run: None,
         };
+        g.seen_run = g.app.dps_history.runs.first().map(|r| r.start);
         // Java `GobblerServer.reconnect` on start: the saved server and session
         g.app.server = lg_app::server::Connection::new(&g.window.props, &format!("Loot Gobbler {}", env!("CARGO_PKG_VERSION")));
         g.app.server.reconnect();
@@ -230,6 +234,21 @@ impl Gui {
         if sync.uploaded.contains(&"collection") {
             self.app.server.guild.caravan_stale = true;
         }
+        // a run of yours ended: the quest map may move on; your run on the server: what it made of it
+        let latest = self.app.dps_history.runs.first().map(|r| r.start);
+        if latest != self.seen_run {
+            self.seen_run = latest;
+            if let (Some((id, ign)), Some(run)) = (&me, self.app.dps_history.runs.first()) {
+                let run = run.clone();
+                self.app.server.guild.cleared(&run, *id, ign, now);
+            }
+        }
+        if sync.uploaded.contains(&"dps_history") {
+            if let Some(pc) = &mut self.app.server.guild.pending {
+                pc.uploaded = true;
+            }
+            self.app.server.guild.maps_stale = true;
+        }
         sync.uploaded.clear();
         for (k, v) in std::mem::take(&mut sync.props) {
             self.set(&k, &v);
@@ -296,6 +315,7 @@ impl Gui {
             S::RefreshModeration => server.refresh_moderation(),
             S::GuildRefresh => server.guild_refresh(),
             S::CaravanLoad => server.caravan_load(),
+            S::MapsLoad => server.maps_load(),
             S::OpenMember(id) => server.open_member(id),
             S::Accept(id, ign) => server.accept(id, &ign),
             S::Deny(id, ign) => server.deny(id, &ign),

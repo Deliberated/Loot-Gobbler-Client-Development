@@ -141,6 +141,51 @@ fn main() {
             };
             app.server.guild.member = Some((1, Some(Ok(profile))));
         }
+        // "Guild:Quest Map": logged in, a map of every style (the current one half cleared, the others ended,
+        // completed or barely begun)
+        if tab == "Guild:Quest Map" {
+            use lg_app::guild::{QuestMap, QuestMapClear, QuestMaps};
+            app.server.url = "https://loot.example.com".into();
+            app.server.state = lg_app::server::State::Online;
+            app.server.user = Some(lg_app::server::User { id: 1, ign: "Gunshit".into(), ..Default::default() });
+            let dungeons: Vec<String> = [
+                "Snake Pit",
+                "Spider Den",
+                "Pirate Cave",
+                "Forest Maze",
+                "Tomb of the Ancients",
+                "Cultist Hideout",
+                "The Shatters",
+                "Oryx's Sanctuary",
+            ]
+            .iter()
+            .map(|d| d.to_string())
+            .collect();
+            let map = |id: i64, style: &str, variant: i32, cleared: usize, ended: bool| QuestMap {
+                id,
+                name: format!("The {style} map"),
+                style: style.into(),
+                variant,
+                dungeons: dungeons.clone(),
+                clears: (0..cleared)
+                    .map(|i| QuestMapClear { user_id: 1, ign: "Gunshit".into(), at: now - 86_400_000 + i as i64 * 3_600_000 })
+                    .collect(),
+                starts_at: now - 2 * 86_400_000,
+                ends_at: if ended { now - 3_600_000 } else { now + 5 * 86_400_000 },
+                completed_at: (cleared == 8).then_some(now - 7_200_000),
+            };
+            let styles = ["hex", "overworld", "oryx", "constellation", "neon", "adventure", "hunt", "hellforge"];
+            app.server.guild.quest_maps = Some(Ok(QuestMaps {
+                guild: "Pluribus".into(),
+                now,
+                current: Some(map(100, "parchment", 0, 3, false)),
+                past: styles
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| map(i as i64 + 1, s, i as i32, [3, 8, 2, 5, 3, 4, 8, 1][i], i != 0 && i != 2))
+                    .collect(),
+            }));
+        }
         let admin = tab == "Server:admin";
         let shown = if tab == "Server:online" || dialog.is_some() || admin {
             app.server.url = "https://loot.example.com".into();

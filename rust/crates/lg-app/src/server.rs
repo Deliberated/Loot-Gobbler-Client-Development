@@ -303,6 +303,10 @@ pub enum Done {
     },
 }
 
+fn now_ms() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
+}
+
 /// Java `newPasswordProblem`: why a new password cannot be used (as the server checks it).
 pub fn new_password_problem(password: &str, again: &str) -> Option<String> {
     let n = password.chars().count();
@@ -774,6 +778,7 @@ impl Connection {
                         self.guild_loaded();
                     }
                     "caravan" => self.caravan_done(Err(e)),
+                    "questmaps" => self.maps_done(Err(e), now_ms()),
                     t if t.starts_with("member:") => {
                         if let Some((id, shown)) = &mut self.guild.member
                             && t == format!("member:{id}")
@@ -863,6 +868,7 @@ impl Connection {
                 self.guild_loaded();
             }
             "caravan" => self.caravan_done(Ok(crate::guild::caravan_of(&j))),
+            "questmaps" => self.maps_done(Ok(crate::guild::quest_maps_of(&j)), now_ms()),
             "drops" => {
                 if !self.guild.failed {
                     self.guild.drops = Some(Ok(crate::guild::drops_of(&j)));
@@ -914,6 +920,7 @@ impl Connection {
         }
         self.call("GET", "/scoring", None, "scoring");
         self.caravan_load();
+        self.maps_load();
         if self.guild.loading > 0 {
             return;
         }
@@ -945,6 +952,35 @@ impl Connection {
         self.guild.version += 1;
         if std::mem::take(&mut self.guild.caravan_again) {
             self.caravan_load();
+        }
+    }
+
+    /// Java `QuestMapView.load`: the current quest map and the last 20.
+    pub fn maps_load(&mut self) {
+        if self.guild.maps_loading {
+            self.guild.maps_again = true;
+            return;
+        }
+        self.guild.maps_stale = false;
+        if self.user.is_none() || self.state != State::Online {
+            self.guild.quest_maps = None;
+            self.guild.version += 1;
+            return;
+        }
+        self.guild.maps_loading = true;
+        self.call("GET", "/guild/questmaps?limit=20", None, "questmaps");
+    }
+
+    fn maps_done(&mut self, r: Result<crate::guild::QuestMaps, Error>, now: i64) {
+        self.guild.maps_loading = false;
+        if let Ok(m) = &r {
+            self.guild.skew = m.now - now;
+        }
+        self.guild.quest_maps = Some(r);
+        self.guild.keep_pending(now);
+        self.guild.version += 1;
+        if std::mem::take(&mut self.guild.maps_again) {
+            self.maps_load();
         }
     }
 

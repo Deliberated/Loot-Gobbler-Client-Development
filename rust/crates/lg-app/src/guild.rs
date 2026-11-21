@@ -302,6 +302,72 @@ pub fn breakdown(data: &lg_gamedata::GameData, item: i32, r#where: &str, enchant
     ]
 }
 
+/// Who cleared a quest map stage, and when (ms since 1970).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct QuestMapClear {
+    pub user_id: i64,
+    pub ign: String,
+    pub at: i64,
+}
+
+/// A guild quest map: dungeons cleared in order by any member, drawn in a style and colour variant.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct QuestMap {
+    pub id: i64,
+    pub name: String,
+    pub style: String,
+    pub variant: i32,
+    pub dungeons: Vec<String>,
+    /// One per cleared stage, in order.
+    pub clears: Vec<QuestMapClear>,
+    pub starts_at: i64,
+    pub ends_at: i64,
+    pub completed_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct QuestMaps {
+    pub guild: String,
+    /// The server's clock.
+    pub now: i64,
+    pub current: Option<QuestMap>,
+    /// Newest first.
+    pub past: Vec<QuestMap>,
+}
+
+fn quest_map_of(j: &Json) -> QuestMap {
+    QuestMap {
+        id: long(j.get("id")),
+        name: text(j.get("name")),
+        style: text(j.get("style")),
+        variant: int(j.get("variant"), 0),
+        dungeons: list(j.get("dungeons"), |d| text(Some(d))),
+        clears: list(j.get("clears"), |c| QuestMapClear { user_id: long(c.get("userId")), ign: text(c.get("ign")), at: long(c.get("at")) }),
+        starts_at: long(j.get("startsAt")),
+        ends_at: long(j.get("endsAt")),
+        completed_at: j.get("completedAt").filter(|v| matches!(v, Json::Number(_))).map(|v| long(Some(v))),
+    }
+}
+
+pub fn quest_maps_of(j: &Json) -> QuestMaps {
+    QuestMaps {
+        guild: text(j.get("guild")),
+        now: long(j.get("now")),
+        current: j.get("current").filter(|c| matches!(c, Json::Object(_))).map(quest_map_of),
+        past: list(j.get("past"), quest_map_of),
+    }
+}
+
+/// Your clear, kept on the map until the server has it (the upload takes a moment).
+#[derive(Debug, Clone, Default)]
+pub struct PendingClear {
+    clear: QuestMapClear,
+    map: i64,
+    stage: usize,
+    until: i64,
+    pub uploaded: bool,
+}
+
 /// What the Guild tab shows (Java `GuildPanel`'s state): None until loaded.
 #[derive(Debug, Default)]
 pub struct GuildState {
@@ -321,6 +387,24 @@ pub struct GuildState {
     pub(crate) caravan_loading: bool,
     pub(crate) caravan_again: bool,
     pub caravan_stale: bool,
+    /// The quest maps (Java `QuestMapView`): None until loaded; the server's clock minus ours.
+    pub quest_maps: Option<Result<QuestMaps, crate::server::Error>>,
+    pub(crate) maps_loading: bool,
+    pub(crate) maps_again: bool,
+    pub maps_stale: bool,
+    pub skew: i64,
+    pub pending: Option<PendingClear>,
+}
+
+fn add_clear(m: &mut QuestMap, c: QuestMapClear) {
+    m.clears.push(c);
+    if m.clears.len() == m.dungeons.len() {
+        m.completed_at = m.clears.last().map(|c| c.at);
+    }
+}
+
+fn boss_damage(run: &crate::dps_history::Run) -> bool {
+    run.bosses.iter().any(|b| b.players.iter().any(|p| p.me && p.damage > 0))
 }
 
 /// Java `bagName`: the bag colour the server files a drop under ("Boosted Orange" is Orange, unknown is Other).
@@ -335,6 +419,43 @@ pub fn bag_name(bag: &str) -> String {
 }
 
 impl GuildState {
+    /// Java `QuestMapView.cleared`: a run of yours just ended; if it clears the current stage (the same rules as
+    /// the server's: its dungeon, after the last clear, with your boss damage), the map moves on right away.
+    pub fn cleared(&mut self, run: &crate::dps_history::Run, me_id: i64, me_ign: &str, now: i64) {
+        let skew = self.skew;
+        let Some(Ok(maps)) = &mut self.quest_maps else { return };
+        let Some(m) = &mut maps.current else { return };
+        if run.guild_hall || m.completed_at.is_some() {
+            return;
+        }
+        let n = m.clears.len();
+        if n >= m.dungeons.len() || now + skew >= m.ends_at {
+            return;
+        }
+        let unlock = if n == 0 { m.starts_at } else { m.clears[n - 1].at };
+        if run.start < unlock || !run.dungeon.eq_ignore_ascii_case(&m.dungeons[n]) || !boss_damage(run) {
+            return;
+        }
+        let c = QuestMapClear { user_id: me_id, ign: me_ign.into(), at: run.start };
+        self.pending = Some(PendingClear { clear: c.clone(), map: m.id, stage: n, until: now + 3 * 60_000, uploaded: false });
+        add_clear(m, c);
+        self.version += 1;
+    }
+
+    /// Java `keepPending`: a reload before your run reached the server would take your clear back: it stays on the
+    /// map until then; after that the server's answer counts.
+    pub(crate) fn keep_pending(&mut self, now: i64) {
+        let Some(pc) = &self.pending else { return };
+        let Some(Ok(maps)) = &mut self.quest_maps else { return };
+        let Some(m) = &mut maps.current else { return };
+        let theirs = m.clears.len() > pc.stage && m.clears[pc.stage].user_id != pc.clear.user_id;
+        if pc.uploaded || theirs || m.id != pc.map || now > pc.until || m.clears.len() > pc.stage {
+            self.pending = None; // the server has the final say now
+        } else if m.completed_at.is_none() && m.clears.len() == pc.stage {
+            add_clear(m, pc.clear.clone());
+        }
+    }
+
     /// Java `CaravanView.dropped`: one of your drops onto your wagon right away (the server counts it once the
     /// upload is in).
     pub fn dropped(&mut self, item_id: i32, find: &crate::collection::Find, me_id: i64, me_ign: &str) {

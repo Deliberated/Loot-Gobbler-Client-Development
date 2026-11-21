@@ -167,6 +167,12 @@ impl JavaRandom {
         (self.seed >> (48 - bits)) as i32
     }
 
+    /// `nextDouble()`.
+    pub fn next_double(&mut self) -> f64 {
+        let hi = i64::from(self.next(26)) << 27;
+        (hi + i64::from(self.next(27))) as f64 * (1.0 / (1u64 << 53) as f64)
+    }
+
     /// `nextInt(bound)`.
     pub fn next_int(&mut self, bound: i32) -> i32 {
         let mut r = self.next(31);
@@ -196,6 +202,11 @@ pub fn shuffle<T>(v: &mut [T], rnd: &mut JavaRandom) {
 #[cfg(test)]
 mod random_tests {
     use super::*;
+
+    #[test]
+    fn next_double_as_java() {
+        assert_eq!(JavaRandom::new(42).next_double(), 0.7275636800328681);
+    }
 
     /// Numbers Java 25 gives: new Random(42).nextInt(10) x5, and Collections.shuffle of 0..9 with new Random(504).
     #[test]

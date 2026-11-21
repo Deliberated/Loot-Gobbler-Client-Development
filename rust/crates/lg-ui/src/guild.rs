@@ -1,6 +1,5 @@
 //! The Guild tab (Java `GuildPanel`): Loot Caravan, Quest Map, Leaderboard, Recent Drops, Member, Quests. All of it
 //! comes from the Loot Gobbler server, loaded when the tab is opened (and after logging in or out).
-//! Not yet online: the quest map (it shows its logged-out state).
 
 use crate::jtext;
 use crate::profile::Ctx;
@@ -20,20 +19,11 @@ pub struct GuildView {
     /// The leaderboard's sort: column and ascending (None: by score, as the server's order is shown first).
     sort: Option<(usize, bool)>,
     caravan: crate::caravan::CaravanView,
+    quest_map: crate::quest_map::QuestMapView,
 }
 
 fn rgb(c: u32) -> Color32 {
     Color32::from_rgb((c >> 16) as u8, (c >> 8) as u8, c as u8)
-}
-
-/// A plain button with its text as written (Java `JButton` without upper-casing).
-fn plain_button(ui: &Ui, p: &Palette, head: Rect, label: &str) {
-    let painter = ui.painter();
-    let f = small();
-    let w = jtext::width(painter, label, &f) + 40.0;
-    let r = Rect::from_min_size(pos2(head.right() - 5.0 - w, head.top()), vec2(w, head.height()));
-    painter.rect(r, 0.0, p.header, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
-    jtext::draw(painter, r.center(), Align2::CENTER_CENTER, label, &f, p.ink);
 }
 
 impl GuildView {
@@ -53,20 +43,9 @@ impl GuildView {
         }
         let body = Rect::from_min_max(pos2(all.left(), all.top() + 36.0 + 8.0), all.max);
         let f = text(18.0);
-        let note = |ui: &mut Ui, r: Rect, t: &str| {
-            jtext::draw(ui.painter(), pos2(r.left() + 14.0, r.top() + 12.0), Align2::LEFT_TOP, t, &f, fixed::MUTED);
-        };
         match self.page {
             0 => self.caravan.show(ui, c, body),
-            1 => widgets::section(
-                ui,
-                &p,
-                body,
-                "Quest Map",
-                fixed::GOLD,
-                |ui, head| plain_button(ui, &p, head, "Refresh"),
-                |ui, r| note(ui, r, "Log in to a server in the Server tab to see your guild's quest map."),
-            ),
+            1 => self.quest_map.show(ui, c, body),
             2 => self.leaderboard(ui, c, body),
             3 => drops(ui, c, body, rarity, &mut self.page),
             4 => member(ui, c, body),
