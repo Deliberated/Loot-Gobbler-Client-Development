@@ -3,6 +3,8 @@
 //! An answer is read as Java reads it, line by line with the line ends dropped; an HTTP error or no connection is
 //! a refusal (Java prints the error and returns null).
 
+pub mod server;
+
 use lg_app::web::{Web, joined_lines};
 use std::time::Duration;
 

@@ -1894,6 +1894,7 @@ name = "lg-net"
 version = "0.0.1"
 dependencies = [
  "lg-app",
+ "lg-world",
  "ureq",
 ]
 

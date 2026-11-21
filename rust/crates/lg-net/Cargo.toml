@@ -8,4 +8,5 @@ publish.workspace = true
 
 [dependencies]
 lg-app = { path = "../lg-app" }
+lg-world = { path = "../lg-world" }
 ureq = { version = "2.12", default-features = false, features = ["tls"] }
