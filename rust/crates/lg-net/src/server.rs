@@ -5,7 +5,7 @@ use lg_app::gson_out::Obj;
 use lg_world::json::{self, Json};
 use std::time::Duration;
 
-pub use lg_app::server::{API_VERSION, DataItem, Error, Status, User, normalize};
+pub use lg_app::server::{API_VERSION, DataItem, Error, Status, User, boolean, item_of, long, normalize, text, user_of};
 
 /// The connection test's answer (Java `TestResult`).
 #[derive(Debug, Clone, Default)]
@@ -13,44 +13,6 @@ pub struct Ping {
     pub millis: i64,
     pub your_ip: String,
     pub user: Option<User>,
-}
-
-fn long(v: Option<&Json>) -> i64 {
-    match v {
-        Some(Json::Number(n)) | Some(Json::String(n)) => n.parse::<f64>().map_or(0, |f| f as i64),
-        _ => 0,
-    }
-}
-
-fn text(v: Option<&Json>) -> String {
-    match v {
-        Some(Json::String(s)) => s.clone(),
-        _ => String::new(),
-    }
-}
-
-fn boolean(v: Option<&Json>) -> bool {
-    matches!(v, Some(Json::Bool(true)))
-}
-
-pub fn user_of(j: &Json) -> User {
-    User {
-        id: long(j.get("id")),
-        ign: text(j.get("ign")),
-        status: text(j.get("status")),
-        role: j.get("role").map_or("user".into(), |_| text(j.get("role"))),
-        root: boolean(j.get("root")),
-        created_at: long(j.get("createdAt")),
-        last_login_at: j.get("lastLoginAt").filter(|v| !matches!(v, Json::Null)).map(|v| long(Some(v))),
-    }
-}
-
-fn item_of(j: &Json) -> DataItem {
-    DataItem {
-        revision: long(j.get("revision")),
-        updated_at: long(j.get("updatedAt")),
-        data: j.get("data").filter(|d| !matches!(d, Json::Null)).cloned(),
-    }
 }
 
 /// One server and the session on it.
@@ -282,7 +244,60 @@ mod live {
         Server::new(&url, &token).change_password("password456", "password123").expect("back");
         let bad = Server::new(&url, "").reset_password("Tester", "LGR-0000-0000-0000", "password789");
         assert_eq!(bad.err().map(|e| e.code().to_string()).as_deref(), Some("invalid_code"));
+        moderation(&url, &Server::new(&url, &token));
         let wrong = Server::new(&url, "").login("Tester", "wrongpassword", "x");
         assert_eq!(wrong.err().map(|e| e.code().to_string()).as_deref(), Some("invalid_credentials"));
+    }
+
+    /// The Server tab's moderation, scores and guild settings, as the app's connection state drives them.
+    fn moderation(url: &str, s: &Server) {
+        use lg_app::server::{Connection, Done, GuildSettings, Job, ScoreWeights, State};
+        let run = |c: &mut Connection| {
+            while !c.jobs.is_empty() {
+                for job in std::mem::take(&mut c.jobs) {
+                    if let Job::Call { method, path, body, tag, .. } = job {
+                        let result = s.call(&method, &path, body.as_deref());
+                        c.done(Done::Call { url: url.into(), path, tag, result });
+                    }
+                }
+            }
+        };
+        let _ = Server::new(url, "").register("Pendy", "password123", "");
+        let mut c = Connection::default();
+        (c.url, c.token, c.state, c.user) = (url.into(), s.token.clone(), State::Online, Some(s.me().expect("me")));
+        c.tick();
+        run(&mut c);
+        let m = &c.moderation;
+        assert!(m.members.iter().any(|u| u.ign == "Tester"), "{:?} {}", m.members, m.feedback);
+        let p = m.pending.iter().find(|u| u.ign == "Pendy").expect("waiting").clone();
+        assert_eq!((c.weights, c.guild_settings), (ScoreWeights::default(), GuildSettings::default()));
+        c.accept(p.id, &p.ign);
+        run(&mut c);
+        assert_eq!(c.moderation.feedback, "Pendy can log in now.");
+        assert!(c.moderation.members.iter().any(|u| u.ign == "Pendy"));
+        c.reset_code_for(p.id);
+        run(&mut c);
+        assert!(c.moderation.reset_code.take().is_some_and(|r| r.code.starts_with("LGR-") && r.ign == "Pendy"));
+        c.remove(p.id, &p.ign);
+        run(&mut c);
+        assert_eq!(c.moderation.feedback, "Pendy was removed.");
+        c.create_token("For a test", 24);
+        run(&mut c);
+        let t = c.moderation.last_issued.clone().expect("issued");
+        assert!(t.token.starts_with("LGM-") && c.moderation.tokens.iter().any(|o| o.id == t.id && o.note == "For a test"));
+        c.revoke_token(t.id);
+        run(&mut c);
+        assert_eq!(c.moderation.tokens_feedback, "Token revoked.");
+        assert!(c.moderation.last_issued.is_none() && !c.moderation.tokens.iter().any(|o| o.id == t.id));
+        c.save_scoring(ScoreWeights { feed_power: 0.5, difficulty: 0.25, rarity: 1.0 });
+        run(&mut c);
+        assert_eq!((c.weights.feed_power, c.weights.difficulty), (0.5, 0.25));
+        c.save_scoring(ScoreWeights::default());
+        c.save_guild(GuildSettings { baseline_hpm: 60.5 });
+        run(&mut c);
+        assert_eq!((c.weights, c.guild_settings.baseline_hpm), (ScoreWeights::default(), 60.5));
+        c.save_guild(GuildSettings::default());
+        run(&mut c);
+        assert_eq!(c.moderation.guild_feedback, "Saved. Everyone's dungeon details use it.");
     }
 }

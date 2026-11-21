@@ -102,6 +102,46 @@ pub struct DataItem {
     pub data: Option<Json>,
 }
 
+// --- reading the server's answers (Gson into the Java classes: missing or null fields keep their defaults) ---
+
+pub fn long(v: Option<&Json>) -> i64 {
+    match v {
+        Some(Json::Number(n)) | Some(Json::String(n)) => n.parse::<f64>().map_or(0, |f| f as i64),
+        _ => 0,
+    }
+}
+
+pub fn text(v: Option<&Json>) -> String {
+    match v {
+        Some(Json::String(s)) => s.clone(),
+        _ => String::new(),
+    }
+}
+
+pub fn boolean(v: Option<&Json>) -> bool {
+    matches!(v, Some(Json::Bool(true)))
+}
+
+pub fn user_of(j: &Json) -> User {
+    User {
+        id: long(j.get("id")),
+        ign: text(j.get("ign")),
+        status: text(j.get("status")),
+        role: j.get("role").map_or("user".into(), |_| text(j.get("role"))),
+        root: boolean(j.get("root")),
+        created_at: long(j.get("createdAt")),
+        last_login_at: j.get("lastLoginAt").filter(|v| !matches!(v, Json::Null)).map(|v| long(Some(v))),
+    }
+}
+
+pub fn item_of(j: &Json) -> DataItem {
+    DataItem {
+        revision: long(j.get("revision")),
+        updated_at: long(j.get("updatedAt")),
+        data: j.get("data").filter(|d| !matches!(d, Json::Null)).cloned(),
+    }
+}
+
 /// Java `normalize`: "loot.example.com/" is https://loot.example.com; a trailing /api/v1 is dropped.
 pub fn normalize(address: &str) -> String {
     let mut s = address.trim().to_string();
@@ -177,6 +217,15 @@ pub enum Job {
         token: String,
         role_token: String,
     },
+    /// Any other call: its answer comes back as `Done::Call` with the tag.
+    Call {
+        url: String,
+        token: String,
+        method: String,
+        path: String,
+        body: Option<String>,
+        tag: String,
+    },
     /// A new password with a reset code, then logged in with it.
     Reset {
         url: String,
@@ -230,6 +279,12 @@ pub enum Done {
     Redeem {
         url: String,
         result: Result<User, Error>,
+    },
+    Call {
+        url: String,
+        path: String,
+        tag: String,
+        result: Result<Option<Json>, Error>,
     },
     /// The new session (after a reset), or none (a change).
     Password {
@@ -289,6 +344,112 @@ pub struct Connection {
     pub clear_password: bool,
     pub clear_register_token: bool,
     pub clear_redeem: bool,
+    /// For moderators and admins: the approval queue, the members, the moderator tokens.
+    pub moderation: Moderation,
+    /// The item score weights and the guild settings (Java `ItemScore`, `Guildmates.settings`); `loaded` counts
+    /// their loads, so the Server tab's fields show them again.
+    pub weights: ScoreWeights,
+    pub guild_settings: GuildSettings,
+    pub loaded: u64,
+}
+
+/// An unused moderator token.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct OpenToken {
+    pub id: i64,
+    pub note: String,
+    pub created_by: String,
+    pub created_at: i64,
+    pub expires_at: Option<i64>,
+}
+
+/// A moderator token just made: shown once.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct IssuedToken {
+    pub id: i64,
+    pub token: String,
+    pub note: String,
+    pub expires_at: i64,
+}
+
+/// A password reset code made for a player: shown once.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ResetCode {
+    pub code: String,
+    pub ign: String,
+    pub expires_at: i64,
+}
+
+/// The item score weights (0 to 1 each), set by an admin.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScoreWeights {
+    pub feed_power: f64,
+    pub difficulty: f64,
+    pub rarity: f64,
+}
+
+impl Default for ScoreWeights {
+    fn default() -> Self {
+        ScoreWeights { feed_power: 1.0, difficulty: 1.0, rarity: 1.0 }
+    }
+}
+
+/// What the guild views compute with: the hits per minute a run counts as average.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GuildSettings {
+    pub baseline_hpm: f64,
+}
+
+impl Default for GuildSettings {
+    fn default() -> Self {
+        GuildSettings { baseline_hpm: 50.0 }
+    }
+}
+
+/// The Server tab's moderation state (Java `ServerPanel`'s lists and feedback lines).
+#[derive(Debug, Default)]
+pub struct Moderation {
+    pub pending: Vec<User>,
+    pub members: Vec<User>,
+    pub tokens: Vec<OpenToken>,
+    pub last_issued: Option<IssuedToken>,
+    /// The account and role the lists were loaded for.
+    loaded_for: String,
+    pub feedback: String,
+    pub tokens_feedback: String,
+    pub scoring_feedback: String,
+    pub guild_feedback: String,
+    /// A reset code to show (and copy) once.
+    pub reset_code: Option<ResetCode>,
+    /// A token was made: the note field empties.
+    pub clear_note: bool,
+}
+
+fn double(v: Option<&Json>, default: f64) -> f64 {
+    match v {
+        Some(Json::Number(n)) | Some(Json::String(n)) => n.parse().unwrap_or(default),
+        _ => default,
+    }
+}
+
+fn users_of(j: &Json, key: &str) -> Vec<User> {
+    match j.get(key) {
+        Some(Json::Array(a)) => a.iter().map(user_of).collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn weights_of(j: &Json) -> ScoreWeights {
+    ScoreWeights {
+        feed_power: double(j.get("feedPower"), 1.0),
+        difficulty: double(j.get("difficulty"), 1.0),
+        rarity: double(j.get("rarity"), 1.0),
+    }
+}
+
+/// A number as Gson writes a double.
+fn num(d: f64) -> String {
+    crate::gson_out::double(d)
 }
 
 impl Connection {
@@ -474,6 +635,197 @@ impl Connection {
         });
     }
 
+    fn call(&mut self, method: &str, path: &str, body: Option<String>, tag: &str) {
+        self.jobs.push(Job::Call {
+            url: self.url.clone(),
+            token: self.token.clone(),
+            method: method.into(),
+            path: path.into(),
+            body,
+            tag: tag.into(),
+        });
+    }
+
+    /// Java `rebuild`'s loading, once a frame: logged in as a moderator or admin (or with another role), the
+    /// moderation lists are loaded afresh; an admin's item score weights and guild settings too.
+    pub fn tick(&mut self) {
+        let u = if self.state == State::Online { self.user.clone() } else { None };
+        let m = u.as_ref().filter(|u| u.at_least_moderator());
+        let key = m.map_or(String::new(), |u| format!("{}:{}", u.id, u.rank()));
+        if key == self.moderation.loaded_for {
+            return;
+        }
+        self.moderation.loaded_for = key;
+        self.moderation.pending.clear();
+        self.moderation.members.clear();
+        self.moderation.tokens.clear();
+        self.moderation.last_issued = None;
+        if let Some(u) = m {
+            let admin = u.at_least_admin();
+            self.refresh_moderation();
+            if admin {
+                self.call("GET", "/scoring", None, "scoring");
+                self.call("GET", "/guild/settings", None, "guild-settings");
+            }
+        }
+    }
+
+    /// Java `refreshModeration`: the approval queue, the members and (for admins) the unused moderator tokens.
+    pub fn refresh_moderation(&mut self) {
+        let Some(u) = self.user.clone().filter(|u| u.at_least_moderator()) else { return };
+        self.call("GET", "/admin/requests", None, "requests");
+        self.call("GET", "/admin/users", None, "users");
+        if u.at_least_admin() {
+            self.call("GET", "/admin/moderator-tokens", None, "tokens");
+        } else {
+            self.moderation.tokens.clear();
+        }
+    }
+
+    /// Java `act`: an admin action; its outcome under the moderation (or the tokens), then the lists again.
+    fn act(&mut self, method: &str, path: &str, body: Option<String>, tokens: bool, done: &str) {
+        let line = if tokens { &mut self.moderation.tokens_feedback } else { &mut self.moderation.feedback };
+        *line = "Working...".into();
+        self.call(method, path, body, &format!("act:{}:{done}", if tokens { "tokens" } else { "moderation" }));
+    }
+
+    pub fn accept(&mut self, id: i64, ign: &str) {
+        self.act("POST", &format!("/admin/requests/{id}/accept"), None, false, &format!("{ign} can log in now."));
+    }
+
+    pub fn deny(&mut self, id: i64, ign: &str) {
+        self.act("POST", &format!("/admin/requests/{id}/deny"), None, false, &format!("{ign}'s registration was denied."));
+    }
+
+    /// Demotes: to "user" (a member again) or "moderator".
+    pub fn set_role(&mut self, id: i64, ign: &str, role: &str) {
+        let done = if role == "user" { format!("{ign} is a member again.") } else { format!("{ign} is a moderator now.") };
+        let body = crate::gson_out::Obj::new().str("role", role).end();
+        self.act("PATCH", &format!("/admin/users/{id}/role"), Some(body), false, &done);
+    }
+
+    pub fn remove(&mut self, id: i64, ign: &str) {
+        self.act("DELETE", &format!("/admin/users/{id}"), None, false, &format!("{ign} was removed."));
+    }
+
+    /// Java `resetPasswordFor`: a reset code for a member, shown once.
+    pub fn reset_code_for(&mut self, id: i64) {
+        self.moderation.feedback = "Making a reset code...".into();
+        self.call("POST", &format!("/admin/users/{id}/password-reset"), None, "reset-code");
+    }
+
+    /// Java `createToken`: a moderator token for someone, valid for `hours`.
+    pub fn create_token(&mut self, note: &str, hours: i32) {
+        self.moderation.tokens_feedback = "Creating...".into();
+        let body = crate::gson_out::Obj::new().str("note", note.trim()).int("validHours", hours).end();
+        self.call("POST", "/admin/moderator-tokens", Some(body), "create-token");
+    }
+
+    pub fn revoke_token(&mut self, id: i64) {
+        if self.moderation.last_issued.as_ref().is_some_and(|t| t.id == id) {
+            self.moderation.last_issued = None;
+        }
+        self.act("DELETE", &format!("/admin/moderator-tokens/{id}"), None, true, "Token revoked.");
+    }
+
+    /// Java `saveScoring`: the item score weights (each 0 to 1, checked by the tab).
+    pub fn save_scoring(&mut self, w: ScoreWeights) {
+        self.moderation.scoring_feedback = "Saving...".into();
+        let body = format!("{{\"feedPower\":{},\"difficulty\":{},\"rarity\":{}}}", num(w.feed_power), num(w.difficulty), num(w.rarity));
+        self.call("PUT", "/admin/scoring", Some(body), "put-scoring");
+    }
+
+    /// Java `saveGuild`: the guild settings (the baseline 1 to 1000, checked by the tab).
+    pub fn save_guild(&mut self, g: GuildSettings) {
+        self.moderation.guild_feedback = "Saving...".into();
+        self.call("PUT", "/admin/guild/settings", Some(format!("{{\"baselineHpm\":{}}}", num(g.baseline_hpm))), "put-guild");
+    }
+
+    /// A call's answer, by its tag.
+    fn called(&mut self, path: &str, tag: &str, result: Result<Option<Json>, Error>) {
+        let j = match result {
+            Err(e) => {
+                if e.status() == 401 && !path.starts_with("/auth/") {
+                    self.signed_out(); // session expired or revoked
+                }
+                let m = &mut self.moderation;
+                match tag.split(':').collect::<Vec<_>>().as_slice() {
+                    ["requests" | "users" | "tokens" | "reset-code"] | ["act", "moderation", ..] => m.feedback = e.message(),
+                    ["create-token"] | ["act", "tokens", ..] => m.tokens_feedback = e.message(),
+                    ["put-scoring"] => m.scoring_feedback = e.message(),
+                    ["put-guild"] => m.guild_feedback = e.message(),
+                    _ => {}
+                }
+                if tag.starts_with("act:") {
+                    self.refresh_moderation();
+                }
+                return;
+            }
+            Ok(j) => j.unwrap_or(Json::Null),
+        };
+        let m = &mut self.moderation;
+        match tag {
+            "requests" => m.pending = users_of(&j, "users"),
+            "users" => m.members = users_of(&j, "users"),
+            "tokens" => {
+                m.tokens = match j.get("tokens") {
+                    Some(Json::Array(a)) => a
+                        .iter()
+                        .map(|t| OpenToken {
+                            id: long(t.get("id")),
+                            note: text(t.get("note")),
+                            created_by: text(t.get("createdBy")),
+                            created_at: long(t.get("createdAt")),
+                            expires_at: t.get("expiresAt").filter(|v| !matches!(v, Json::Null)).map(|v| long(Some(v))),
+                        })
+                        .collect(),
+                    _ => Vec::new(),
+                }
+            }
+            "reset-code" => {
+                let rc = ResetCode { code: text(j.get("code")), ign: text(j.get("ign")), expires_at: long(j.get("expiresAt")) };
+                m.feedback = format!("Reset code made for {}.", rc.ign);
+                m.reset_code = Some(rc);
+            }
+            "create-token" => {
+                m.last_issued = Some(IssuedToken {
+                    id: long(j.get("id")),
+                    token: text(j.get("token")),
+                    note: text(j.get("note")),
+                    expires_at: long(j.get("expiresAt")),
+                });
+                m.clear_note = true;
+                m.tokens_feedback.clear();
+                self.refresh_moderation();
+            }
+            "scoring" | "put-scoring" => {
+                self.weights = weights_of(&j);
+                self.loaded += 1;
+                if tag == "put-scoring" {
+                    self.moderation.scoring_feedback = "Saved. The Guild tab shows the new scores.".into();
+                }
+            }
+            "guild-settings" | "put-guild" => {
+                self.guild_settings = GuildSettings { baseline_hpm: double(j.get("baselineHpm"), 50.0) };
+                self.loaded += 1;
+                if tag == "put-guild" {
+                    self.moderation.guild_feedback = "Saved. Everyone's dungeon details use it.".into();
+                }
+            }
+            t => {
+                if let Some(rest) = t.strip_prefix("act:") {
+                    let (which, done) = rest.split_once(':').unwrap_or((rest, ""));
+                    if which == "tokens" {
+                        m.tokens_feedback = done.into();
+                    } else {
+                        m.feedback = done.into();
+                    }
+                    self.refresh_moderation();
+                }
+            }
+        }
+    }
+
     /// Java `logout`.
     pub fn logout(&mut self) {
         self.account_feedback.clear();
@@ -597,6 +949,12 @@ impl Connection {
                             self.account_feedback = "Password changed. Your other devices need to log in again.".into();
                         }
                     }
+                }
+                None
+            }
+            Done::Call { url, path, tag, result } => {
+                if url == self.url {
+                    self.called(&path, &tag, result);
                 }
                 None
             }

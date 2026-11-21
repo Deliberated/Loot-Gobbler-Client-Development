@@ -7,7 +7,7 @@ use lg_app::properties::Properties;
 use std::path::Path;
 
 /// What a view asks the app to do (the views only read the records and the settings).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Ask {
     /// Save a setting.
     Set(String, String),
@@ -45,7 +45,7 @@ pub enum Ask {
 }
 
 /// What the Server tab asks of the server (Java `ServerPanel`'s buttons).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ServerAsk {
     Connect(String),
     Test(String),
@@ -74,6 +74,23 @@ pub enum ServerAsk {
         password: String,
         again: String,
     },
+    /// Moderation (moderators and admins): the lists again, and the actions on a player (id, IGN).
+    RefreshModeration,
+    Accept(i64, String),
+    Deny(i64, String),
+    /// Demoted to this role ("user" or "moderator").
+    Demote(i64, String, String),
+    ResetCode(i64),
+    Remove(i64, String),
+    /// Moderator tokens (admins): one made (note, hours valid), one copied, one revoked.
+    CreateToken(String, i32),
+    TokenCopied,
+    RevokeToken(i64),
+    /// Item score weights and guild settings (admins).
+    SaveScoring(f64, f64, f64),
+    SaveGuild(f64),
+    /// A line under a section (0 item scores, 1 guild): what was typed cannot be used.
+    Feedback(u8, String),
 }
 
 /// Asks the window to open a tab or page after this frame (see [`Window::open`]; also "Battles:run:<start>" for a

@@ -207,6 +207,7 @@ impl Gui {
         if soon {
             sync.upload_soon(now);
         }
+        self.app.server.tick();
         let answers: Vec<_> = self.net.rx.try_iter().collect();
         for d in answers {
             if let Some(d) = self.app.server.done(d) {
@@ -232,6 +233,25 @@ impl Gui {
             self.set(&k, &v);
         }
         self.app.sync = sync;
+        // a reset code is shown once, and copied (Java `resetPasswordFor`)
+        if let Some(rc) = self.app.server.moderation.reset_code.take() {
+            ctx.copy_text(rc.code.clone());
+            let until = {
+                const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+                let (y, m, d, h, mi, _) = self.app.zone.fields(rc.expires_at);
+                format!("{d} {} {y}, {h:02}:{mi:02}", MONTHS[(m - 1) as usize])
+            };
+            self.window.ask(lg_ui::window::Ask::Confirm {
+                title: "Password reset code".into(),
+                text: format!(
+                    "Reset code for {} (copied):\n{}\n\nPass it on to {} privately. In Loot Gobbler they choose \"Forgot password?\"\nand enter their IGN, this code and a new password. Works once, until {until}.\nIt is shown only now. A new code replaces this one.",
+                    rc.ign, rc.code, rc.ign
+                ),
+                yes: "OK".into(),
+                no: String::new(),
+                then: Box::new(lg_ui::window::Ask::Nothing),
+            });
+        }
         for job in std::mem::take(&mut self.app.server.jobs) {
             self.net.run(job, Some(ctx));
         }
@@ -262,6 +282,19 @@ impl Gui {
             S::Forgot { ign, code, password, again } => server.forgot_password(&ign, &code, &password, &again),
             S::Change { with_code, proof, password, again } => server.change_password(with_code, &proof, &password, &again),
             S::OpenForgot(_) | S::OpenChange => {} // the window opens these
+            S::RefreshModeration => server.refresh_moderation(),
+            S::Accept(id, ign) => server.accept(id, &ign),
+            S::Deny(id, ign) => server.deny(id, &ign),
+            S::Demote(id, ign, role) => server.set_role(id, &ign, &role),
+            S::ResetCode(id) => server.reset_code_for(id),
+            S::Remove(id, ign) => server.remove(id, &ign),
+            S::CreateToken(note, hours) => server.create_token(&note, hours),
+            S::TokenCopied => server.moderation.tokens_feedback = "Token copied.".into(),
+            S::RevokeToken(id) => server.revoke_token(id),
+            S::SaveScoring(f, d, r) => server.save_scoring(lg_app::server::ScoreWeights { feed_power: f, difficulty: d, rarity: r }),
+            S::SaveGuild(b) => server.save_guild(lg_app::server::GuildSettings { baseline_hpm: b }),
+            S::Feedback(0, t) => server.moderation.scoring_feedback = t,
+            S::Feedback(_, t) => server.moderation.guild_feedback = t,
             S::Adopt => {
                 let ign = server.user.as_ref().map(|u| u.ign.clone());
                 if let Some(ign) = ign {
@@ -385,6 +418,7 @@ impl eframe::App for Gui {
         self.app.server.clear_password = false;
         self.app.server.clear_register_token = false;
         self.app.server.clear_redeem = false;
+        self.app.server.moderation.clear_note = false;
         let mut asks = Vec::new();
         self.overlays.show(ui.ctx(), &mut self.window.icons, &self.app, &self.window.props, now_ms(), &mut asks);
         for a in asks {

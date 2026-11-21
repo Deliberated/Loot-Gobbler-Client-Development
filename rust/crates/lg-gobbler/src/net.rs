@@ -82,6 +82,10 @@ fn perform(job: Job) -> Option<Done> {
             let result = Server::new(&url, &token).change_password(&current, &password).map(|()| None);
             Done::Password { url, forgot: false, result }
         }
+        Job::Call { url, token, method, path, body, tag } => {
+            let result = Server::new(&url, &token).call(&method, &path, body.as_deref());
+            Done::Call { url, path, tag, result }
+        }
         Job::Data { url, token } => {
             let result = Server::new(&url, &token).data();
             Done::Data { url, result }

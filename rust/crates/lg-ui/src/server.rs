@@ -79,6 +79,96 @@ struct Form {
     password: String,
     register_token: String,
     redeem: String,
+    token_note: String,
+    validity: usize,
+    /// The weights and the baseline as typed, and the load they were last shown from.
+    weights: [String; 3],
+    baseline: String,
+    loaded: Option<u64>,
+}
+
+const VALIDITY: [&str; 4] = ["1 hour", "24 hours", "3 days", "7 days"];
+const VALIDITY_HOURS: [i32; 4] = [1, 24, 72, 168];
+
+/// Java `NumberEditor` patterns: "0.00" for the weights, "0.#" for the baseline.
+fn two_places(v: f64) -> String {
+    format!("{v:.2}")
+}
+
+fn one_place(v: f64) -> String {
+    let s = format!("{v:.1}");
+    s.strip_suffix(".0").map_or(s.clone(), str::to_string)
+}
+
+/// Java `heading`: small upper-case text.
+fn heading(rw: &mut Rows, t: &str) {
+    let f = text(16.0); // FlatLaf's "small": 2 smaller
+    jtext::draw(&rw.painter, pos2(rw.x + 6.0, rw.y + 2.0), Align2::LEFT_TOP, &t.to_uppercase(), &f, rw.p.ink);
+    rw.y += jtext::height(&rw.painter, &f) + 6.0;
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Style {
+    Plain,
+    Primary,
+    Danger,
+}
+
+/// Java `listRow`: a bordered row with a title, a muted line under it and buttons at the right; which was clicked.
+fn list_row(ui: &Ui, rw: &mut Rows, w: f32, title: &str, sub: &str, buttons: &[(&str, Style)], id: &str) -> Option<usize> {
+    let p = rw.p;
+    let h = 6.0 + 2.0 * rw.fh + 6.0;
+    let r = Rect::from_min_size(pos2(rw.x, rw.y), vec2(w, h));
+    rw.painter.rect(r, 0.0, p.header, Stroke::new(1.0, p.line), StrokeKind::Inside);
+    jtext::draw(&rw.painter, pos2(r.left() + 10.0, r.top() + 6.0), Align2::LEFT_TOP, title, &rw.f, p.ink);
+    jtext::draw(&rw.painter, pos2(r.left() + 10.0, r.top() + 6.0 + rw.fh), Align2::LEFT_TOP, sub, &rw.f, fixed::MUTED);
+    let mut clicked = None;
+    let mut bx = r.right() - 8.0;
+    for (i, (label, style)) in buttons.iter().enumerate().rev() {
+        let bw = jtext::width(&rw.painter, &label.to_uppercase(), &small()) + 32.0;
+        let br = Rect::from_min_size(pos2(bx - bw, r.center().y - 18.0), vec2(bw, 36.0));
+        bx = br.left() - 6.0;
+        let hit = match style {
+            Style::Primary => button_at(ui, p, br.left(), br.center().y, label, true, true).1,
+            Style::Danger => crate::inventory::button(ui, p, br, label, true, &format!("{id}-{i}")),
+            Style::Plain => crate::inventory::button(ui, p, br, label, false, &format!("{id}-{i}")),
+        };
+        if hit {
+            clicked = Some(i);
+        }
+    }
+    rw.y += h + 6.0;
+    clicked
+}
+
+/// Java `JSpinner`: the number as typed, arrows that step it within its range.
+fn spinner(ui: &mut Ui, p: &Palette, r: Rect, value: &mut String, id: &str, step: f64, min: f64, max: f64, fmt: fn(f64) -> String) {
+    let field_r = Rect::from_min_max(r.min, pos2(r.right() - 18.0, r.bottom()));
+    field(ui, p, field_r, value, "", id, false, true);
+    let painter = ui.painter();
+    let arrows = Rect::from_min_max(pos2(r.right() - 18.0, r.top()), r.max);
+    painter.rect(arrows, 0.0, p.header, Stroke::new(1.0, p.line), StrokeKind::Inside);
+    for (k, up) in [(0, true), (1, false)] {
+        let half =
+            Rect::from_min_size(pos2(arrows.left(), arrows.top() + k as f32 * arrows.height() / 2.0), vec2(18.0, arrows.height() / 2.0));
+        let c = half.center();
+        let pts = if up {
+            vec![pos2(c.x - 4.0, c.y + 2.0), pos2(c.x + 4.0, c.y + 2.0), pos2(c.x, c.y - 3.0)]
+        } else {
+            vec![pos2(c.x - 4.0, c.y - 2.0), pos2(c.x + 4.0, c.y - 2.0), pos2(c.x, c.y + 3.0)]
+        };
+        painter.add(egui::Shape::convex_polygon(pts, p.ink_soft, Stroke::NONE));
+        if ui.interact(half, ui.scope_id().with((id, k)), Sense::click()).clicked() {
+            let v = value.trim().parse::<f64>().unwrap_or(min);
+            let n = if up { v + step } else { v - step };
+            *value = fmt(n.clamp(min, max));
+        }
+    }
+}
+
+/// A typed number within its range (Java `commitEdit`), else None.
+fn number(t: &str, min: f64, max: f64) -> Option<f64> {
+    t.trim().parse::<f64>().ok().filter(|v| (min..=max).contains(v))
 }
 
 /// Java's "d MMM yyyy, HH:mm" and "HH:mm:ss", in local time.
@@ -173,6 +263,7 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
     let mut form: Form = ui.data(|d| d.get_temp(id)).unwrap_or_default();
     if !form.started {
         form.started = true;
+        form.validity = 1; // 24 hours
         form.address = server.url.clone();
     }
     if form.address.trim().is_empty() && !server.url.is_empty() {
@@ -270,8 +361,7 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                     None => {}
                     Some(None) => rw.status(fixed::MUTED, "Testing..."),
                     Some(Some(result)) => {
-                        jtext::draw(&rw.painter, pos2(rw.x + 6.0, rw.y + 2.0), Align2::LEFT_TOP, "CONNECTION TEST", &small(), p.ink);
-                        rw.y += jtext::height(&rw.painter, &small()) + 6.0;
+                        heading(&mut rw, "Connection test");
                         match result {
                             Err(e) => {
                                 rw.status(fixed::RED, &format!("Server not reached: {e}"));
@@ -474,6 +564,214 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
         if sync_now.get() {
             asks.push(Ask::Server(ServerAsk::SyncNow));
         }
+
+        // --- for moderators and admins ---
+        let more = std::cell::RefCell::new(Vec::<Ask>::new());
+        let ask = |a: ServerAsk| more.borrow_mut().push(Ask::Server(a));
+        let confirm = |title: &str, text: String, then: ServerAsk| {
+            more.borrow_mut().push(Ask::Confirm {
+                title: title.into(),
+                text,
+                yes: "Yes".into(),
+                no: "No".into(),
+                then: Box::new(Ask::Server(then)),
+            })
+        };
+        let m = &server.moderation;
+        if let Some(me) = user.filter(|u| u.at_least_moderator()) {
+            y += widgets::section_box(
+                ui,
+                &p,
+                pos2(x, y),
+                w,
+                "Moderation",
+                fixed::PURPLE,
+                |ui, head| {
+                    let bw = jtext::width(ui.painter(), "REFRESH", &small()) + 32.0;
+                    let r = Rect::from_min_size(pos2(head.right() - 6.0 - bw, head.center().y - 15.0), vec2(bw, 30.0));
+                    if crate::inventory::button(ui, &p, r, "Refresh", false, "moderation-refresh") {
+                        ask(ServerAsk::RefreshModeration);
+                    }
+                },
+                |ui, r| {
+                    let mut rw = rows(ui, r);
+                    let rw_w = r.width() - 2.0;
+                    heading(&mut rw, &format!("Waiting for approval ({})", m.pending.len()));
+                    if m.pending.is_empty() {
+                        rw.muted("No one is waiting.");
+                    }
+                    for u in &m.pending {
+                        let sub = format!("registered {}", date(zone, u.created_at));
+                        match list_row(ui, &mut rw, rw_w, &u.ign, &sub, &[("Accept", Style::Primary), ("Deny", Style::Danger)], &format!("pending-{}", u.id)) {
+                            Some(0) => ask(ServerAsk::Accept(u.id, u.ign.clone())),
+                            Some(_) => confirm("Deny registration", format!("Deny {}'s registration?", u.ign), ServerAsk::Deny(u.id, u.ign.clone())),
+                            None => {}
+                        }
+                    }
+                    rw.y += 10.0;
+                    heading(&mut rw, &format!("Members ({})", m.members.len()));
+                    for u in &m.members {
+                        let outranks = !u.root && u.id != me.id && me.rank() > u.rank();
+                        let mut buttons: Vec<(&str, Style, u8)> = Vec::new();
+                        if outranks && me.at_least_admin() && u.rank() == 1 {
+                            buttons.push(("Demote", Style::Plain, 0));
+                        }
+                        if outranks && me.root && u.rank() == 2 {
+                            buttons.push(("Demote", Style::Plain, 1));
+                        }
+                        if outranks {
+                            buttons.push(("Reset password", Style::Plain, 2));
+                            buttons.push(("Remove", Style::Danger, 3));
+                        }
+                        let sub = match u.last_login_at {
+                            Some(l) => format!("{} - last login {}", u.role_name(), date(zone, l)),
+                            None => format!("{} - never logged in", u.role_name()),
+                        };
+                        let title = if u.id == me.id { format!("{} (you)", u.ign) } else { u.ign.clone() };
+                        let shown: Vec<(&str, Style)> = buttons.iter().map(|b| (b.0, b.1)).collect();
+                        if let Some(i) = list_row(ui, &mut rw, rw_w, &title, &sub, &shown, &format!("member-{}", u.id)) {
+                            match buttons[i].2 {
+                                0 => ask(ServerAsk::Demote(u.id, u.ign.clone(), "user".into())),
+                                1 => ask(ServerAsk::Demote(u.id, u.ign.clone(), "moderator".into())),
+                                2 => confirm(
+                                    "Reset password",
+                                    format!("Make a password reset code for {}?\nTheir current password keeps working until they use it.", u.ign),
+                                    ServerAsk::ResetCode(u.id),
+                                ),
+                                _ => confirm(
+                                    "Remove member",
+                                    format!("Remove {} and all their data from the server?", u.ign),
+                                    ServerAsk::Remove(u.id, u.ign.clone()),
+                                ),
+                            }
+                        }
+                    }
+                    rw.feedback(&m.feedback);
+                    rw.height()
+                },
+            ) + 8.0;
+
+            if me.at_least_admin() {
+                // --- moderator tokens ---
+                if m.clear_note {
+                    form.token_note.clear();
+                }
+                y += widgets::section_box(ui, &p, pos2(x, y), w, "Moderator Tokens", fixed::PURPLE, |_, _| {}, |ui, r| {
+                    let mut rw = rows(ui, r);
+                    let rw_w = r.width() - 2.0;
+                    rw.muted("Give a token to someone you trust to make them a moderator. Each token works once.");
+                    rw.muted("They enter it when registering (no approval needed then) or under Account.");
+                    let cy = rw.y + 22.0;
+                    let lr = jtext::draw(&rw.painter, pos2(rw.x + 6.0, cy), Align2::LEFT_CENTER, "For", &f, p.ink);
+                    let nr = Rect::from_min_size(pos2(lr.right() + 6.0, cy - 17.0), vec2(222.0, 34.0));
+                    field(ui, &p, nr, &mut form.token_note, "Who it is for (optional)", "token-note", false, true);
+                    let vr = jtext::draw(&rw.painter, pos2(nr.right() + 6.0, cy), Align2::LEFT_CENTER, "Valid for", &f, p.ink);
+                    let cr = Rect::from_min_size(pos2(vr.right() + 6.0, cy - 17.0), vec2(120.0, 34.0));
+                    let mut combo = ui.new_child(egui::UiBuilder::new().max_rect(cr));
+                    egui::ComboBox::from_id_salt("token-validity")
+                        .width(cr.width() - 8.0)
+                        .selected_text(egui::RichText::new(VALIDITY[form.validity]).font(f.clone()).color(p.ink))
+                        .show_ui(&mut combo, |ui| {
+                            for (i, v) in VALIDITY.iter().enumerate() {
+                                ui.selectable_value(&mut form.validity, i, egui::RichText::new(*v).font(f.clone()));
+                            }
+                        });
+                    if button_at(ui, &p, cr.right() + 6.0, cy, "Create token", true, true).1 {
+                        ask(ServerAsk::CreateToken(form.token_note.clone(), VALIDITY_HOURS[form.validity]));
+                    }
+                    rw.y += 44.0;
+                    if let Some(t) = &m.last_issued {
+                        let cy = rw.y + 22.0;
+                        let tr = Rect::from_min_size(pos2(rw.x + 6.0, cy - 17.0), vec2(410.0, 34.0));
+                        text_field(&rw.painter, &p, tr, &t.token, "");
+                        if button_at(ui, &p, tr.right() + 6.0, cy, "Copy", true, true).1 {
+                            ui.ctx().copy_text(t.token.clone());
+                            ask(ServerAsk::TokenCopied);
+                        }
+                        rw.y += 44.0;
+                        rw.muted(&format!("Copy it now - it is shown only once. Valid until {}.", date(zone, t.expires_at)));
+                    }
+                    rw.y += 10.0;
+                    heading(&mut rw, &format!("Unused tokens ({})", m.tokens.len()));
+                    if m.tokens.is_empty() {
+                        rw.muted("None.");
+                    }
+                    for t in &m.tokens {
+                        let title = if t.note.trim().is_empty() { "Moderator token".to_string() } else { t.note.clone() };
+                        let by = if t.created_by.trim().is_empty() { "?" } else { &t.created_by };
+                        let until = t.expires_at.map_or(String::new(), |e| format!(" - valid until {}", date(zone, e)));
+                        let sub = format!("created by {by}{until}");
+                        if list_row(ui, &mut rw, rw_w, &title, &sub, &[("Revoke", Style::Danger)], &format!("token-{}", t.id)).is_some() {
+                            confirm("Revoke token", "Revoke this moderator token? It can no longer be used.".into(), ServerAsk::RevokeToken(t.id));
+                        }
+                    }
+                    rw.feedback(&m.tokens_feedback);
+                    rw.height()
+                }) + 8.0;
+
+                // --- item scores and guild settings: shown again when loaded ---
+                if form.loaded != Some(server.loaded) {
+                    form.loaded = Some(server.loaded);
+                    let wt = server.weights;
+                    form.weights = [two_places(wt.feed_power), two_places(wt.difficulty), two_places(wt.rarity)];
+                    form.baseline = one_place(server.guild_settings.baseline_hpm);
+                }
+                y += widgets::section_box(ui, &p, pos2(x, y), w, "Item Scores", fixed::GOLD, |_, _| {}, |ui, r| {
+                    let mut rw = rows(ui, r);
+                    rw.muted("Every found item gets points: feed power weight × feed power / 100 + difficulty weight × dungeon difficulty + rarity weight × rarity (0-4), rounded to one decimal.");
+                    rw.muted("The loot caravan, recent drops and leaderboard in the Guild tab show them, for everyone on this server.");
+                    rw.y += 6.0;
+                    for (i, label) in ["Feed power", "Difficulty", "Rarity"].iter().enumerate() {
+                        let cy = rw.y + 20.0;
+                        jtext::draw(&rw.painter, pos2(rw.x + 6.0, cy), Align2::LEFT_CENTER, label, &f, p.ink);
+                        let sr = Rect::from_min_size(pos2(rw.x + 6.0 + 120.0 + 6.0, cy - 17.0), vec2(90.0, 34.0));
+                        spinner(ui, &p, sr, &mut form.weights[i], &format!("weight-{i}"), 0.05, 0.0, 1.0, two_places);
+                        rw.y += 40.0;
+                    }
+                    let cy = rw.y + 22.0;
+                    let (b, save) = button_at(ui, &p, rw.x + 6.0, cy, "Save", true, true);
+                    if save {
+                        let v: Vec<Option<f64>> = form.weights.iter().map(|t| number(t, 0.0, 1.0)).collect();
+                        match (v[0], v[1], v[2]) {
+                            (Some(a), Some(b), Some(c)) => ask(ServerAsk::SaveScoring(a, b, c)),
+                            _ => ask(ServerAsk::Feedback(0, "Each weight must be a number from 0 to 1.".into())),
+                        }
+                    }
+                    if button_at(ui, &p, b.right() + 6.0, cy, "Reset", false, true).1 {
+                        form.loaded = None;
+                    }
+                    rw.y += 44.0;
+                    rw.feedback(&m.scoring_feedback);
+                    rw.height()
+                }) + 8.0;
+
+                y += widgets::section_box(ui, &p, pos2(x, y), w, "Guild", fixed::GREEN, |_, _| {}, |ui, r| {
+                    let mut rw = rows(ui, r);
+                    rw.muted("\"Zero Hit?\" in a dungeon's Guild part: hits per minute (HPM) = hits / minutes in the dungeon, hit% = HPM / (HPM + baseline HPM) × 100. A player hit as often as the baseline gets 50%.");
+                    rw.y += 6.0;
+                    let cy = rw.y + 20.0;
+                    jtext::draw(&rw.painter, pos2(rw.x + 6.0, cy), Align2::LEFT_CENTER, "Baseline HPM", &f, p.ink);
+                    let sr = Rect::from_min_size(pos2(rw.x + 6.0 + 120.0 + 6.0, cy - 17.0), vec2(90.0, 34.0));
+                    spinner(ui, &p, sr, &mut form.baseline, "baseline", 1.0, 1.0, 1000.0, one_place);
+                    rw.y += 40.0;
+                    let cy = rw.y + 22.0;
+                    let (b, save) = button_at(ui, &p, rw.x + 6.0, cy, "Save", true, true);
+                    if save {
+                        match number(&form.baseline, 1.0, 1000.0) {
+                            Some(v) => ask(ServerAsk::SaveGuild(v)),
+                            None => ask(ServerAsk::Feedback(1, "The baseline must be a number from 1 to 1000.".into())),
+                        }
+                    }
+                    if button_at(ui, &p, b.right() + 6.0, cy, "Reset", false, true).1 {
+                        form.loaded = None;
+                    }
+                    rw.y += 44.0;
+                    rw.feedback(&m.guild_feedback);
+                    rw.height()
+                }) + 8.0;
+            }
+        }
+        asks.extend(more.into_inner());
         ui.allocate_exact_size(vec2(w, y - top.y), Sense::hover());
     });
     ui.data_mut(|d| d.insert_temp(id, form));

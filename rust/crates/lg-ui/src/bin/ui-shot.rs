@@ -114,7 +114,8 @@ fn main() {
             "Server:change" => Some(lg_ui::window::ServerAsk::OpenChange),
             _ => None,
         };
-        let shown = if tab == "Server:online" || dialog.is_some() {
+        let admin = tab == "Server:admin";
+        let shown = if tab == "Server:online" || dialog.is_some() || admin {
             app.server.url = "https://loot.example.com".into();
             app.server.state = lg_app::server::State::Online;
             app.server.status = Some(lg_app::server::Status {
@@ -123,6 +124,42 @@ fn main() {
                 admin_claimed: true,
                 registration: "approval".into(),
             });
+            if admin {
+                // logged in as the root admin, with made-up lists
+                use lg_app::server::{IssuedToken, OpenToken, User};
+                let user = |id: i64, ign: &str, role: &str, root: bool, status: &str| User {
+                    id,
+                    ign: ign.into(),
+                    status: status.into(),
+                    role: role.into(),
+                    root,
+                    created_at: 1_795_000_000_000 + id * 3_600_000,
+                    last_login_at: (id != 4).then_some(1_795_200_000_000 + id * 60_000),
+                };
+                app.server.user = Some(user(1, "Gunshit", "admin", true, "active"));
+                let m = &mut app.server.moderation;
+                m.pending = vec![user(7, "Newbie", "user", false, "pending")];
+                m.members = vec![
+                    user(1, "Gunshit", "admin", true, "active"),
+                    user(2, "Helper", "admin", false, "active"),
+                    user(3, "Watcher", "moderator", false, "active"),
+                    user(4, "Quiet", "user", false, "active"),
+                ];
+                m.tokens = vec![OpenToken {
+                    id: 1,
+                    note: "For Ana".into(),
+                    created_by: "Gunshit".into(),
+                    created_at: 0,
+                    expires_at: Some(1_795_300_000_000),
+                }];
+                m.last_issued = Some(IssuedToken {
+                    id: 1,
+                    token: "LGM-ABCD-EFGH-IJKL-MNOP".into(),
+                    note: "For Ana".into(),
+                    expires_at: 1_795_300_000_000,
+                });
+                app.sync.phase = lg_app::sync::Phase::UpToDate;
+            }
             "Server".to_string()
         } else {
             tab.clone()
