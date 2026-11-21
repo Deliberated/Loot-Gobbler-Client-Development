@@ -34,6 +34,9 @@ pub struct BattlesView {
     pub selected: i64,
     pub collapsed: Vec<String>,
     pub dps: crate::dps::DpsView,
+    /// The Newcomer's Guide: an example dungeon (Pirate Cave) while none is logged, shown only, never stored.
+    pub example: bool,
+    pub example_visit: Option<Visit>,
 }
 
 /// What a day adds up to (Java `DaySum`).
@@ -172,7 +175,20 @@ impl BattlesView {
         let data = app.world.data();
         let zone = &app.zone;
         let now = app.dungeon_visits.current.as_ref();
-        let visits: Vec<&Visit> = app.dungeon_visits.visits.iter().filter(|v| !v.hidden).collect();
+        let mut visits: Vec<&Visit> = app.dungeon_visits.visits.iter().filter(|v| !v.hidden).collect();
+        if !self.example {
+            self.example_visit = None;
+        } else if self.example_visit.is_none() {
+            let mut v = Visit::new("Pirate Cave", c.now - 15 * 60_000);
+            v.duration_ms = 3 * 60_000 + 12_000;
+            self.example_visit = Some(v);
+        }
+        if now.is_none()
+            && visits.is_empty()
+            && let Some(v) = &self.example_visit
+        {
+            visits = vec![v];
+        }
         let mut all: Vec<&Visit> = visits.clone();
         if let Some(n) = now {
             all.push(n);
@@ -312,12 +328,13 @@ impl BattlesView {
             .filter(|n| Some(n.start) == shown)
             .map(|n| (n, true))
             .or_else(|| visits.iter().copied().find(|v| Some(v.start) == shown).map(|v| (v, false)));
-        if let Some((v, current)) = shown_visit
-            && let Some(run) = detail(ui, c, v, current, side)
-        {
-            // Java `showRun`: the run under DPS, its latest boss open (the one in progress followed live)
-            self.page = 1;
-            self.dps.show_run(&c.app.dps_history, run);
+        if let Some((v, current)) = shown_visit {
+            crate::guide::mark(ui, "battles.detail", side);
+            if let Some(run) = detail(ui, c, v, current, side) {
+                // Java `showRun`: the run under DPS, its latest boss open (the one in progress followed live)
+                self.page = 1;
+                self.dps.show_run(&c.app.dps_history, run);
+            }
         }
         c.asks.extend(pending.take());
         if let Some(s) = picked {
@@ -939,6 +956,7 @@ fn detail(ui: &mut Ui, c: &mut Ctx, v: &Visit, current: bool, side: Rect) -> Opt
                 ty - r.top()
             },
         );
+        let gy = y;
         y += widgets::section_box(
             ui,
             &p,
@@ -949,6 +967,7 @@ fn detail(ui: &mut Ui, c: &mut Ctx, v: &Visit, current: bool, side: Rect) -> Opt
             |_, _| {},
             |ui, r| guild(ui, &p, icons, app, v, run, &fights, current, now, r),
         );
+        crate::guide::mark(ui, "battles.guild", Rect::from_min_size(pos2(top.x, gy), vec2(w, y - gy)));
         ui.allocate_exact_size(vec2(w, y - top.y), Sense::hover());
     });
     c.asks.extend(c_asks.take());

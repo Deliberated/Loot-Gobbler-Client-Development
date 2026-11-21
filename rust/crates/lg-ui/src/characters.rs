@@ -276,8 +276,17 @@ impl CharactersView {
                         widgets::label(&mut list, &format!("  {}", title.to_uppercase()), &small(), p.ink_muted);
                         list.add_space(4.0);
                         for x in chars.iter() {
+                            let y0 = list.cursor().top();
                             if self.card(&mut list, &p, c.icons, app, x, gain(x), now) {
                                 self.selected = x.char_id;
+                            }
+                            if x.char_id == self.selected {
+                                let m = list.max_rect();
+                                crate::guide::mark(
+                                    &list,
+                                    "characters.card",
+                                    Rect::from_min_max(pos2(m.left(), y0), pos2(m.right(), list.cursor().top())),
+                                );
                             }
                             list.add_space(6.0);
                         }
@@ -297,6 +306,7 @@ impl CharactersView {
                 });
             },
         );
+        crate::guide::mark(ui, "characters.list", left);
         if range != self.range {
             self.range = range;
         }
@@ -594,6 +604,10 @@ impl CharactersView {
             let w = rect.width() - 12.0;
             let icons = &mut *c.icons;
             let mut y = top.y;
+            let mark = |ui: &Ui, name: &'static str, y0: f32, y1: f32| {
+                crate::guide::mark(ui, name, Rect::from_min_size(pos2(top.x, y0), vec2(w, y1 - y0)));
+            };
+            let y0 = y;
             y += widgets::section_box(
                 ui,
                 &p,
@@ -630,6 +644,7 @@ impl CharactersView {
                 },
                 |ui, r| crate::detail::loadout(ui, &p, app, icons, ch, r),
             );
+            mark(ui, "characters.loadout", y0, y);
             // the suggestion, worked out again only when the character or the settings change
             let key = format!(
                 "{}|{:?}|{}|{}|{}|{}|{}",
@@ -653,6 +668,7 @@ impl CharactersView {
                 let settings = c.loadout.clone();
                 let none_chosen = settings.chosen.is_empty();
                 let mut reset = false;
+                let y0 = y;
                 y += widgets::section_box(
                     ui,
                     &p,
@@ -688,6 +704,7 @@ impl CharactersView {
                         h
                     },
                 );
+                mark(ui, "characters.suggested", y0, y);
                 if reset {
                     c.loadout.chosen.clear();
                     c.loadout.scope = 0;
@@ -707,6 +724,7 @@ impl CharactersView {
                     _ => {}
                 }
             }
+            let y0 = y;
             y += widgets::section_box(
                 ui,
                 &p,
@@ -717,7 +735,9 @@ impl CharactersView {
                 |_, _| {},
                 |ui, r| crate::detail::inventory(ui, &p, app, icons, &rarity, ch, r),
             );
+            mark(ui, "characters.inventory", y0, y);
             let marks = visit_marks(app, icons, ui.ctx());
+            let y0 = y;
             y += widgets::section_box(
                 ui,
                 &p,
@@ -728,6 +748,7 @@ impl CharactersView {
                 |_, _| {},
                 |ui, r| crate::detail::fame(ui, &p, app, icons, ch, since, r, &marks),
             );
+            mark(ui, "characters.fame", y0, y);
             ui.allocate_exact_size(vec2(w, y - top.y), Sense::hover());
         });
     }

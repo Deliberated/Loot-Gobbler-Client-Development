@@ -422,3 +422,14 @@ pub fn tip(ui: &Ui, r: Rect, id: impl std::hash::Hash + std::fmt::Debug, t: &str
         }
     });
 }
+
+/// Java `ItemLinks.link`: an item's icon that opens the item in the Inventory tab when clicked, with a hand cursor;
+/// only for the items the Inventory tracks (UTs, STs and top tiers). Marked for the Newcomer's Guide.
+pub fn item_link(ui: &Ui, data: &lg_gamedata::GameData, r: Rect, id: i32) {
+    let Some(item) = (id > 0).then(|| data.items.item(id)).flatten().filter(|i| i.is_collectible()) else { return };
+    crate::guide::mark_item(ui, r, id);
+    let resp = ui.interact(r, ui.scope_id().with(("item-link", id, r.min.x as i32, r.min.y as i32)), Sense::click());
+    if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+        crate::window::open_later(ui.ctx(), format!("Inventory:item:{}", item.name));
+    }
+}

@@ -44,7 +44,10 @@ impl GuildView {
         let body = Rect::from_min_max(pos2(all.left(), all.top() + 36.0 + 8.0), all.max);
         let f = text(18.0);
         match self.page {
-            0 => self.caravan.show(ui, c, body),
+            0 => {
+                crate::guide::mark(ui, "guild.caravan", body);
+                self.caravan.show(ui, c, body)
+            }
             1 => self.quest_map.show(ui, c, body),
             2 => self.leaderboard(ui, c, body),
             3 => drops(ui, c, body, rarity, &mut self.page),

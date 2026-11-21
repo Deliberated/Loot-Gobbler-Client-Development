@@ -286,6 +286,7 @@ impl InventoryView {
         let grid_cells: std::cell::RefCell<(Vec<Cell>, usize)> = Default::default();
         let mut search = self.search.clone();
         let icons = &mut *c.icons;
+        crate::guide::mark(ui, "inventory.grid", main);
         widgets::section(
             ui,
             &p,

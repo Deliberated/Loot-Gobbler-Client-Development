@@ -292,7 +292,8 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
         let rows = |ui: &Ui, r: Rect| Rows { painter: ui.painter().clone(), x: r.left() + 1.0, y: r.top(), top: r.top(), fh, f: f.clone(), p: &p };
 
         // --- connection ---
-        y += widgets::section_box(
+        let y0 = y;
+        let h = widgets::section_box(
             ui,
             &p,
             pos2(x, y),
@@ -309,6 +310,7 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                     asks.push(Ask::Server(ServerAsk::Connect(form.address.clone())));
                 }
                 let (b, connect) = button_at(ui, &p, fr.right() + 6.0, cy, "Connect", true, true);
+                crate::guide::mark(ui, "server.connect", b);
                 if connect {
                     asks.push(Ask::Server(ServerAsk::Connect(form.address.clone())));
                 }
@@ -407,10 +409,13 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                 rw.feedback(&server.connection_feedback);
                 rw.height()
             },
-        ) + 8.0;
+        );
+        crate::guide::mark(ui, "server.connection", Rect::from_min_size(pos2(x, y0), vec2(w, h)));
+        y += h + 8.0;
 
         // --- account ---
-        y += widgets::section_box(
+        let y0 = y;
+        let account_h = widgets::section_box(
             ui,
             &p,
             pos2(x, y),
@@ -479,6 +484,7 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                         asks.push(Ask::Server(ServerAsk::Login(form.ign.clone(), form.password.clone())));
                     }
                     let (b, register) = button_at(ui, &p, b.right() + 6.0, cy, "Register", false, known.is_some());
+                    crate::guide::mark(ui, "server.register", b);
                     if register {
                         asks.push(Ask::Server(ServerAsk::Register(form.password.clone(), form.register_token.clone())));
                     }
@@ -501,7 +507,9 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                 rw.feedback(&server.account_feedback);
                 rw.height()
             },
-        ) + 8.0;
+        );
+        crate::guide::mark(ui, "server.account", Rect::from_min_size(pos2(x, y0), vec2(w, account_h)));
+        y += account_h + 8.0;
 
         // --- sync, once logged in ---
         let sync_now = std::cell::Cell::new(false);

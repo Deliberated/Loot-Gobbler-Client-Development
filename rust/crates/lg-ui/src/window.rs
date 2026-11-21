@@ -140,6 +140,9 @@ pub struct Window {
     pub battles: battles::BattlesView,
     pub social: social::SocialView,
     pub guild: guild::GuildView,
+    pub guide: crate::guide::Guide,
+    /// The Newcomer's Guide shows a sample dungeon in the menu bar: since when it is "in" it.
+    preview_since: Option<i64>,
     themed: bool,
     /// What the views asked for in the last frame; the app takes them (`take_asks`).
     asks: Vec<Ask>,
@@ -179,6 +182,8 @@ impl Window {
             battles: battles::BattlesView { selected: -1, ..Default::default() },
             social: social::SocialView::default(),
             guild: guild::GuildView::default(),
+            guide: Default::default(),
+            preview_since: None,
             themed: false,
             asks: Vec::new(),
             confirm: None,
@@ -349,6 +354,7 @@ impl Window {
 
     /// The whole window in `ui`.
     pub fn show(&mut self, ui: &mut egui::Ui, app: &lg_app::App, now: i64) {
+        crate::guide::begin_frame(ui.ctx());
         if !self.themed {
             theme::apply(ui.ctx(), &self.palette);
             self.themed = true;
@@ -403,11 +409,34 @@ impl Window {
                 _ => {}
             }
         });
+        // the dungeon you are in, in the menu bar after the menus
+        let bar = self.shell.menu_rect;
+        let (badge, open_run) = crate::title_badge::show(
+            ui,
+            &mut self.icons,
+            app,
+            now,
+            egui::pos2(self.shell.menu_end + 12.0, bar.top()),
+            bar.height() - 1.5,
+            self.preview_since,
+        );
+        if let Some(r) = badge {
+            crate::guide::mark(ui, "title.dungeon", r);
+        }
+        if open_run {
+            // the dungeon you are in, under Battles > Dungeons
+            self.open("Battles");
+            if let Some(v) = &app.dungeon_visits.current {
+                self.battles.selected = v.start;
+            }
+        }
         if self.shell.clicked_server {
             self.open("Server");
         }
-        if let Some(item) = self.shell.clicked_info {
-            self.info.open(item, &mut self.asks);
+        match self.shell.clicked_info {
+            Some("Quick tour") => self.guide.start_quick(),
+            Some(item) => self.info.open(item, &mut self.asks),
+            None => {}
         }
         if self.shell.clicked_updates {
             self.asks.push(Ask::CheckUpdates);
@@ -440,6 +469,26 @@ impl Window {
         }
         self.question(ui.ctx());
         self.grab_card(ui, app);
+        // the Newcomer's Guide over all of it
+        let seen =
+            crate::guide::Seen { app, sniffing: self.shell.sniffing, tab: &self.shell.selected, menu_open: self.shell.info_open, now };
+        let out = self.guide.show(ui.ctx(), &self.palette, &seen, &mut self.asks);
+        for spec in &out.open {
+            match spec.strip_prefix("tab:") {
+                Some(tab) => self.shell.selected = tab.to_string(),
+                None => self.open(spec),
+            }
+        }
+        if let Some(open) = out.menu {
+            self.shell.info_open = open;
+            self.shell.guide_menu_open = open;
+        }
+        self.battles.example = out.example_run;
+        self.preview_since = match (out.preview_dungeon, self.preview_since) {
+            (true, Some(t)) => Some(t),
+            (true, None) => Some(now - 72_000), // in it for 1:12
+            (false, _) => None,
+        };
         if let Some(later) = ui.ctx().data_mut(|d| d.remove_temp::<Vec<Ask>>(egui::Id::unique("lg-asks"))) {
             self.asks.extend(later);
         }

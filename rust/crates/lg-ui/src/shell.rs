@@ -38,6 +38,11 @@ pub struct Shell {
     /// The Info menu: open, and the item picked this frame.
     pub info_open: bool,
     pub clicked_info: Option<&'static str>,
+    /// Info > Newcomer's Guide's own menu (Quick tour, Extensive tour) is open.
+    pub guide_menu_open: bool,
+    /// Where the menus end in the menu bar (the dungeon you are in shows after them), and the bar.
+    pub menu_end: f32,
+    pub menu_rect: Rect,
     /// E.g. "build v0.0.1" (Java: "stable" for a released app).
     pub version: String,
     pub overlays_on: bool,
@@ -63,6 +68,9 @@ impl Default for Shell {
             clicked_notification: None,
             info_open: false,
             clicked_info: None,
+            guide_menu_open: false,
+            menu_end: 0.0,
+            menu_rect: Rect::NOTHING,
             version: concat!("build v", env!("CARGO_PKG_VERSION")).into(),
             overlays_on: false,
             clicked_sniffer: false,
@@ -101,8 +109,15 @@ impl Shell {
         painter.rect_filled(Rect::from_min_max(pos2(menu.left(), menu.bottom() - 1.5), menu.max), 0.0, p.line);
         let info_r = text(ui, pos2(menu.left() + 12.0, menu.center().y - 0.75), Align2::LEFT_CENTER, "Info", theme::body(18.0), p.ink);
         let info_zone = Rect::from_min_max(pos2(menu.left(), menu.top()), pos2(info_r.right() + 12.0, menu.bottom()));
+        self.menu_rect = menu;
+        self.menu_end = info_zone.right();
+        crate::guide::mark(ui, "menu.info", info_zone);
         if ui.interact(info_zone, ui.scope_id().with("info-menu"), Sense::click()).clicked() {
             self.info_open = !self.info_open;
+            self.guide_menu_open = false;
+        }
+        if !self.info_open {
+            self.guide_menu_open = false;
         }
         if self.info_open {
             // Java's Info menu: Logs, Release Notes, What's New Tour | Newcomer's Guide | About, Java version, Net traffic
@@ -111,12 +126,13 @@ impl Shell {
                 ("Release Notes", false),
                 ("What's New Tour", false),
                 ("-", false),
-                ("Newcomer's Guide", false),
+                ("Newcomer's Guide", true),
                 ("-", false),
                 ("About", true),
                 ("Java version", true),
                 ("Net traffic", true),
             ];
+            let mut guide_item = Rect::NOTHING;
             let area = egui::Area::new(egui::Id::unique("info-popup"))
                 .order(egui::Order::Foreground)
                 .fixed_pos(pos2(menu.left(), menu.bottom()))
@@ -137,16 +153,64 @@ impl Shell {
                                     .min_size(vec2(192.0, 26.0)),
                             );
                             let resp = if on { resp } else { resp.on_disabled_hover_text("Not in the Rust app yet") };
-                            if resp.clicked() {
+                            if label == "Newcomer's Guide" {
+                                // a menu of its own: it opens as the pointer comes on it, its arrow at the right
+                                guide_item = resp.rect;
+                                if resp.hovered() || resp.clicked() {
+                                    self.guide_menu_open = true;
+                                }
+                                if self.guide_menu_open {
+                                    ui.painter().rect_filled(resp.rect, 0.0, p.sand.gamma_multiply(0.35));
+                                }
+                                let c = pos2(resp.rect.right() - 10.0, resp.rect.center().y);
+                                ui.painter().add(egui::Shape::convex_polygon(
+                                    vec![pos2(c.x - 4.0, c.y - 5.0), pos2(c.x + 1.0, c.y), pos2(c.x - 4.0, c.y + 5.0)],
+                                    p.ink,
+                                    Stroke::NONE,
+                                ));
+                            } else if resp.hovered() {
+                                self.guide_menu_open = false;
+                            }
+                            if resp.clicked() && label != "Newcomer's Guide" {
                                 self.clicked_info = Some(label);
                             }
                         }
                     });
                 });
-            if self.clicked_info.is_some()
-                || (area.response.clicked_elsewhere() && !ui.input(|i| i.pointer.interact_pos()).is_some_and(|q| info_zone.contains(q)))
-            {
+            crate::guide::mark(ui, "menu.info.popup", area.response.rect);
+            let mut sub = Rect::NOTHING;
+            if self.guide_menu_open {
+                let a = egui::Area::new(egui::Id::unique("guide-popup"))
+                    .order(egui::Order::Foreground)
+                    .fixed_pos(pos2(area.response.rect.right() - 2.0, guide_item.top() - 4.0))
+                    .show(ui.ctx(), |ui| {
+                        egui::Frame::NONE.fill(p.paper).stroke(Stroke::new(1.0, p.line)).inner_margin(4.0).show(ui, |ui| {
+                            ui.set_min_width(170.0);
+                            let f = theme::body(18.0);
+                            let quick = ui.add(
+                                egui::Button::new(egui::RichText::new("Quick tour").font(f.clone()).color(p.ink))
+                                    .frame(false)
+                                    .min_size(vec2(162.0, 26.0)),
+                            );
+                            if quick.clicked() {
+                                self.clicked_info = Some("Quick tour");
+                            }
+                            ui.add_enabled(
+                                false,
+                                egui::Button::new(egui::RichText::new("Extensive tour").font(f).color(fixed::MUTED))
+                                    .frame(false)
+                                    .min_size(vec2(162.0, 26.0)),
+                            )
+                            .on_disabled_hover_text("Coming soon");
+                        });
+                    });
+                sub = a.response.rect;
+                crate::guide::mark(ui, "menu.guide.popup", sub);
+            }
+            let on_menus = ui.input(|i| i.pointer.interact_pos()).is_some_and(|q| info_zone.contains(q) || sub.contains(q));
+            if self.clicked_info.is_some() || (area.response.clicked_elsewhere() && !on_menus) {
                 self.info_open = false;
+                self.guide_menu_open = false;
             }
         }
 
@@ -288,6 +352,9 @@ impl Shell {
             let w = text_width(ui, widest, &label) + 2.0 * s(10.0) + 2.0;
             let r = Rect::from_min_max(pos2(rx - w, bar.top() + 3.0), pos2(rx, bar.bottom() - 3.0));
             let resp = ui.interact(r, ui.scope_id().with(("status", which)), Sense::click());
+            if *which == 0 {
+                crate::guide::mark(ui, "sniffer", r);
+            }
             let fill = if resp.is_pointer_button_down_on() {
                 p.gold_dark
             } else if resp.hovered() {

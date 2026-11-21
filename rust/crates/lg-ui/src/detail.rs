@@ -145,6 +145,7 @@ pub fn loadout(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, c: &Char,
         if s.id > 0 {
             let t = icons.object(&ctx, data, s.id, 44);
             image(&painter, &t, Rect::from_min_size(pos2(x + 2.0, y), vec2(44.0, 44.0)));
+            widgets::item_link(ui, data, Rect::from_min_size(pos2(x, y), vec2(48.0, 48.0)), s.id);
         }
         if let Some(n) = &s.note {
             jtext::draw(&painter, pos2(x + 24.0, y + 48.0), Align2::CENTER_TOP, n, &text(15.0), AMULET_BLUE);
@@ -181,6 +182,7 @@ pub fn loadout(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, c: &Char,
             let cy = r.top() + k as f32 * (row + 4.0) + row / 2.0;
             let t = icons.object(&ctx, data, *id, 32);
             image(&painter, &t, Rect::from_min_size(pos2(rx, cy - 16.0), vec2(32.0, 32.0)));
+            widgets::item_link(ui, data, Rect::from_min_size(pos2(rx, cy - 16.0), vec2(32.0, 32.0)), *id);
             let name = data.items.item(*id).map_or(String::new(), |i| i.name.clone());
             jtext::draw(&painter, pos2(rx + 40.0, cy), Align2::LEFT_CENTER, &name, &name_f, p.ink);
         }
@@ -378,6 +380,7 @@ pub fn inventory(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, rarity:
             let x = r.left() + k as f32 * (cw + 12.0);
             let t = icons.object(&ctx, data, *id, 40);
             image(&painter, &t, Rect::from_min_size(pos2(x, y + lh - 20.0), vec2(40.0, 40.0)));
+            widgets::item_link(ui, data, Rect::from_min_size(pos2(x, y + lh - 20.0), vec2(40.0, 40.0)), *id);
             let tx = x + 50.0;
             jtext::draw(
                 &painter,
@@ -469,6 +472,7 @@ pub fn inventory(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, rarity:
                 let b = cell(row, pack * 4 + k);
                 let t = icons.object(&ctx, data, id, (S - 10.0) as u32);
                 image(&painter, &t, Rect::from_center_size(b.center(), vec2(S - 10.0, S - 10.0)));
+                widgets::item_link(ui, data, b, id);
                 let ne = c.slot_enchant_ids.as_ref().and_then(|e| e.get(i)).map_or(0, Vec::len);
                 enchant_badge(&painter, rarity, pos2(b.right() - 3.0, b.bottom() - 3.0), ne, if S >= 64.0 { 8.0 } else { 5.0 });
                 let (tag, color) = if it.labels.contains("UT") {

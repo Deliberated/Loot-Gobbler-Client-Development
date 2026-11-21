@@ -356,6 +356,13 @@ fn player_card(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, now: i64,
         ui.add_space(16.0);
         fame_gain(ui, p, chars, m, now);
     }
+    // the Newcomer's Guide frames all of the card
+    let m = ui.max_rect();
+    crate::guide::mark(
+        ui,
+        "profile.overview",
+        egui::Rect::from_min_max(pos2(m.left() - 18.0, m.top() - 14.0), pos2(m.right() + 18.0, ui.min_rect().bottom() + 14.0)),
+    );
 }
 
 const EXALT_DAYS: i64 = 7;
@@ -443,6 +450,7 @@ fn character_block(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, c: &C
             }
         });
     });
+    crate::guide::mark(ui, "profile.character", block.response.rect);
     // click: the character in the Characters tab
     if ui
         .interact(block.response.rect, ui.scope_id().with(("open-char", c.char_id)), Sense::click())

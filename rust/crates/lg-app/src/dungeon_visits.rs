@@ -113,7 +113,7 @@ pub struct Visit {
 }
 
 impl Visit {
-    fn new(dungeon: &str, start: i64) -> Visit {
+    pub fn new(dungeon: &str, start: i64) -> Visit {
         Visit {
             dungeon: dungeon.to_string(),
             start,

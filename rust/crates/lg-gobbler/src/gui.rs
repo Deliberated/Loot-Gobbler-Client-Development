@@ -569,6 +569,10 @@ impl eframe::App for Gui {
         self.remember_bounds(ui.ctx());
         // the test hook: LG_TRY=card:<charId> or LG_TRY=grid presses that "Copy as image" after start-up
         self.frames += 1;
+        if self.frames == 2 {
+            // Java `NewcomerGuide.afterStart`: once the window is up
+            self.window.guide.after_start(&self.window.props);
+        }
         if self.frames == 60 && std::env::var("LG_TRY").is_ok_and(|t| t == "bell") {
             self.window.shell.bell_open = true;
         }
@@ -583,6 +587,7 @@ impl eframe::App for Gui {
                     ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("lg-copy-card"), id));
                 }
                 None if t.starts_with("open:") => self.window.open(&t[5..]),
+                None if t.starts_with("guide:") => self.window.guide.start_at(t[6..].parse().unwrap_or(0)),
                 None if t.starts_with("info:") => {
                     let mut asks = Vec::new();
                     self.window.info.open(&t[5..], &mut asks);

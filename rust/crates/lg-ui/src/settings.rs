@@ -340,6 +340,7 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
             },
         );
         // Item Sounds
+        let y0 = y;
         y += widgets::section_box(
             ui,
             &p,
@@ -438,6 +439,7 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                 ty - r.top() + 2.0
             },
         );
+        crate::guide::mark(ui, "settings.itemSounds", Rect::from_min_size(pos2(x0, y0), vec2(w, y - y0)));
         // Ping Lists
         y += widgets::section_box(
             ui,
