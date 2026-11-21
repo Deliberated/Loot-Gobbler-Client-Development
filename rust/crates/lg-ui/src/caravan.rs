@@ -119,11 +119,13 @@ struct T {
     start: f32,
     ground: f32,
     f: f32,
+    /// Where the road line is on screen.
+    gy: f32,
 }
 
 impl T {
     fn p(&self, x: f32, y: f32) -> Pos2 {
-        pos2(self.o.x + self.start + (x - PAD) * self.f, self.o.y + self.ground + (y - self.ground) * self.f)
+        pos2(self.o.x + self.start + (x - PAD) * self.f, self.gy + (y - self.ground) * self.f)
     }
 
     fn r(&self, x: f32, y: f32, w: f32, h: f32) -> Rect {
@@ -154,6 +156,8 @@ struct Scene<'a> {
     me: i64,
     gold: Color32,
     gold_hover: Color32,
+    /// The Profile's own wagon: no score plate, the name in the middle.
+    small: bool,
 }
 
 impl Scene<'_> {
@@ -366,6 +370,18 @@ impl Scene<'_> {
         let pf = text(19.0);
         let sf = text(19.0 * t.f);
         let wid = |s: &str| jtext::width(p, s, &pf);
+        if self.small {
+            let mut name: Vec<char> = m.ign.chars().collect();
+            while wid(&name.iter().collect::<String>()) > WAGON_W - 20.0 && name.len() > 3 {
+                name.pop();
+            }
+            let name: String = name.into_iter().collect();
+            jtext::draw(p, t.p(x + WAGON_W / 2.0, bed_y + 15.5), Align2::CENTER_CENTER, &name, &sf, DARK);
+            self.wheel(p, t, x + 15.0 + 19.0, ground - 19.0);
+            self.wheel(p, t, x + WAGON_W - 15.0 - 19.0, ground - 19.0);
+            hits.members.push((t.r(x, top, WAGON_W, ground - top), m.id));
+            return;
+        }
         let rank = self.plate(m);
         let plate = match index {
             0 => self.gold,
@@ -428,6 +444,45 @@ impl Scene<'_> {
         jtext::draw(p, t.p(tx + 5.0, ty + 10.0), Align2::LEFT_CENTER, &tag, &text(17.0 * t.f), FLAG_2);
         hits.members.push((t.r(x, top, slot, ground + 20.0 - top), m.id));
     }
+}
+
+/// Java `Scene.small(0.5)` as the Profile shows it: your wagon alone behind the ox, half size, from just above its
+/// pile down (`WAGON_SKY` of sky kept). Its rect; a click on it is the caller's.
+#[allow(clippy::too_many_arguments)]
+pub fn small_wagon(
+    ui: &Ui,
+    icons: &mut crate::icons::Icons,
+    data: &GameData,
+    weights: &lg_app::server::ScoreWeights,
+    m: &CaravanMember,
+    gold: Color32,
+    at: Pos2,
+    phase: i64,
+) -> Rect {
+    const ZOOM: f32 = 0.5;
+    const WAGON_SKY: f32 = 10.0;
+    let painter = ui.painter();
+    let scene =
+        Scene { data, weights, riders: vec![m], walkers: Vec::new(), phase, picked: -1, me: m.id, gold, gold_hover: gold, small: true };
+    let scene_h = HEIGHT.max(scene.content_height() + 34.0 + 20.0);
+    let width = (PAD + scene.content_width(painter) + PAD) * ZOOM;
+    let content_top = ((scene_h - 34.0 - scene.content_height()) * ZOOM).floor();
+    let crop = (content_top - WAGON_SKY).max(0.0);
+    let shown = Rect::from_min_size(at, vec2(width.ceil(), (scene_h * ZOOM).ceil() - crop));
+    let p2 = painter.with_clip_rect(shown.intersect(painter.clip_rect()));
+    let o = at - vec2(0.0, crop);
+    let extra = scene_h - HEIGHT;
+    if extra > 0.0 {
+        p2.rect_filled(Rect::from_min_size(o, vec2(width, extra * ZOOM)), 0.0, SKY);
+    }
+    crate::guild::backdrop(&p2, Rect::from_min_size(o + vec2(0.0, extra * ZOOM), vec2(width, HEIGHT * ZOOM)), phase, ZOOM);
+    let ground = HEIGHT - 34.0;
+    let t = T { o, start: PAD * ZOOM, ground, f: ZOOM, gy: o.y + (extra + ground) * ZOOM };
+    scene.paint_ox(&p2, &t, PAD, ground);
+    let mut hits = Hits::default();
+    p2.rect_filled(t.r(PAD + OX_W, ground - 40.0, BAR, 4.0), 0.0, INK);
+    scene.wagon(ui, icons, &p2, &t, m, 0, PAD + OX_W + BAR, ground, 0.0, &mut hits);
+    shown
 }
 
 /// "12 min ago" from a find's local time.
@@ -511,8 +566,18 @@ impl CaravanView {
                     let mut y = top.y + 12.0;
                     let riders: Vec<&CaravanMember> = members.iter().copied().filter(|m| m.total >= WALK_BELOW).collect();
                     let walkers: Vec<&CaravanMember> = members.iter().copied().filter(|m| m.total < WALK_BELOW).collect();
-                    let scene =
-                        Scene { data, weights, riders, walkers, phase: now / 70, picked, me, gold: p.gold, gold_hover: p.gold_hover };
+                    let scene = Scene {
+                        data,
+                        weights,
+                        riders,
+                        walkers,
+                        phase: now / 70,
+                        picked,
+                        me,
+                        gold: p.gold,
+                        gold_hover: p.gold_hover,
+                        small: false,
+                    };
                     let view_w = w - 4.0;
                     let has = !scene.riders.is_empty() || !scene.walkers.is_empty();
                     let f_scale = if has { scene.fit(&painter, view_w) * zoom as f32 } else { 1.0 };
@@ -531,14 +596,14 @@ impl CaravanView {
                         if extra > 0.0 {
                             p2.rect_filled(Rect::from_min_size(sr.min, vec2(sw, extra)), 0.0, SKY);
                         }
-                        crate::guild::backdrop(&p2, Rect::from_min_size(sr.min + vec2(0.0, extra), vec2(sw, HEIGHT)), scene.phase);
+                        crate::guild::backdrop(&p2, Rect::from_min_size(sr.min + vec2(0.0, extra), vec2(sw, HEIGHT)), scene.phase, 1.0);
                         if !has {
                             return;
                         }
                         let ground = HEIGHT - 34.0;
                         let drawn = scene.content_width(&p2) * f_scale;
                         let start = if drawn + 2.0 * PAD > sw { PAD } else { (sw - drawn) / 2.0 };
-                        let t = T { o: sr.min + vec2(0.0, extra), start, ground, f: f_scale };
+                        let t = T { o: sr.min + vec2(0.0, extra), start, ground, f: f_scale, gy: sr.min.y + extra + ground };
                         let mut xx = PAD;
                         scene.paint_ox(&p2, &t, xx, ground);
                         xx += OX_W;

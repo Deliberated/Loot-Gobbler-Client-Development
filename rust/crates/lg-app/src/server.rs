@@ -307,6 +307,19 @@ fn now_ms() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
 }
 
+/// Java `GuildPanel.loadError`'s text without the guild name: "no_guild" says the guild is not known (the views
+/// that know your guild word it themselves); else the message.
+pub fn load_error_text(e: &Error, guild: Option<&str>) -> String {
+    if e.code() == "no_guild" {
+        match guild.filter(|g| !g.is_empty()) {
+            None => "Your guild is not known yet. Enter the game once with Loot Gobbler running; it is uploaded on the next sync.".into(),
+            Some(g) => format!("Your guild ({g}) is not on the server yet. It is uploaded on the next sync (Server tab: Sync now)."),
+        }
+    } else {
+        format!("Could not load the guild: {}", e.message())
+    }
+}
+
 /// Java `newPasswordProblem`: why a new password cannot be used (as the server checks it).
 pub fn new_password_problem(password: &str, again: &str) -> Option<String> {
     let n = password.chars().count();
@@ -359,6 +372,8 @@ pub struct Connection {
     pub guild: crate::guild::GuildState,
     /// Your guildmates (Java `Guildmates`).
     pub mates: crate::guild::Mates,
+    /// The Profile's guild card.
+    pub profile_guild: crate::guild::ProfileGuild,
     /// What the bell lists (Java `Notifications`): newest first, and whether something new came since it was
     /// last opened.
     pub notifications: Vec<Notification>,
@@ -922,6 +937,7 @@ impl Connection {
                         self.guild_loaded();
                     }
                     "caravan" => self.caravan_done(Err(e)),
+                    "pg-caravan" | "pg-maps" | "pg-facts" => self.profile_guild_done(tag, Err(e)),
                     t if t.starts_with("looks:") => self.looks_done(t, None),
                     "questmaps" => self.maps_done(Err(e), now_ms()),
                     t if t.starts_with("member:") => {
@@ -1021,6 +1037,7 @@ impl Connection {
                 self.guild_loaded();
             }
             "caravan" => self.caravan_done(Ok(crate::guild::caravan_of(&j))),
+            "pg-caravan" | "pg-maps" | "pg-facts" => self.profile_guild_done(tag, Ok(j)),
             "mates" => {
                 let me = self.user.as_ref().map_or(-1, |u| u.id);
                 let board = crate::guild::leaderboard_of(&j);
@@ -1144,6 +1161,74 @@ impl Connection {
         self.guild.version += 1;
         if std::mem::take(&mut self.guild.maps_again) {
             self.maps_load();
+        }
+    }
+
+    /// Java `ProfileView.loadGuild`: your wagon (all time), the current quest map and the guild's facts of the last
+    /// 3 days (optional: older servers do not know them).
+    pub fn profile_guild_load(&mut self) {
+        let g = &mut self.profile_guild;
+        if !g.waiting.is_empty() {
+            g.again = true;
+            return;
+        }
+        g.stale = false;
+        if self.user.is_none() || self.state != State::Online {
+            g.name = None;
+            g.wagon = None;
+            g.map = None;
+            g.facts.clear();
+            g.friends = None;
+            g.note = Some("Log in to a server in the Server tab to see your guild here.".into());
+            g.error = None;
+            g.version += 1;
+            return;
+        }
+        g.waiting = vec!["pg-caravan", "pg-maps", "pg-facts"];
+        g.got = Default::default();
+        self.call("GET", "/guild/caravan?range=all", None, "pg-caravan");
+        self.call("GET", "/guild/questmaps?limit=1", None, "pg-maps");
+        self.call("GET", "/guild/facts?days=3", None, "pg-facts");
+    }
+
+    fn profile_guild_done(&mut self, tag: &str, j: Result<Json, Error>) {
+        let me = self.user.clone();
+        let g = &mut self.profile_guild;
+        g.waiting.retain(|t| *t != tag);
+        match (tag, j) {
+            ("pg-caravan", Ok(j)) => g.got.0 = Some(crate::guild::caravan_of(&j)),
+            ("pg-maps", Ok(j)) => g.got.1 = Some(crate::guild::quest_maps_of(&j)),
+            ("pg-facts", Ok(j)) => g.got.2 = Some(crate::guild::facts_of(&j)),
+            ("pg-facts", Err(_)) => {}
+            (_, Err(e)) => g.got.3 = Some(e),
+            _ => {}
+        }
+        if !g.waiting.is_empty() {
+            return;
+        }
+        let (caravan, maps, facts, err) = std::mem::take(&mut g.got);
+        (g.facts, g.friends) = facts.unwrap_or_default();
+        match (err, caravan, maps, me) {
+            (Some(e), ..) => {
+                g.name = None;
+                g.wagon = None;
+                g.map = None;
+                g.note = None;
+                g.error = Some(e);
+            }
+            (None, Some(c), Some(q), Some(me)) => {
+                let mine = c.members.iter().find(|m| m.id == me.id).cloned();
+                g.wagon = Some(mine.unwrap_or(crate::guild::CaravanMember { id: me.id, ign: me.ign.clone(), ..Default::default() }));
+                g.name = Some(c.guild);
+                g.map = q.current;
+                g.note = None;
+                g.error = None;
+            }
+            _ => {}
+        }
+        g.version += 1;
+        if std::mem::take(&mut g.again) {
+            self.profile_guild_load();
         }
     }
 

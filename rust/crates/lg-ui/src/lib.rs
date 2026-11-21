@@ -23,6 +23,7 @@ pub mod overlay_windows;
 pub mod overlays;
 pub mod pets;
 pub mod profile;
+pub mod profile_guild;
 pub mod quest_map;
 pub mod server;
 pub mod settings;

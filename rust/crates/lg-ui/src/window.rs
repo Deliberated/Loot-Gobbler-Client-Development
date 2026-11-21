@@ -100,6 +100,8 @@ pub enum ServerAsk {
     CaravanLoad,
     /// The quest maps again.
     MapsLoad,
+    /// The Profile's guild card again.
+    ProfileGuildLoad,
     OpenMember(i64),
     /// A line under a section (0 item scores, 1 guild): what was typed cannot be used.
     Feedback(u8, String),
@@ -368,7 +370,10 @@ impl Window {
         shell.show(ui, &palette, |ui, tab| {
             let mut c = profile::Ctx { app, p: &palette, icons, now, en, loadout, props, asks };
             match tab {
-                "Profile" => profile.show(ui, &mut c),
+                "Profile" => {
+                    let rarity = characters.rarity(ui.ctx());
+                    profile.show(ui, &mut c, &rarity);
+                }
                 "Inventory" => {
                     let rarity = characters.rarity(ui.ctx());
                     inventory.show(ui, &mut c, &rarity);

@@ -552,12 +552,14 @@ fn member(ui: &mut Ui, c: &mut Ctx, body: Rect) {
 }
 
 /// The sky with its stars and moon, the hills, the road with its moving lines (Java `Scene.paintBackdrop`).
-pub fn backdrop(painter: &egui::Painter, r: Rect, phase: i64) {
+pub fn backdrop(painter: &egui::Painter, r: Rect, phase: i64, k: f32) {
     const HEIGHT: f32 = 440.0;
-    let w = r.width().floor();
-    let at = |x: f32, y: f32| pos2(r.left() + x, r.top() + y);
+    // drawn at scale k (the Profile's small wagon: half size)
+    let w = (r.width() / k).floor();
+    let at = |x: f32, y: f32| pos2(r.left() + x * k, r.top() + y * k);
+    let sz = |a: f32, b: f32| vec2(a * k, b * k);
     let star = rgb(0xF4E6C6);
-    painter.rect_filled(Rect::from_min_size(r.min, vec2(w, HEIGHT)), 0.0, rgb(0x141B2B));
+    painter.rect_filled(Rect::from_min_size(r.min, sz(w, HEIGHT)), 0.0, rgb(0x141B2B));
     let mut rnd = lg_app::java::JavaRandom::new(7);
     for i in 0..40 {
         let sx = i64::from(rnd.next_int(10_000));
@@ -573,13 +575,13 @@ pub fn backdrop(painter: &egui::Painter, r: Rect, phase: i64) {
         } else {
             star
         };
-        painter.rect_filled(Rect::from_min_size(at((sx * w as i64 / 10_000) as f32, sy as f32), vec2(4.0, 4.0)), 0.0, c);
+        painter.rect_filled(Rect::from_min_size(at((sx * w as i64 / 10_000) as f32, sy as f32), sz(4.0, 4.0)), 0.0, c);
     }
     let mx = w - 120f32.max((w / 7.0).floor());
-    painter.rect_filled(Rect::from_min_size(at(mx - 6.0, 28.0), vec2(60.0, 60.0)), 0.0, Color32::from_rgba_unmultiplied(244, 230, 198, 30));
-    painter.rect_filled(Rect::from_min_size(at(mx, 34.0), vec2(48.0, 48.0)), 0.0, star);
-    painter.rect_filled(Rect::from_min_size(at(mx + 8.0, 44.0), vec2(10.0, 10.0)), 0.0, rgb(0xD2B988));
-    painter.rect_filled(Rect::from_min_size(at(mx + 28.0, 62.0), vec2(6.0, 6.0)), 0.0, rgb(0xD2B988));
+    painter.rect_filled(Rect::from_min_size(at(mx - 6.0, 28.0), sz(60.0, 60.0)), 0.0, Color32::from_rgba_unmultiplied(244, 230, 198, 30));
+    painter.rect_filled(Rect::from_min_size(at(mx, 34.0), sz(48.0, 48.0)), 0.0, star);
+    painter.rect_filled(Rect::from_min_size(at(mx + 8.0, 44.0), sz(10.0, 10.0)), 0.0, rgb(0xD2B988));
+    painter.rect_filled(Rect::from_min_size(at(mx + 28.0, 62.0), sz(6.0, 6.0)), 0.0, rgb(0xD2B988));
     let hills = |top: f32, height: f32, color: Color32, peaks: &[i32]| {
         let n = peaks.len() as i64;
         let mut pts: Vec<egui::Pos2> = peaks
@@ -592,13 +594,13 @@ pub fn backdrop(painter: &egui::Painter, r: Rect, phase: i64) {
         // not convex: a triangle strip between each top point and the band's bottom
         let mut mesh = egui::Mesh::default();
         let base = top + height;
-        for k in 0..peaks.len() - 1 {
-            let (a, b) = (pts[k], pts[k + 1]);
+        for q in 0..peaks.len() - 1 {
+            let (a, b) = (pts[q], pts[q + 1]);
             let i = mesh.vertices.len() as u32;
             mesh.colored_vertex(a, color);
             mesh.colored_vertex(b, color);
-            mesh.colored_vertex(pos2(b.x, r.top() + base), color);
-            mesh.colored_vertex(pos2(a.x, r.top() + base), color);
+            mesh.colored_vertex(pos2(b.x, r.top() + base * k), color);
+            mesh.colored_vertex(pos2(a.x, r.top() + base * k), color);
             mesh.add_triangle(i, i + 1, i + 2);
             mesh.add_triangle(i, i + 2, i + 3);
         }
@@ -606,16 +608,16 @@ pub fn backdrop(painter: &egui::Painter, r: Rect, phase: i64) {
     };
     hills(HEIGHT - 150.0, 120.0, rgb(0x1E2A2A), &[70, 40, 55, 20, 50, 35, 60, 25, 50, 30, 55]);
     hills(HEIGHT - 110.0, 90.0, rgb(0x24301F), &[50, 30, 60, 35, 55, 30, 60, 40, 60]);
-    painter.rect_filled(Rect::from_min_size(at(0.0, HEIGHT - 112.0), vec2(w, 112.0)), 0.0, rgb(0x4A3522));
-    painter.rect_filled(Rect::from_min_size(at(0.0, HEIGHT - 112.0), vec2(w, 4.0)), 0.0, rgb(0x6B4E2E));
+    painter.rect_filled(Rect::from_min_size(at(0.0, HEIGHT - 112.0), sz(w, 112.0)), 0.0, rgb(0x4A3522));
+    painter.rect_filled(Rect::from_min_size(at(0.0, HEIGHT - 112.0), sz(w, 4.0)), 0.0, rgb(0x6B4E2E));
     let mut x = -52 + (phase * 2) % 52;
     while (x as f32) < w {
-        painter.rect_filled(Rect::from_min_size(at(x as f32, HEIGHT - 50.0), vec2(26.0, 4.0)), 0.0, rgb(0x6B4E2E));
+        painter.rect_filled(Rect::from_min_size(at(x as f32, HEIGHT - 50.0), sz(26.0, 4.0)), 0.0, rgb(0x6B4E2E));
         x += 52;
     }
     let mut x = -40 + (phase * 2) % 40;
     while (x as f32) < w {
-        painter.rect_filled(Rect::from_min_size(at(x as f32, HEIGHT - 22.0), vec2(14.0, 4.0)), 0.0, rgb(0x3A2818));
+        painter.rect_filled(Rect::from_min_size(at(x as f32, HEIGHT - 22.0), sz(14.0, 4.0)), 0.0, rgb(0x3A2818));
         x += 40;
     }
 }

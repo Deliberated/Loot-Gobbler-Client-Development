@@ -514,6 +514,104 @@ pub fn run_looks_of(j: &Json) -> std::collections::HashMap<String, Vec<RunLook>>
     by
 }
 
+/// A guildmate's most completed dungeon in the days asked, and their look in the latest of those runs.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Favorite {
+    pub dungeon: String,
+    pub count: i64,
+    pub class_type: i32,
+    pub skin: i32,
+    pub tex1: i32,
+    pub tex2: i32,
+}
+
+/// Numbers about one guildmate over the days asked (Java `MemberFacts`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MemberFacts {
+    pub user_id: i64,
+    pub ign: String,
+    pub favorite: Option<Favorite>,
+    pub deaths: i64,
+    pub fame: i64,
+    pub dealt: i64,
+    pub taken: i64,
+    pub hits: i64,
+    pub in_ms: i64,
+    pub exalts: i64,
+    /// The character they played last (only its look).
+    pub look: Option<Favorite>,
+    pub loot: i64,
+    pub played: i64,
+    pub st_sets: i64,
+    pub peak_dps: f64,
+    pub runs: i64,
+    /// The dungeon visit they gained the most fame in.
+    pub best_run: Option<(String, i64)>,
+}
+
+fn favorite_of(j: &Json) -> Option<Favorite> {
+    matches!(j, Json::Object(_)).then(|| Favorite {
+        dungeon: text(j.get("dungeon")),
+        count: long(j.get("count")),
+        class_type: int(j.get("classType"), 0),
+        skin: int(j.get("skin"), 0),
+        tex1: int(j.get("tex1"), 0),
+        tex2: int(j.get("tex2"), 0),
+    })
+}
+
+/// The facts and the two guildmates who ran the most dungeons together (a, b, count).
+pub fn facts_of(j: &Json) -> (Vec<MemberFacts>, Option<(i64, i64, i64)>) {
+    let members = list(j.get("members"), |m| MemberFacts {
+        user_id: long(m.get("userId")),
+        ign: text(m.get("ign")),
+        favorite: m.get("favorite").and_then(favorite_of),
+        deaths: long(m.get("deaths")),
+        fame: long(m.get("fame")),
+        dealt: long(m.get("dealt")),
+        taken: long(m.get("taken")),
+        hits: long(m.get("hits")),
+        in_ms: long(m.get("inMs")),
+        exalts: long(m.get("exalts")),
+        look: m.get("look").and_then(favorite_of),
+        loot: long(m.get("loot")),
+        played: long(m.get("played")),
+        st_sets: long(m.get("stSets")),
+        peak_dps: match m.get("peakDps") {
+            Some(Json::Number(n)) => n.parse().unwrap_or(0.0),
+            _ => 0.0,
+        },
+        runs: long(m.get("runs")),
+        best_run: m.get("bestRun").filter(|b| matches!(b, Json::Object(_))).map(|b| (text(b.get("dungeon")), long(b.get("fame")))),
+    });
+    let friends =
+        j.get("friends").filter(|f| matches!(f, Json::Object(_))).map(|f| (long(f.get("a")), long(f.get("b")), long(f.get("count"))));
+    (members, friends)
+}
+
+/// What came in so far for the Profile's guild card: the caravan, the quest maps, the facts, a failure.
+type Loaded = (Option<Caravan>, Option<QuestMaps>, Option<(Vec<MemberFacts>, Option<(i64, i64, i64)>)>, Option<crate::server::Error>);
+
+/// The Profile's guild card (Java `ProfileView.loadGuild`): your wagon (all time), the current quest map, the facts
+/// of the last days; loaded together.
+#[derive(Debug, Default)]
+pub struct ProfileGuild {
+    pub name: Option<String>,
+    pub wagon: Option<CaravanMember>,
+    pub map: Option<QuestMap>,
+    /// What to say instead (logged out, the error); None once loaded.
+    pub note: Option<String>,
+    /// The load failed (the card words it: it knows your guild).
+    pub error: Option<crate::server::Error>,
+    pub facts: Vec<MemberFacts>,
+    pub friends: Option<(i64, i64, i64)>,
+    pub(crate) waiting: Vec<&'static str>,
+    pub(crate) again: bool,
+    pub stale: bool,
+    pub(crate) got: Loaded,
+    pub version: u64,
+}
+
 /// Your clear, kept on the map until the server has it (the upload takes a moment).
 #[derive(Debug, Clone, Default)]
 pub struct PendingClear {

@@ -236,6 +236,9 @@ impl Gui {
         if sync.uploaded.contains(&"collection") {
             self.app.server.guild.caravan_stale = true;
         }
+        if sync.uploaded.contains(&"collection") || sync.uploaded.contains(&"dps_history") {
+            self.app.server.profile_guild.stale = true; // your run or drops reached the server
+        }
         // a run of yours ended: the quest map may move on; your run on the server: what it made of it
         let latest = self.app.dps_history.runs.first().map(|r| r.start);
         if latest != self.seen_run {
@@ -321,6 +324,7 @@ impl Gui {
             S::RetryLooks(key) => server.retry_looks(&key),
             S::CaravanLoad => server.caravan_load(),
             S::MapsLoad => server.maps_load(),
+            S::ProfileGuildLoad => server.profile_guild_load(),
             S::OpenMember(id) => server.open_member(id),
             S::Accept(id, ign) => server.accept(id, &ign),
             S::Deny(id, ign) => server.deny(id, &ign),

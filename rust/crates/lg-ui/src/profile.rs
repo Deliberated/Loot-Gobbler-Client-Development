@@ -59,12 +59,17 @@ impl Ctx<'_> {
 pub struct Profile {
     pub page: usize,
     greeting: &'static str,
+    /// The frame it was last drawn in, the account then and when the guild card was last asked for (Java loads it
+    /// when shown, after logging in or out, every minute and after your uploads).
+    last_pass: u64,
+    last_account: String,
+    guild_asked: i64,
 }
 
 impl Default for Profile {
     fn default() -> Self {
         let pick = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos()) as usize;
-        Profile { page: 0, greeting: GREETINGS[pick % GREETINGS.len()] }
+        Profile { page: 0, greeting: GREETINGS[pick % GREETINGS.len()], last_pass: 0, last_account: String::new(), guild_asked: 0 }
     }
 }
 
@@ -186,8 +191,21 @@ pub fn pages(ui: &mut Ui, p: &Palette, names: &[&str], selected: &mut usize, dis
 }
 
 impl Profile {
-    pub fn show(&mut self, ui: &mut Ui, c: &mut Ctx) {
+    pub fn show(&mut self, ui: &mut Ui, c: &mut Ctx, rarity: &crate::detail::Rarity) {
         let p = *c.p;
+        let pass = ui.ctx().cumulative_pass_nr();
+        let account = c.app.server.account();
+        let shown = pass > self.last_pass + 1;
+        if shown && c.app.server.profile_guild.stale
+            || account != self.last_account
+            || c.now - self.guild_asked >= 60_000
+            || (self.guild_asked == 0)
+        {
+            self.guild_asked = c.now;
+            c.asks.push(crate::window::Ask::Server(crate::window::ServerAsk::ProfileGuildLoad));
+        }
+        self.last_pass = pass;
+        self.last_account = account;
         let all = ui.max_rect().shrink(8.0);
         let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(all).layout(egui::Layout::top_down(egui::Align::Min)));
         ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
@@ -203,7 +221,7 @@ impl Profile {
                         egui::Rect::from_min_max(pos2(inner.left() + 20.0, inner.top() + 16.0), pos2(inner.right() - 32.0, inner.bottom()));
                     let mut b = ui.new_child(egui::UiBuilder::new().max_rect(body).layout(egui::Layout::top_down(egui::Align::Min)));
                     b.spacing_mut().item_spacing = vec2(0.0, 0.0);
-                    self.overview(&mut b, c);
+                    self.overview(&mut b, c, rarity);
                     b.add_space(20.0);
                     ui.allocate_exact_size(vec2(inner.width(), b.min_rect().height() + 16.0), Sense::hover());
                 });
@@ -214,10 +232,11 @@ impl Profile {
         }
     }
 
-    fn overview(&self, ui: &mut Ui, c: &mut Ctx) {
+    fn overview(&self, ui: &mut Ui, c: &mut Ctx, rarity: &crate::detail::Rarity) {
         let p = *c.p;
         let app = c.app;
         let now = c.now;
+        let props = c.props;
         let since = now - DAY_MS;
         let drops = all_drops(app);
         let runs: Vec<&lg_app::dps_history::Run> = app.dps_history.runs.iter().filter(|r| !r.hidden).collect();
@@ -229,7 +248,7 @@ impl Profile {
             &mut *c.icons,
             vec![
                 Box::new(|ui: &mut Ui, icons: &mut Icons| player_card(ui, &p, app, icons, now, greeting)),
-                Box::new(|ui: &mut Ui, _: &mut Icons| guild_card(ui, &p)),
+                Box::new(|ui: &mut Ui, icons: &mut Icons| crate::profile_guild::guild_card(ui, &p, app, icons, props, rarity, now)),
             ],
         );
         ui.add_space(20.0);
@@ -454,13 +473,6 @@ fn fame_gain(ui: &mut Ui, p: &Palette, chars: &Characters, _most: &Char, now: i6
             }
         });
     }
-}
-
-/// Your guild (Java `guildCard`): without a server login, a note.
-fn guild_card(ui: &mut Ui, p: &Palette) {
-    label(ui, "Guild", &widgets::head_px(56.0), p.gold);
-    ui.add_space(14.0);
-    muted(ui, "Log in to a server in the Server tab to see your guild here.");
 }
 
 /// One number with its caption and a line below (Java `tile`).
